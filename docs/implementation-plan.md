@@ -563,8 +563,8 @@ with one real provider before voice integration.
 
 **Agent handoff**
 
-1. Wire M05, M06, M12–M14, and M21 for a typed request using OpenAI as
-   the initial integration path.
+1. Wire M05, M06, M12–M13, M17, and M21 for a typed request using OpenCode Go
+   as the initial integration path.
 2. Display selected provider/model, remote transfer notice, live output,
    failure/cancel/retry, and accurate conversation history.
 3. Verify bounded request context and privacy-safe trace across the entire
@@ -572,8 +572,9 @@ with one real provider before voice integration.
 
 **Validation / acceptance:** Automated fake-provider UI/integration test
    exercises the full lifecycle. One opt-in Pixel 10 smoke run may use a
-   user-supplied key and must be documented without recording secrets or
-   conversation content. The rest of CI stays credential-free.
+   user-configured, provider-supported connection and must be documented
+   without recording secrets or conversation content. The rest of CI stays
+   credential-free.
 
 ### M24 — Integrate the voice loop and responsive barge-in
 
