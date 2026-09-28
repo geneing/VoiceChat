@@ -18,6 +18,8 @@ project structure and verified commands are established.
 
 - Use Kotlin for application and Android integration code. Do not introduce
   Java or C++ unless an unavoidable interop boundary is documented.
+- Use Jetpack Compose for the native application UI. Use Android Views only
+  for a specific interop need that Compose cannot reasonably cover.
 - Pixel 10 is the primary physical test device. You can assume it has AICore, but it may not have a
   provisioned model, a particular accelerator, or the same system TTS voices.
 - Keep microphone capture, STT, LLM, and TTS behind small replaceable

@@ -49,9 +49,9 @@ implementation should have focused boundaries for:
   smaller context sent to a model.
 - **Settings and diagnostics:** persists user choices and exposes privacy-safe
   per-turn traces, stage timings, provider/model status, and errors.
-- **Conversation UI:** presents live user and assistant turns, provisional
-  transcripts, streaming response text, playback/interruption state, and a
-  manual text-entry path.
+- **Conversation UI:** Jetpack Compose screens present live user and assistant
+  turns, provisional transcripts, streaming response text,
+  playback/interruption state, and a manual text-entry path.
 
 Use the project's eventual module/package conventions rather than introducing
 extra modules prematurely. Avoid a single manager that owns recording,

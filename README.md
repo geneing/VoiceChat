@@ -1,7 +1,7 @@
 # Android Voice Agent
 
-A Kotlin Android voice-agent project, starting as a documentation scaffold for
-Pixel 10.
+A Kotlin Android voice-agent project using Jetpack Compose, starting as a
+documentation scaffold for Pixel 10.
 
 ## Intended experience
 

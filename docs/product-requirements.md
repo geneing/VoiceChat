@@ -6,6 +6,7 @@ documentation-only; it does not imply that any listed behavior is implemented.
 ## Product goals
 
 - Kotlin Android voice agent, primarily developed and validated on Pixel 10.
+- Build the native application UI with Jetpack Compose.
 - On-device speech recognition and speech synthesis.
 - Selectable LLM providers: external APIs from
   [LLM providers and connections](./llm-providers.md), plus eligible AICore /

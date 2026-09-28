@@ -82,9 +82,10 @@ decision record.
    supported reasoning controls, and documented authentication methods.
    Treat OpenCode Go, OpenCode Zen, and Hermes as distinct integrations.
 6. Recommend project SDK levels, Kotlin/Gradle/dependency versions, package
-   identity, UI toolkit, persistence choice, and CI/check commands based on
-   verified requirements. Avoid copying versions or device constants from the
-   reference projects.
+   identity, Compose configuration, persistence choice, and CI/check commands
+   based on verified requirements. Jetpack Compose is the required UI toolkit;
+   do not evaluate alternate native UI toolkits. Avoid copying versions or
+   device constants from the reference projects.
 
 **Deliverables:** A compact decision record in the relevant docs; a provider
 capability matrix; explicit deferred/unsupported items and the reason for
@@ -101,9 +102,11 @@ developer workflow.
 
 **Agent handoff**
 
-1. Create the Gradle project and Kotlin app module using M00 decisions.
-2. Add the project package structure and minimal launch activity/application
-   entry point; avoid speculative feature modules.
+1. Create the Gradle project and Kotlin app module using M00 decisions, with
+   Jetpack Compose enabled.
+2. Add the project package structure, minimal launch activity/application
+   entry point, and a simple Compose root screen/theme; avoid speculative
+   feature modules.
 3. Add the Gradle wrapper and documented local build, test, lint, and format
    commands. Add CI for the same fast checks if the repository's hosting setup
    is available.
@@ -111,10 +114,10 @@ developer workflow.
    do not request microphone permission at install/startup without context.
 5. Update README status and AGENTS commands to reflect the actual scaffold.
 
-**Validation / acceptance:** A clean checkout can build and run the empty app
-on an emulator or Pixel 10. CI runs the same compile/unit/lint checks. No
-unnecessary permission, secret, model binary, or unverified SDK assumption is
-introduced.
+**Validation / acceptance:** A clean checkout can build and run the minimal
+Compose app on an emulator or Pixel 10. CI runs the same compile/unit/lint
+checks. No unnecessary permission, secret, model binary, or unverified SDK
+assumption is introduced.
 
 ### M02 — Define core domain types and replaceable contracts
 
@@ -209,21 +212,21 @@ to a provider.
    bounds. A test proves an older conversation is not silently added to a new
    request.
 
-### M06 — Create the conversation UI and manual text path
+### M06 — Create the Jetpack Compose conversation UI and manual text path
 
 **Goal:** Deliver the first usable dialog surface before integrating audio.
 
 **Agent handoff**
 
-1. Implement conversation list, new conversation, open older conversation,
-   dialog transcript, and a manual text composer.
+1. Implement Compose screens for the conversation list, new conversation,
+   opening older conversations, dialog transcript, and manual text composer.
 2. Show interim STT as provisional, final user text as committed, assistant
    deltas incrementally, and explicit loading/error/cancel/interrupted states.
 3. Allow a user to edit/correct recognized text before submission and to
    retry/cancel requests; do not silently rewrite recognition.
 4. Add deletion controls and accessible loading/focus/error behavior.
-5. Bind the UI to fake/repository-backed state; do not couple screens to a
-   specific provider or speech SDK.
+5. Bind Compose UI to lifecycle-aware, fake/repository-backed state; do not
+   couple screens to a specific provider or speech SDK.
 
 **Validation / acceptance:** UI tests cover text send, correction, streaming
 render, conversation switching, deletion, and process-restored history. Manual
