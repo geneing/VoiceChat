@@ -71,6 +71,8 @@ remote.
 - [Privacy and security](./docs/privacy-and-security.md) — audio, transcript,
   API, and credential handling.
 - [Validation](./docs/validation.md) — planned test coverage and device checks.
+- [Implementation plan](./docs/implementation-plan.md) — sequenced,
+  agent-sized milestones with dependencies and acceptance checks.
 
 ## Project status
 
