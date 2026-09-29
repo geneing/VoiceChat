@@ -63,6 +63,7 @@ dependencies {
 
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
 
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
@@ -78,9 +79,15 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+    // Provides the debuggable ComponentActivity that Compose test rules launch on
+    // the JVM (M06); the test manifest is merged into the debug variant.
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     // Runs the Room repository tests on the JVM (no device, no live services).
     testImplementation(libs.robolectric)
+    // Compose UI tests on the JVM under Robolectric: text send, correction,
+    // streaming render, conversation switching, and deletion (M06).
+    testImplementation(libs.androidx.compose.ui.test.junit4)
 }

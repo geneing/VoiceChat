@@ -1,0 +1,144 @@
+# Conversation UI and Manual Text Path (M06)
+
+This document records the Jetpack Compose conversation surface and the
+manual-text turn path delivered in M06. It implements the dialog, history,
+manual-text, and correction requirements in
+[product-requirements.md](./product-requirements.md) and the state/interaction
+model in [architecture.md](./architecture.md), on top of the M05 persistence
+layer ([persistence.md](./persistence.md)). It is deliberately not the full
+voice loop: M07–M11 add audio, and M21 replaces the focused state holder below
+with the complete turn state machine.
+
+## Package boundaries
+
+The UI lives in `com.voicechat.agent.ui` and depends only on the M02 contracts
+(`ConversationRepository`, `LanguageModel`, `DiagnosticsSink`) and the platform-free
+domain types. It does not import Room, a speech SDK, or a provider SDK, so it
+cannot be coupled to a specific implementation:
+
+```
+ConversationApp (stateless Compose)
+  <- VoiceAgentRoot (collects state with the owner lifecycle)
+      <- ConversationViewModel (state holder; StateFlow<ConversationUiState>)
+          <- ConversationRepository  (M02 contract, Room-backed in the app)
+          <- LanguageModel           (M02 contract; unconfigured placeholder today)
+          <- DiagnosticsSink          (M04 tracing seam)
+```
+
+`MainActivity` builds the app-private repository with
+`ConversationPersistence.create(context)`. No provider exists yet, so the app
+runs `NotConfiguredLanguageModel`, which fails every request with
+`LLM_NOT_CONFIGURED`. The dialog shows that as an explicit, recoverable error —
+there is no fake reply and no silent fallback.
+
+## Screens
+
+- **Conversation list** (`ConversationListScreen`): a new-conversation control,
+  the persisted summaries (newest first), reopen, and a per-row delete control.
+- **Dialog** (`ConversationDialogScreen`): the transcript plus the
+  always-available manual composer, with a back control and a delete action.
+- **Delete confirmation** (`DeleteConversationDialog`): shared by both screens.
+
+Opening a conversation loads it, runs
+`Conversation.reconcileAfterProcessDeath()` (M05), writes the reconciled state
+back when it changed, and only then renders — so a process that died mid-turn
+never reports a reply it could not finish.
+
+## State model
+
+`ConversationViewModel` exposes one immutable `StateFlow<ConversationUiState>`.
+Rendering state is separate from domain state so the dialog can show content that
+is not yet persisted:
+
+- `turns` — committed, persisted `Turn`s.
+- `provisionalUserText` — live STT shown as *provisional*; never persisted or
+  sent until committed.
+- `liveAssistantText` — the in-flight streamed delta text, rendered
+  incrementally and persisted only at a terminal state.
+- `phase` (`TurnPhase`), `notice`, `composerText`, `composerSource`,
+  `isLoading` — explicit loading/error/cancel/interrupted affordances.
+
+The voice-only actions `setProvisionalTranscript` / `commitProvisionalTranscript`
+are the M06 seam for M21; the manual composer calls the same private
+`submitTurn`.
+
+## One turn path for text and voice
+
+`submitTurn(text, source)` is the single entry point. It appends a finalized
+`UserTurn` (recording `UserTurnSource.TEXT` or `VOICE`), persists it through
+`ConversationRepository.save`, builds the bounded request with the M05
+`ModelContextBuilder`, and streams `LanguageModel.stream`. A test drives a
+`VOICE`-sourced and a `TEXT`-sourced turn through this same path and asserts both
+persist into the same conversation.
+
+## Correction without rewriting
+
+The composer is editable and is persisted exactly as submitted (outer
+whitespace is trimmed). Recognized speech is only ever shown as
+`provisionalUserText`; committing it uses the user's text, so an STT hypothesis
+is never silently rewritten. Assistant deltas are shown as they arrive but are
+persisted only when generation ends.
+
+## Truthful streaming and cancellation
+
+- Deltas update `liveAssistantText`; the transcript shows each one immediately.
+- On `Completed`, one `AssistantTurn` is persisted with generation/delivery
+  `COMPLETED`.
+- On `Cancelled`/`Failed`, or when the user cancels or navigates away, the turn
+  is persisted with generation `CANCELLED`/`FAILED` and delivery `INTERRUPTED`,
+  and only the delivered prefix is stored as delivered. A cancel before any
+  output leaves no phantom assistant turn.
+- `ModelContextBuilder` therefore only ever sends delivered assistant text.
+
+A "Retry" control re-runs the most recent user turn after removing the failed or
+cancelled reply, without duplicating the user message.
+
+## Accessibility
+
+- Every control has a text or content-description label; interactive controls and
+  list rows carry stable `ConversationTestTags` for tests.
+- Loading rows expose a `contentDescription`; error notices use an assertive
+  `liveRegion` and the `error` semantics property.
+- The composer receives focus when a conversation opens.
+- Deletion is always confirmed before data is removed.
+
+## Tracing
+
+Stage events go through the M04 `TurnTraceFactory`/`TurnTraceRecorder` seam
+(persistence, LLM request, deltas, completion, cancellation, failure). Only
+counts and stable codes are recorded; transcript, prompt, and credential content
+never are.
+
+## Testing
+
+M06 adds JVM tests under `:app:testDebugUnitTest` (no device, network, or
+credentials):
+
+- `ConversationViewModelTest` covers text send, correction, incremental
+  streaming, cancellation/interruption, failure and retry, conversation
+  switching, deletion, process-restored history, the shared text/voice path,
+  trace routing, and blank-input rejection.
+- `ConversationAppUiTest` runs Compose under **Robolectric** and covers text
+  send, correction, streaming render, conversation switching, deletion (list and
+  dialog), process-restored history across a state-holder restart, accessible
+  loading, the unconfigured-model error state, and composer enablement.
+
+## Test dependencies added
+
+- `androidx.compose.ui:ui-test-junit4` (test) — Compose test APIs on the JVM.
+- `androidx.compose.ui:ui-test-manifest` (debug) — the ComponentActivity the test
+  rule launches.
+- `androidx.lifecycle:lifecycle-runtime-compose` — `collectAsStateWithLifecycle`.
+
+Versions come from the Compose BOM and the existing lifecycle version; all three
+are recorded in `gradle/libs.versions.toml`.
+
+## Limitations and next steps
+
+- No real provider: the default model returns `LLM_NOT_CONFIGURED`. M13–M19 wire
+  credentials and adapters; M23 completes the text-first vertical slice.
+- No voice: STT/TTS and barge-in arrive in M07–M11 and M21–M24. The provisional
+  transcript seam and the single turn path are in place for them.
+- The state holder is intentionally not the M21 turn state machine; it serializes
+  one request at a time and leaves out-of-order late-event handling and TTS
+  delivery accounting to M21.

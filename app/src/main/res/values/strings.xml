@@ -1,5 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Voice Agent</string>
-    <string name="scaffold_status">Build scaffold ready. On-device speech needs API %1$d or newer.</string>
+
+    <!-- Conversation list -->
+    <string name="conversations_title">Conversations</string>
+    <string name="new_conversation">New conversation</string>
+    <string name="untitled_conversation">Untitled conversation</string>
+    <string name="turn_count">%1$d messages</string>
+    <string name="loading_conversations">Loading conversations</string>
+    <string name="empty_conversations">No conversations yet. Start a new one.</string>
+
+    <!-- Dialog -->
+    <string name="back">Back</string>
+    <string name="loading_conversation">Loading conversation</string>
+    <string name="empty_dialog">Send a message to begin.</string>
+    <string name="delete">Delete</string>
+    <string name="cancel">Cancel</string>
+    <string name="retry">Retry</string>
+    <string name="send">Send</string>
+    <string name="dismiss">Dismiss</string>
+    <string name="message_label">Message</string>
+    <string name="provisional_label">Provisional</string>
+
+    <!-- Turn states -->
+    <string name="generating">Generating\u2026</string>
+    <string name="cancelled">Cancelled</string>
+    <string name="failed">Failed</string>
+    <string name="interrupted">Interrupted</string>
+
+    <!-- Deletion -->
+    <string name="delete_dialog_title">Delete conversation?</string>
+    <string name="delete_dialog_message">This permanently deletes \u201c%1$s\u201d and all of its messages.</string>
+
+    <!-- Notices. Only stable error codes are shown, never provider or transcript text. -->
+    <string name="notice_request_cancelled">Request cancelled.</string>
+    <string name="notice_llm_not_configured">No language model is configured yet.</string>
+    <string name="notice_llm_auth_failed">The language model rejected the credentials.</string>
+    <string name="notice_llm_rate_limited">The language model is rate limited. Try again shortly.</string>
+    <string name="notice_llm_timeout">The language model request timed out.</string>
+    <string name="notice_llm_network">The network request failed.</string>
+    <string name="notice_persistence_failed">Could not save the conversation.</string>
+    <string name="notice_generic_error">Something went wrong.</string>
 </resources>
