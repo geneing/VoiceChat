@@ -77,7 +77,10 @@ dynamic-int8 ONNX graph (`11,123,370` bytes; source revision
 pause rather than on every frame. Its README documents the model as BSD-2-Clause;
 verify the exact artifact's license before use. The Android integration uses
 CPU to avoid NNAPI partition/fallback variability. These are useful design
-examples, not production-tuned values for this app.
+examples, not production-tuned values for this app. The
+[decision record](./decisions.md#33-smart-turn-v32-artifact-verified-separately)
+pins the exact re-export revision, size, and checksum to use, and marks the
+upstream Pipecat artifact separately.
 
 The reference also has both configuration tests (probability and silence
 limits) and an Android integration test that loads the optional model, feeds

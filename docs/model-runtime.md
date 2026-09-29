@@ -2,7 +2,10 @@
 
 This document defines the intended selection policy. It is not a list of
 currently integrated models; the repository has no model catalog or inference
-runtime yet.
+runtime yet. The verified runtime versions, the current (empty) speech-model
+allow-list, and the pinned Smart Turn artifact identity are recorded in the
+[decision record](./decisions.md); this document stays the policy the catalog
+must satisfy.
 
 ## Runtime categories
 

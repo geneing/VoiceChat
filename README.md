@@ -55,6 +55,9 @@ remote.
 ## Documentation
 
 - [Agent instructions](./AGENTS.md) — implementation and validation guardrails.
+- [Decision record (M00)](./docs/decisions.md) — verified toolchain, speech,
+  model-runtime, and provider decisions, the provider capability matrix, and the
+  deferred/unsupported list, with sources.
 - [Architecture](./docs/architecture.md) — intended pipeline and component
   boundaries.
 - [Model and runtime support](./docs/model-runtime.md) — provider and model
@@ -76,7 +79,10 @@ remote.
 
 ## Project status
 
-This repository currently contains documentation only. Android Studio setup,
-SDK requirements, Gradle commands, supported model catalog, and API-provider
-configuration should be documented once the corresponding implementation is
-chosen and verified.
+This repository currently contains documentation only. The M00
+[decision record](./docs/decisions.md) records verified SDK requirements,
+on-device speech choices, the initial model-runtime allow-list, and each
+provider's endpoint/auth/streaming/reasoning capabilities, with the deferred and
+unsupported items called out. The Gradle commands, model catalog entries, and
+provider implementations should be added once the corresponding milestone builds
+and verifies them.
