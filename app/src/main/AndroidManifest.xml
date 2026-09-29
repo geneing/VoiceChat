@@ -2,12 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-        No <uses-permission> is declared. The scaffold has no microphone, network,
-        notification, or storage capability yet, and AGENTS.md forbids requesting a
-        permission without the capability that needs it. Add each permission in the
-        milestone that implements it (microphone in M07, network for LLM providers in
-        M13/M14).
+        Microphone capture is implemented in M07 (com.voicechat.agent.audio).
+        RECORD_AUDIO is the only permission the app declares today; it is
+        requested at the point of use, never at app start. AGENTS.md forbids
+        declaring a permission without the capability that needs it, so add the
+        next permission (network for LLM providers) only in M13/M14.
     -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
         android:allowBackup="false"

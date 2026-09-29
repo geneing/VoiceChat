@@ -65,6 +65,33 @@ enum class DiagnosticAttribute {
 
     /** Set when an event is part of a barge-in transition. */
     BARGE_IN,
+
+    /*
+     * Microphone-capture attributes (M07). These carry only identifiers,
+     * normalized levels, and counts — never sample values or raw audio — so an
+     * audio capture event stays content-free like every other trace event.
+     */
+
+    /** Platform capture source (for example the `AudioRecord` audio source name). */
+    AUDIO_SOURCE,
+
+    /** Negotiated capture format, for example `16000Hz/mono/16bit`. */
+    AUDIO_FORMAT,
+
+    /** Active input route *kind* only; never the device's user-visible name. */
+    AUDIO_ROUTE,
+
+    /** Peak sample magnitude of a capture window, normalized to `[0, 1]`. */
+    AUDIO_PEAK_LEVEL,
+
+    /** RMS magnitude of a capture window, normalized to `[0, 1]`. */
+    AUDIO_RMS_LEVEL,
+
+    /** Count of samples in a capture window at or near full scale. */
+    AUDIO_CLIPPED_SAMPLES,
+
+    /** Count of frames discarded because the consumer could not keep up. */
+    AUDIO_DROPPED_FRAMES,
 }
 
 /**
