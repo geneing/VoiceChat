@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug-only manifest overlay (M08 hardware verification).
+
+    `SttProbeActivity` exists only in the debug variant so no probe, extra
+    permission, or test surface can reach a release artifact. It is exported
+    only so `adb shell am start` can drive it; the variant split keeps it out of
+    release builds entirely.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <activity
+            android:name=".debug.SttProbeActivity"
+            android:exported="true"
+            android:label="STT Probe (debug)">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
