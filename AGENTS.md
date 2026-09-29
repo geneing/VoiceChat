@@ -151,7 +151,13 @@ app/                        the only application module
     domain/, contracts/     JVM domain and contract tests
     fake/                   deterministic contract fakes
 .github/workflows/ci.yml    CI running the same fast checks
+test_data/                  speech sound files usable to simulate STT
+                            input in tests
 ```
+
+`test_data/` holds `.m4a` sound files that contain speech. They are local test
+input for simulating STT capture in tests, not app assets; do not package them
+in the APK.
 
 Gradle runs on the Windows host through the wrapper, never inside WSL. The
 project has no `local.properties`, so set the SDK path before each invocation:
