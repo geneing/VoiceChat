@@ -23,6 +23,12 @@ lifecycleViewmodelCompose = "2.11.0"
 spotless = "8.10.3"
 ktlint = "1.8.0"
 
+# On-device STT (M08). ML Kit GenAI Speech Recognition is the initial and only STT
+# engine (docs/decisions.md §2.1). The artifact is alpha and verified against
+# Google Maven on 2026-09-28:
+# https://dl.google.com/dl/android/maven2/com/google/mlkit/genai-speech-recognition/1.0.0-alpha1/genai-speech-recognition-1.0.0-alpha1.pom
+mlkitGenaiSpeech = "1.0.0-alpha1"
+
 # Coroutines/Flow for the bounded event-stream contracts. Already resolved
 # transitively by lifecycle/Compose; pinned explicitly so the domain layer does
 # not depend on a transitive version. See docs/decisions.md and M02.
@@ -52,6 +58,8 @@ androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4
 androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+# ML Kit GenAI Speech Recognition: the single on-device STT engine (M08).
+mlkit-genai-speech-recognition = { module = "com.google.mlkit:genai-speech-recognition", version.ref = "mlkitGenaiSpeech" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 junit = { module = "junit:junit", version.ref = "junit" }
