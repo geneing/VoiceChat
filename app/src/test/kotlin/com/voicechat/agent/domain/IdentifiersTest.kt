@@ -14,6 +14,8 @@ class IdentifiersTest {
         assertThrows(IllegalArgumentException::class.java) { ModelId("") }
         assertThrows(IllegalArgumentException::class.java) { EngineId("") }
         assertThrows(IllegalArgumentException::class.java) { UtteranceId("") }
+        assertThrows(IllegalArgumentException::class.java) { TraceId("") }
+        assertThrows(IllegalArgumentException::class.java) { TraceId("   ") }
     }
 
     @Test
@@ -24,5 +26,6 @@ class IdentifiersTest {
         assertEquals("gpt", ModelId("gpt").toString())
         assertEquals("mlkit-stt", EngineId("mlkit-stt").toString())
         assertEquals("utterance-1", UtteranceId("utterance-1").toString())
+        assertEquals("trace-1", TraceId("trace-1").toString())
     }
 }
