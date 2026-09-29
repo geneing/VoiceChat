@@ -10,10 +10,11 @@ possible through supported AICore / ML Kit GenAI APIs and a deliberately
 curated set of TensorFlow Lite (TFLite / LiteRT) models.
 
 The app is scaffolded and its core domain types and replaceable contracts exist
-(M02), but its voice, model, and provider features are not implemented yet.
-Treat the product documents as requirements and direction, not as proof that a
-feature, dependency, model, or device capability already exists. Update this
-file when the project structure and verified commands change.
+(M02), with deterministic audio-replay fixtures (M03) and privacy-safe turn
+tracing (M04), but its voice, model, and provider features are not implemented
+yet. Treat the product documents as requirements and direction, not as proof
+that a feature, dependency, model, or device capability already exists. Update
+this file when the project structure and verified commands change.
 
 ## Product and platform constraints
 
@@ -145,11 +146,15 @@ app/                        the only application module
   src/main/kotlin/com/voicechat/agent/
     domain/                 pure-Kotlin conversation/domain models (M02)
     contracts/              replaceable platform/provider interfaces (M02)
+    diagnostics/            privacy-safe turn tracing and timing (M04)
+    replay/                 deterministic PCM replay + fixtures (M03)
     ui/                     Compose UI
   src/main/res/                              strings, theme, launcher icon, rules
   src/test/kotlin/com/voicechat/agent/
     domain/, contracts/     JVM domain and contract tests
+    diagnostics/, replay/   JVM tracing and replay tests
     fake/                   deterministic contract fakes
+  src/test/resources/replay/                 frozen replay fixture bytes
 .github/workflows/ci.yml    CI running the same fast checks
 test_data/                  speech sound files usable to simulate STT
                             input in tests

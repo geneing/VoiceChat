@@ -74,6 +74,10 @@ remote.
   conversation-history, settings, and future roadmap requirements.
 - [Voice quality and latency](./docs/voice-quality-and-latency.md) — streaming,
   interruption, recognition quality, and measurement strategy.
+- [Audio replay harness](./docs/audio-replay-harness.md) — deterministic PCM
+  replay, fixture manifest, and synthetic speech-test variants (M03).
+- [Turn tracing](./docs/turn-tracing.md) — per-turn trace IDs, stage timing,
+  bounded non-blocking export, and default redaction (M04).
 - [Android device notes](./docs/android-device-notes.md) — Pixel 10 findings
   from GVP and Smart Turn v3.2 integration lessons from speech-android to
   validate for this app rather than copy blindly.
@@ -107,15 +111,17 @@ a verified `distributionSha256Sum`.
 
 ## Project status
 
-The repository builds and runs a minimal Android app (milestone M01) and exposes
-the core domain types and replaceable contracts for the voice pipeline (milestone
-M02). `:app` is the only Gradle module. The Compose screen remains a placeholder;
-the `domain` and `contracts` packages are pure Kotlin (no `android.*` imports,
-enforced by a unit test), and the JVM test suite covers domain invariants,
-contract event ordering, cancellation, and the deterministic fakes under
-`app/src/test/kotlin/com/voicechat/agent/fake`. There is still no microphone,
-STT/TTS, model, provider, or persistence implementation, and the app declares no
-permissions.
+The repository builds and runs a minimal Android app (milestone M01), exposes
+the core domain types and replaceable contracts for the voice pipeline (M02), and
+adds deterministic audio-replay fixtures for speech-path tests (M03) plus
+privacy-safe per-turn tracing and timing (M04). `:app` is the only Gradle module.
+The Compose screen remains a placeholder; the `domain`, `contracts`,
+`diagnostics`, and `replay` packages are pure Kotlin (no `android.*` imports,
+enforced by a unit test), and the 116-test JVM suite covers domain invariants,
+contract event ordering and cancellation, the deterministic fakes, fixture
+replay determinism, and trace correlation/redaction/timing. There is still no
+microphone, STT/TTS, model, provider, or persistence implementation, and the app
+declares no permissions.
 
 The scaffold requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17
 source/target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0,
