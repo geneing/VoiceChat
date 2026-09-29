@@ -6,8 +6,13 @@ agp = "9.4.0"
 # classpath in build.gradle.kts. The Compose compiler plugin must match this.
 kotlin = "2.4.20"
 # KSP uses decoupled versioning from Kotlin 2.3 onward; KSP 2.3.x supports
-# Kotlin 2.4.x. ksp is recorded for the Room work in M05 and is not applied yet.
+# Kotlin 2.4.x. Applied by the app module for Room code generation (M05).
 ksp = "2.3.11"
+
+# Persistence — Room chosen in docs/decisions.md §1 ("Persistence").
+# Room 2.8.5 (2026-09-09) is the pinned stable release; room-ktx was merged into
+# room-runtime in 2.7.0, so no separate KTX artifact is declared.
+room = "2.8.5"
 
 # AndroidX / Compose — see docs/decisions.md §1.
 activityCompose = "1.13.0"
@@ -25,6 +30,10 @@ coroutines = "1.9.0"
 
 # Testing.
 junit = "4.13.2"
+# Robolectric runs the Room repository/schema tests on the JVM so they need no
+# device (see docs/persistence.md). 4.16.x supports API 23–36; tests pin API 35
+# so they also run on the JDK 17 CI image (API 36 android-all jars need JDK 21).
+robolectric = "4.16.1"
 
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
@@ -35,11 +44,15 @@ androidx-compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics" }
 androidx-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
 androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycleViewmodelCompose" }
+androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 junit = { module = "junit:junit", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }

@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Backups are disabled for the scaffold. Conversation transcripts and provider
-    credentials are sensitive (see docs/privacy-and-security.md), so nothing is
-    sent to cloud backup or device-to-device transfer. Revisit deliberately when
-    M05 defines conversation retention and backup semantics.
+    M05 decision: conversation transcripts live in an app-private Room database
+    (databases/voicechat-conversations.db) and are sensitive (see
+    docs/privacy-and-security.md and docs/persistence.md). Backups stay disabled
+    (android:allowBackup="false") and both cloud backup and device transfer exclude
+    every domain, so no transcript or future credential is exported off-device.
+    Deletion is in-app only; there is no cross-device restore.
 -->
 <data-extraction-rules>
     <cloud-backup>

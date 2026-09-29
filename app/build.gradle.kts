@@ -1,6 +1,11 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
+
+    // Room's annotation processor (docs/decisions.md §1). KSP is applied here and
+    // not the Room Gradle plugin, so the schema location below is an explicit KSP
+    // argument the build and the schema-export test can both point at.
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -36,6 +41,21 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests {
+            // Robolectric needs the merged resources and manifest to build an
+            // application context for the Room repository tests.
+            isIncludeAndroidResources = true
+        }
+    }
+}
+
+// Export the Room schema so migrations have a checked-in contract to review.
+// The app has a single schema version today (see docs/persistence.md); the
+// schema-export test asserts the JSON is produced and matches version 1.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -52,8 +72,15 @@ dependencies {
     // Bounded event-stream contracts in the domain/contracts packages.
     implementation(libs.kotlinx.coroutines.core)
 
+    // Durable conversation storage (M05). Room entity/DAO code lives in the
+    // persistence package and maps to the platform-free domain types.
+    implementation(libs.androidx.room.runtime)
+    ksp(libs.androidx.room.compiler)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Runs the Room repository tests on the JVM (no device, no live services).
+    testImplementation(libs.robolectric)
 }

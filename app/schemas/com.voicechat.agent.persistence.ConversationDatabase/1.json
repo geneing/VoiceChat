@@ -1,0 +1,158 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "bddb3b991d06ac0bba715225e56dd750",
+    "entities": [
+      {
+        "tableName": "conversations",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `createdAtEpochMillis` INTEGER NOT NULL, `updatedAtEpochMillis` INTEGER NOT NULL, `title` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMillis",
+            "columnName": "createdAtEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMillis",
+            "columnName": "updatedAtEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "turns",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `conversationId` TEXT NOT NULL, `position` INTEGER NOT NULL, `kind` TEXT NOT NULL, `transcriptText` TEXT, `transcriptRevision` INTEGER, `transcriptIsFinal` INTEGER, `transcriptLanguageTag` TEXT, `transcriptConfidence` REAL, `userTurnSource` TEXT, `generatedText` TEXT, `generationState` TEXT, `deliveredText` TEXT, `deliveryState` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`conversationId`) REFERENCES `conversations`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conversationId",
+            "columnName": "conversationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transcriptText",
+            "columnName": "transcriptText",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "transcriptRevision",
+            "columnName": "transcriptRevision",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "transcriptIsFinal",
+            "columnName": "transcriptIsFinal",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "transcriptLanguageTag",
+            "columnName": "transcriptLanguageTag",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "transcriptConfidence",
+            "columnName": "transcriptConfidence",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "userTurnSource",
+            "columnName": "userTurnSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "generatedText",
+            "columnName": "generatedText",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "generationState",
+            "columnName": "generationState",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "deliveredText",
+            "columnName": "deliveredText",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "deliveryState",
+            "columnName": "deliveryState",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_turns_conversationId",
+            "unique": false,
+            "columnNames": [
+              "conversationId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_turns_conversationId` ON `${TABLE_NAME}` (`conversationId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "conversations",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "conversationId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'bddb3b991d06ac0bba715225e56dd750')"
+    ]
+  }
+}
