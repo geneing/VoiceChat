@@ -78,3 +78,22 @@ value class UtteranceId(
 
     override fun toString(): String = value
 }
+
+/**
+ * Identifies one trace that correlates every diagnostic event for a
+ * conversation turn.
+ *
+ * A trace is deliberately separate from [TurnId]: a turn may be retried or a
+ * trace may span adjacent pipeline work, but all events that describe one
+ * latency story share a [TraceId] (see `docs/turn-tracing.md`).
+ */
+@JvmInline
+value class TraceId(
+    val value: String,
+) {
+    init {
+        require(value.isNotBlank()) { "TraceId must not be blank" }
+    }
+
+    override fun toString(): String = value
+}

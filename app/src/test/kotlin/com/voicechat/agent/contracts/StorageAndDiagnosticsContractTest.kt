@@ -5,6 +5,7 @@ import com.voicechat.agent.domain.ConversationId
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.ModelId
 import com.voicechat.agent.domain.ProviderId
+import com.voicechat.agent.domain.TraceId
 import com.voicechat.agent.domain.Transcript
 import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.domain.UserTurn
@@ -114,12 +115,14 @@ class StorageAndDiagnosticsContractTest {
     fun diagnosticsRecordsEventsInOrder() {
         val sink = RecordingDiagnosticsSink()
         val turnId = TurnId("turn-1")
+        val traceId = TraceId("trace-1")
         val started =
             DiagnosticEvent(
                 stage = DiagnosticStage.LLM_REQUEST,
                 outcome = DiagnosticOutcome.STARTED,
                 monotonicTimeNanos = 1_000L,
                 turnId = turnId,
+                traceId = traceId,
             )
         val completed = started.copy(outcome = DiagnosticOutcome.COMPLETED, durationNanos = 500L)
 
@@ -128,6 +131,9 @@ class StorageAndDiagnosticsContractTest {
 
         assertEquals(listOf(started, completed), sink.events)
         assertEquals(listOf(DiagnosticOutcome.STARTED, DiagnosticOutcome.COMPLETED), sink.events.map { it.outcome })
+        assertTrue(sink.isSingleTrace)
+        assertEquals(listOf(traceId), sink.traceIds)
+        assertTrue(sink.events.all { it.traceId == traceId })
     }
 
     @Test
