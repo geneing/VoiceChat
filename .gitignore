@@ -1,6 +1,10 @@
 # Gradle files
 .gradle/
 build/
+.kotlin/
+
+# Local CodeGraph tool index (developer tooling, not part of the project)
+.codegraph/
 
 # Local configuration file (sdk path, etc)
 local.properties

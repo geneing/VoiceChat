@@ -9,10 +9,10 @@ speech-to-text (STT) and text-to-speech (TTS), with the primary language-model
 possible through supported AICore / ML Kit GenAI APIs and a deliberately
 curated set of TensorFlow Lite (TFLite / LiteRT) models.
 
-The app and its architecture are not implemented yet. Treat these documents as
-requirements and direction, not as proof that a feature, dependency, build,
-model, or device capability already exists. Update this file when the actual
-project structure and verified commands are established.
+The app is scaffolded but its voice, model, and provider features are not
+implemented yet. Treat the product documents as requirements and direction, not
+as proof that a feature, dependency, model, or device capability already exists.
+Update this file when the project structure and verified commands change.
 
 ## Product and platform constraints
 
@@ -66,9 +66,11 @@ project structure and verified commands are established.
   personalized memory and user-configurable prompts are future-release scope;
   keep them distinct from basic transcript persistence and define consent,
   retention, and deletion before implementing memory.
-- Determine `minSdk`, `compileSdk`, `targetSdk`, and dependency versions from
-  verified Android and library requirements when the Gradle project is added.
-  Do not infer them from the reference repositories.
+- `minSdk`, `compileSdk`, `targetSdk`, and dependency versions are pinned in
+  `gradle/libs.versions.toml` and justified in
+  [docs/decisions.md](./docs/decisions.md). Re-verify against current official
+  requirements before changing them; do not copy versions from the reference
+  repositories.
 
 ## Architecture guidance
 
@@ -124,9 +126,44 @@ interfaces are design guidance, not mandated symbol names.
 - Validate on Pixel 10 for the primary end-to-end path, and test unavailable
   AICore/model/network cases. Never make performance claims without recording
   device, model, runtime, conditions, and measurement method.
-- This is currently a docs-only skeleton: there is no Gradle wrapper or Android
-  source yet. Do not claim a build or tests passed until they exist; add the
-  verified project-specific commands here when scaffolding is introduced.
+- Never claim a build, test, or device run passed unless you ran it. Report the
+  exact command and its real outcome, including blockers.
+
+## Project structure and commands
+
+Single Gradle module, no speculative feature modules:
+
+```
+build.gradle.kts            root build; pins KGP above AGP 9's bundled version
+settings.gradle.kts         repository and module configuration
+gradle.properties           build properties (JVM args, caching, AndroidX)
+gradle/libs.versions.toml   version catalog (toolchain, AndroidX, tooling)
+gradlew / gradlew.bat       Gradle wrapper (Gradle 9.6.0, checksum-verified)
+app/                        the only application module
+  lint.xml                  lint configuration
+  src/main/kotlin/com/voicechat/agent/       app + Compose UI
+  src/main/res/                              strings, theme, launcher icon, rules
+  src/test/kotlin/com/voicechat/agent/       JVM unit tests
+.github/workflows/ci.yml    CI running the same fast checks
+```
+
+Gradle runs on the Windows host through the wrapper, never inside WSL. The
+project has no `local.properties`, so set the SDK path before each invocation:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+.\gradlew.bat :app:assembleDebug        # build the debug APK
+.\gradlew.bat :app:testDebugUnitTest    # JVM unit tests
+.\gradlew.bat :app:lintDebug            # Android lint
+.\gradlew.bat spotlessCheck             # formatting check (Spotless + ktlint)
+.\gradlew.bat spotlessApply             # apply formatting
+```
+
+A clean checkout currently does not need the Android SDK license prompt; install
+`platforms;android-37.0` and `build-tools;36.0.0` first if a machine is missing
+them. Device-level checks (microphone, AICore/ML Kit, TFLite/LiteRT, real TTS,
+audio routing) have no automation yet and must be reported as manual runs.
 
 ## Git workflow
 

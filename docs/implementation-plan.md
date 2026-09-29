@@ -2,9 +2,9 @@
 
 This plan turns the product and architecture documents into small,
 independently reviewable milestones that can be assigned to implementation
-agents. It describes future work: this repository is currently documentation
-only, and none of these milestones should be reported as complete until the
-code and validation exist.
+agents. It describes future work: only M00 (decisions) and M01 (buildable
+Android scaffold) are implemented, so no other milestone should be reported as
+complete until its code and validation exist.
 
 ## Delivery rules
 

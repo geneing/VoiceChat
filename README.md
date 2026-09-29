@@ -1,7 +1,9 @@
 # Android Voice Agent
 
-A Kotlin Android voice-agent project using Jetpack Compose, starting as a
-documentation scaffold for Pixel 10.
+A Kotlin Android voice-agent project using Jetpack Compose, targeting Pixel 10.
+The repository contains a buildable Android scaffold plus the design and decision
+documentation for the voice pipeline. The voice, model, and provider features are
+not implemented yet.
 
 ## Intended experience
 
@@ -34,10 +36,11 @@ prompts. Development will emphasize deterministic replay of recorded and
 synthetic speech, including noisy and distorted car/street scenarios, alongside
 clear local diagnostics for LLM requests and pipeline timing.
 
-The Android app, Gradle build, model catalog, and runtime integrations have not
-been created yet. This README describes the intended product; it does not claim
-that these features are implemented. In particular, the normal external-LLM
-path needs network access and is not fully offline.
+The repository contains a single-module Gradle app (`:app`) that builds and runs
+a minimal Jetpack Compose screen. It declares no permissions and contains no
+microphone capture, STT/TTS, model, provider, or persistence code; those arrive in
+later milestones. The normal external-LLM path will need network access and is not
+fully offline.
 
 ## Device and runtime direction
 
@@ -77,12 +80,41 @@ remote.
 - [Implementation plan](./docs/implementation-plan.md) — sequenced,
   agent-sized milestones with dependencies and acceptance checks.
 
+## Building and testing
+
+Gradle always runs on the Windows host through the wrapper. Set the Android SDK
+location first because the project has no `local.properties`:
+
+```powershell
+# Windows PowerShell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+.\gradlew.bat :app:assembleDebug        # build the debug APK
+.\gradlew.bat :app:testDebugUnitTest    # JVM unit tests
+.\gradlew.bat :app:lintDebug            # Android lint
+.\gradlew.bat spotlessCheck             # formatting check (Spotless + ktlint)
+.\gradlew.bat spotlessApply             # apply formatting
+```
+
+CI (`.github/workflows/ci.yml`) runs the same fast checks on push and pull
+requests. Toolchain versions are pinned in
+[`gradle/libs.versions.toml`](./gradle/libs.versions.toml) and recorded in the
+[decision record](./docs/decisions.md); the Gradle wrapper pins Gradle 9.6.0 with
+a verified `distributionSha256Sum`.
+
 ## Project status
 
-This repository currently contains documentation only. The M00
-[decision record](./docs/decisions.md) records verified SDK requirements,
-on-device speech choices, the initial model-runtime allow-list, and each
-provider's endpoint/auth/streaming/reasoning capabilities, with the deferred and
-unsupported items called out. The Gradle commands, model catalog entries, and
-provider implementations should be added once the corresponding milestone builds
-and verifies them.
+The repository builds and runs a minimal Android app (milestone M01). `:app` is
+the only Gradle module and launches an empty Compose screen; it declares no
+permissions and has no microphone, STT/TTS, model, provider, or persistence code.
+The scaffold requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17
+source/target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0,
+Kotlin 2.4.20, Compose BOM 2026.09.00, `compileSdk 37`, `targetSdk 36`, and
+`minSdk 31`. The reasoning behind each value is in the
+[decision record](./docs/decisions.md).
+
+The M00 [decision record](./docs/decisions.md) also records the on-device speech
+choices, the initial model-runtime allow-list, and each provider's
+endpoint/auth/streaming/reasoning capabilities, with the deferred and unsupported
+items called out. Model catalog entries, provider implementations, and speech
+integration are added by later milestones and are not implemented yet.

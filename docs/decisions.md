@@ -11,6 +11,9 @@ or **deferred** rather than assumed.
   implementing the milestone that depends on it.
 - This record **adds no application dependencies**. It only names versions and
   runtimes that M01 and later milestones must pin in the version catalog.
+- The section below is the M00 record. Items M00 deferred to M01 (the exact
+  Kotlin/KSP/Compose-compiler versions and the formatting plugin) are now
+  resolved; see §1 and "Build items resolved at M01".
 - No secret, key, token, or private endpoint appears here. Provider endpoints
   listed are the providers' public documented base URLs.
 
@@ -23,8 +26,8 @@ Chosen to satisfy verified minimums, not copied from the reference projects.
 | JDK | 17 | AGP 9.4 minimum and default JDK is 17 (AGP 9.4 release notes; "JDK 17"). A Java 21 toolchain may be used later but is not required. |
 | Gradle | 9.6.0 | AGP 9.4 minimum/default Gradle is 9.6.0 (AGP 9.4 release notes). |
 | Android Gradle Plugin | 9.4.0 | Current release notes are AGP 9.4.0 (Sept 2026); max supported API level 37; Android Studio Quail 4 (2026.1.4) supports AGP 7.1–9.4. |
-| Kotlin | AGP 9 built-in Kotlin; declare a KGP version only if needed (verify exact at M01) | AGP 9.0+ enables built-in Kotlin by default; `org.jetbrains.kotlin.android` must not be applied with the new DSL. Kotlin 2.4.20 was released 2026-09-07 and supports Gradle 7.6.3–9.7.0. The exact AGP↔KGP↔Compose-compiler trio must be confirmed at M01. |
-| Compose compiler | `org.jetbrains.kotlin.plugin.compose`, version matching the resolved Kotlin version | Kotlin 2.0+ uses the Compose Compiler Gradle plugin; the compatibility map says "you don't have to check Compose to Kotlin compatibility" when the plugin is used. |
+| Kotlin | **2.4.20**, pinned via the root buildscript classpath (AGP 9.4 bundles 2.2.10) | Resolved at M01. AGP 9.0+ enables built-in Kotlin by default, and `org.jetbrains.kotlin.android` must not be applied. The AGP 9.4.0 POM depends on KGP 2.2.10; the AGP release notes document raising it with a `buildscript { classpath(...) }` entry, which M01 pins to 2.4.20. KGP 2.4.20 supports Gradle 7.6.3–9.7.0, so Gradle 9.6.0 is in range. Verified with `gradlew buildEnvironment`: `kotlin-gradle-plugin:2.2.10 -> 2.4.20`. |
+| Compose compiler | `org.jetbrains.kotlin.plugin.compose` **2.4.20** | Must match the Kotlin compiler version; M01 pins both to 2.4.20. Kotlin 2.0+ uses the Compose Compiler Gradle plugin; the compatibility map says "you don't have to check Compose to Kotlin compatibility" when the plugin is used. |
 | compileSdk | 37 (Android 17) | Compose 1.12.0+ **requires** `compileSdk 37` and AGP 9; API 37 min AGP is 9.1.1. |
 | targetSdk | 36 (Android 16) | Google Play requires target ≥ 36 for new apps/updates from 31 Aug 2026 (extension to 1 Nov 2026); 37 becomes required 31 Aug 2027. `compileSdk` is independent of `targetSdk`. |
 | minSdk | 31 (Android 12) | On-device STT is only broadly available at API 31+: ML Kit GenAI Speech Recognition Basic needs API 31+, and platform `SpeechRecognizer.createOnDeviceSpeechRecognizer` is API 31. The ML Kit library itself needs API 26+, but below 31 there is no on-device STT path, so the app could not do its core job. |
@@ -38,20 +41,31 @@ Chosen to satisfy verified minimums, not copied from the reference projects.
 | Testing | JUnit4 + Kotlin test for JVM unit tests; `androidx.compose.ui:ui-test-junit4` for UI; Turbine for Flow | Standard, dependency-level choices; pin at M01. |
 | Package identity | Provisional `applicationId`/`namespace` `com.voicechat.agent` | No owner domain is established in the repository. This is a convenience identifier, not a claim of ownership; it must be finalized to a controlled domain before any distribution. Cheap to change now, disruptive after publishing. |
 
-### Deferred build items
+### Build items resolved at M01
 
-- **Exact Kotlin/KSP/Compose-compiler versions.** AGP 9's built-in Kotlin changes
-  how the Kotlin and Compose compiler plugin versions are declared. M01 must
-  pin them from the live Kotlin compatibility table and KSP release for the
-  chosen Kotlin version. This is labeled a **known unknown**, not guessed.
-- **Formatting/lint plugin** (e.g. Spotless + ktlint) is recommended but not
-  chosen here; select and pin at M01.
+- **Kotlin / KSP / Compose-compiler versions.** Pinned to Kotlin **2.4.20**,
+  Compose compiler plugin **2.4.20** (must match Kotlin), and KSP **2.3.11**.
+  Kotlin and the Compose plugin are applied now; KSP is recorded in the version
+  catalog but is not applied until M05 adds Room. KSP dropped the
+  Kotlin-coupled version scheme from 2.3 onward, and KSP 2.3.x targets Kotlin
+  2.4.x (the 2.3.10/2.3.11 release notes fix Kotlin 2.4.0 module-name handling
+  and AGP 9 built-in Kotlin R-class resolution). Kotlin is raised above AGP
+  9.4's bundled 2.2.10 through the documented buildscript classpath override.
+- **Formatting/lint plugin.** Spotless **8.10.3** with ktlint **1.8.0** is
+  applied at the root project; `spotlessCheck` covers `*.kt` and `*.gradle.kts`.
+  A root `.editorconfig` sets
+  `ktlint_function_naming_ignore_when_annotated_with = Composable` so PascalCase
+  composables pass ktlint.
+- **Build JDK.** M01 was built and verified with Android Studio's bundled JBR
+  (JDK 25). AGP 9.4 enforces JDK 17 as a *minimum*, and the app compiles to Java
+  17 bytecode (`compileOptions` source/target 17). No JDK 17 is installed on the
+  verification machine; CI uses Temurin 17.
 
-### Check commands (to be created and verified at M01)
+### Check commands (verified at M01)
 
-No Gradle wrapper exists yet, so **none of these run today**; they are the
-commands M01 must establish and document, using the Windows wrapper as required
-by the workspace environment:
+These run today with the checked-in Gradle wrapper (Gradle 9.6.0, pinned with a
+verified `distributionSha256Sum`), using the Windows wrapper as required by the
+workspace environment:
 
 ```
 # Set the Android SDK for the build (Windows PowerShell)
@@ -60,7 +74,8 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 .\gradlew.bat :app:assembleDebug
 .\gradlew.bat :app:testDebugUnitTest
 .\gradlew.bat :app:lintDebug
-.\gradlew.bat spotlessCheck      # once a formatter is chosen
+.\gradlew.bat spotlessCheck      # formatting check (Spotless + ktlint)
+.\gradlew.bat spotlessApply      # apply formatting
 ```
 
 ## 2. On-device speech decisions
@@ -314,8 +329,8 @@ provider's official docs read at the access date.
 
 Labeled, not resolved. Each is owned by a later milestone.
 
-- Exact Kotlin/KSP/Compose-compiler version trio under AGP 9 built-in Kotlin
-  (owner: M01).
+- *Resolved at M01:* Kotlin 2.4.20 / KSP 2.3.11 / Compose compiler 2.4.20 under
+  AGP 9 built-in Kotlin, plus Spotless/ktlint (see §1).
 - OpenCode Go and OpenCode Zen streaming event shapes and reasoning controls
   (owners: M17, M18).
 - Hermes Agent API Server streaming event shape and auth/session semantics

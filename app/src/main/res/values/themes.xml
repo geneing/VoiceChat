@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Compose draws the UI; this theme only styles the window before Compose
+        attaches and keeps the system action bar out of the way.
+    -->
+    <style name="Theme.VoiceAgent" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

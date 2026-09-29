@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!--
+        aapt2 requires <adaptive-icon> resources to live in a folder with a -v26
+        (or later) qualifier even when minSdk is already 26+, so lint's advice to
+        merge mipmap-anydpi-v26 into mipmap-anydpi does not hold for launcher
+        icons. Scoped to that folder only.
+    -->
+    <issue id="ObsoleteSdkInt">
+        <ignore path="src/main/res/mipmap-anydpi-v26" />
+    </issue>
+</lint>

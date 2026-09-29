@@ -1,0 +1,38 @@
+[versions]
+# Toolchain — see docs/decisions.md §1. AGP 9.x uses built-in Kotlin, so there is
+# no `kotlin-android` plugin here.
+agp = "9.4.0"
+# Kotlin is pinned above AGP 9.4's bundled KGP 2.2.10 via the root buildscript
+# classpath in build.gradle.kts. The Compose compiler plugin must match this.
+kotlin = "2.4.20"
+# KSP uses decoupled versioning from Kotlin 2.3 onward; KSP 2.3.x supports
+# Kotlin 2.4.x. ksp is recorded for the Room work in M05 and is not applied yet.
+ksp = "2.3.11"
+
+# AndroidX / Compose — see docs/decisions.md §1.
+activityCompose = "1.13.0"
+composeBom = "2026.09.00"
+lifecycleViewmodelCompose = "2.11.0"
+
+# Developer tooling (formatting / lint).
+spotless = "8.10.3"
+ktlint = "1.8.0"
+
+# Testing.
+junit = "4.13.2"
+
+[libraries]
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
+androidx-compose-ui = { module = "androidx.compose.ui:ui" }
+androidx-compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics" }
+androidx-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycleViewmodelCompose" }
+junit = { module = "junit:junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
