@@ -23,7 +23,11 @@ changed and users are informed.
   user-provided credential flow; obfuscation is not secret storage.
 - Protect user-provided API keys at rest with an Android Keystore-backed
   approach, keep them out of backups where appropriate, and provide clear
-  replace/remove controls. Do not persist provider passwords.
+  replace/remove controls. Do not persist provider passwords. Do not use the
+  deprecated `androidx.security:security-crypto` helpers
+  (`EncryptedSharedPreferences`, `MasterKey`, `EncryptedFile`); the API docs
+  direct callers to AndroidKeyStore via `javax.crypto.KeyGenerator` (see the
+  [decision record](./decisions.md)).
 - A QR code is only a transport for a provider-authorized pairing challenge or
   URL; never encode a reusable API key, access token, or password in a QR code.
   Prefer short-lived, single-use challenges and verify the completed pairing

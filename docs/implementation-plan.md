@@ -89,7 +89,8 @@ decision record.
 
 **Deliverables:** A compact decision record in the relevant docs; a provider
 capability matrix; explicit deferred/unsupported items and the reason for
-each. Do not add application dependencies in this milestone.
+each. Do not add application dependencies in this milestone. Delivered in
+[docs/decisions.md](./decisions.md).
 
 **Validation / acceptance:** Every chosen API and artifact has an authoritative
 source and a stated compatibility basis. Any unknown remains labeled unknown;

@@ -3,6 +3,11 @@
 This is the planned provider and account-connection scope. No provider client,
 login flow, API-key storage, or QR pairing is implemented yet.
 
+The verified per-provider endpoint, authentication, model-discovery, streaming,
+and reasoning capabilities—and the providers where a capability remains
+unknown—are in the [decision record's provider capability matrix](./decisions.md#4-provider-capability-matrix).
+Keep that matrix current when a provider's official documentation changes.
+
 ## Planned external providers
 
 | Provider | Configuration direction |
