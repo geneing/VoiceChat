@@ -1,9 +1,9 @@
 # Android Voice Agent
 
 A Kotlin Android voice-agent project using Jetpack Compose, targeting Pixel 10.
-The repository contains a buildable Android scaffold plus the design and decision
-documentation for the voice pipeline. The voice, model, and provider features are
-not implemented yet.
+The repository contains a buildable Android scaffold, a pure-Kotlin domain and
+contract layer for the voice pipeline, and the design and decision documentation.
+The voice, model, and provider features are not implemented yet.
 
 ## Intended experience
 
@@ -37,10 +37,13 @@ synthetic speech, including noisy and distorted car/street scenarios, alongside
 clear local diagnostics for LLM requests and pipeline timing.
 
 The repository contains a single-module Gradle app (`:app`) that builds and runs
-a minimal Jetpack Compose screen. It declares no permissions and contains no
-microphone capture, STT/TTS, model, provider, or persistence code; those arrive in
-later milestones. The normal external-LLM path will need network access and is not
-fully offline.
+a minimal Jetpack Compose screen. Its `com.voicechat.agent.domain` and
+`com.voicechat.agent.contracts` packages hold the pure-Kotlin conversation
+models and the replaceable audio, STT, VAD/turn-completion, LLM, TTS, model,
+persistence, and diagnostics interfaces (M02). It declares no permissions and
+contains no microphone capture, STT/TTS, model, provider, or persistence
+implementation; those arrive in later milestones. The normal external-LLM path
+will need network access and is not fully offline.
 
 ## Device and runtime direction
 
@@ -104,13 +107,21 @@ a verified `distributionSha256Sum`.
 
 ## Project status
 
-The repository builds and runs a minimal Android app (milestone M01). `:app` is
-the only Gradle module and launches an empty Compose screen; it declares no
-permissions and has no microphone, STT/TTS, model, provider, or persistence code.
+The repository builds and runs a minimal Android app (milestone M01) and exposes
+the core domain types and replaceable contracts for the voice pipeline (milestone
+M02). `:app` is the only Gradle module. The Compose screen remains a placeholder;
+the `domain` and `contracts` packages are pure Kotlin (no `android.*` imports,
+enforced by a unit test), and the JVM test suite covers domain invariants,
+contract event ordering, cancellation, and the deterministic fakes under
+`app/src/test/kotlin/com/voicechat/agent/fake`. There is still no microphone,
+STT/TTS, model, provider, or persistence implementation, and the app declares no
+permissions.
+
 The scaffold requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17
 source/target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0,
 Kotlin 2.4.20, Compose BOM 2026.09.00, `compileSdk 37`, `targetSdk 36`, and
-`minSdk 31`. The reasoning behind each value is in the
+`minSdk 31`. Coroutines are pinned to 1.9.0, the version already resolved
+transitively by AndroidX lifecycle. The reasoning behind each value is in the
 [decision record](./docs/decisions.md).
 
 The M00 [decision record](./docs/decisions.md) also records the on-device speech

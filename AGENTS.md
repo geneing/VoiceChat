@@ -9,10 +9,11 @@ speech-to-text (STT) and text-to-speech (TTS), with the primary language-model
 possible through supported AICore / ML Kit GenAI APIs and a deliberately
 curated set of TensorFlow Lite (TFLite / LiteRT) models.
 
-The app is scaffolded but its voice, model, and provider features are not
-implemented yet. Treat the product documents as requirements and direction, not
-as proof that a feature, dependency, model, or device capability already exists.
-Update this file when the project structure and verified commands change.
+The app is scaffolded and its core domain types and replaceable contracts exist
+(M02), but its voice, model, and provider features are not implemented yet.
+Treat the product documents as requirements and direction, not as proof that a
+feature, dependency, model, or device capability already exists. Update this
+file when the project structure and verified commands change.
 
 ## Product and platform constraints
 
@@ -141,9 +142,14 @@ gradle/libs.versions.toml   version catalog (toolchain, AndroidX, tooling)
 gradlew / gradlew.bat       Gradle wrapper (Gradle 9.6.0, checksum-verified)
 app/                        the only application module
   lint.xml                  lint configuration
-  src/main/kotlin/com/voicechat/agent/       app + Compose UI
+  src/main/kotlin/com/voicechat/agent/
+    domain/                 pure-Kotlin conversation/domain models (M02)
+    contracts/              replaceable platform/provider interfaces (M02)
+    ui/                     Compose UI
   src/main/res/                              strings, theme, launcher icon, rules
-  src/test/kotlin/com/voicechat/agent/       JVM unit tests
+  src/test/kotlin/com/voicechat/agent/
+    domain/, contracts/     JVM domain and contract tests
+    fake/                   deterministic contract fakes
 .github/workflows/ci.yml    CI running the same fast checks
 ```
 

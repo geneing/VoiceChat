@@ -2,9 +2,10 @@
 
 This plan turns the product and architecture documents into small,
 independently reviewable milestones that can be assigned to implementation
-agents. It describes future work: only M00 (decisions) and M01 (buildable
-Android scaffold) are implemented, so no other milestone should be reported as
-complete until its code and validation exist.
+agents. It describes future work: M00 (decisions), M01 (buildable Android
+scaffold), and M02 (core domain types and replaceable contracts) are
+implemented, so no later milestone should be reported as complete until its
+code and validation exist.
 
 ## Delivery rules
 
@@ -142,6 +143,15 @@ assumption is introduced.
 transitions, cancellation, and serialization where applicable. Platform and
 vendor types do not leak into the conversation domain. Interfaces stay small
 and do not introduce a generic plugin framework.
+
+**Delivered:** pure-Kotlin domain models in
+`app/src/main/kotlin/com/voicechat/agent/domain`, replaceable contract
+interfaces in `.../contracts`, and deterministic fakes in
+`app/src/test/kotlin/com/voicechat/agent/fake`. Focused JVM tests cover event
+ordering, invalid state transitions, cancellation, serialized error/ID tokens,
+and a source-level guard that the domain and contract packages contain no
+`android.`/`androidx.` imports. No platform, network, model, or persistence
+implementation is included; those arrive in later milestones.
 
 ### M03 — Build deterministic audio replay and speech-test foundations
 
