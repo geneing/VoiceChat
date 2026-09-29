@@ -5,9 +5,11 @@ independently reviewable milestones that can be assigned to implementation
 agents. It describes future work: M00 (decisions), M01 (buildable Android
 scaffold), M02 (core domain types and replaceable contracts), M03 (deterministic
 audio replay and speech-test foundations), M04 (privacy-safe turn tracing and
-timing), M05 (conversation persistence and bounded context), and M06 (Compose
-conversation UI and manual text path) are implemented, so no later milestone
-should be reported as complete until its code and validation exist.
+timing), M05 (conversation persistence and bounded context), M06 (Compose
+conversation UI and manual text path), M07 (microphone capture and audio
+lifecycle), and M08 (on-device ML Kit GenAI speech-to-text) are implemented, so
+no later milestone should be reported as complete until its code and validation
+exist.
 
 ## Delivery rules
 

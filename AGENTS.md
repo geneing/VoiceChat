@@ -12,12 +12,13 @@ curated set of TensorFlow Lite (TFLite / LiteRT) models.
 The app is scaffolded and its core domain types and replaceable contracts exist
 (M02), with deterministic audio-replay fixtures (M03), privacy-safe turn
 tracing (M04), durable Room-backed conversation persistence with a bounded
-context builder (M05), and a Compose conversation UI with a manual text path
-(M06). Its voice, model, and provider features are still not implemented yet.
-Treat the product documents as requirements and direction, not as proof that a
-feature, dependency, model, or device capability already exists. Update this
-file when the project structure and verified commands change. Unresolved risks,
-open decisions, and known limitations are tracked in
+context builder (M05), a Compose conversation UI with a manual text path (M06),
+microphone capture (M07), and on-device ML Kit GenAI speech-to-text (M08). TTS,
+VAD/end-of-turn detection, model/runtime providers, and LLM providers are still
+not implemented. Treat the product documents as requirements and direction, not
+as proof that a feature, dependency, model, or device capability already exists.
+Update this file when the project structure and verified commands change.
+Unresolved risks, open decisions, and known limitations are tracked in
 [docs/risks-and-decisions.md](./docs/risks-and-decisions.md).
 
 ## Product and platform constraints
@@ -134,6 +135,9 @@ interfaces are design guidance, not mandated symbol names.
   device, model, runtime, conditions, and measurement method.
 - Never claim a build, test, or device run passed unless you ran it. Report the
   exact command and its real outcome, including blockers.
+- Record each new unresolved risk, open decision, or known limitation in
+  [docs/risks-and-decisions.md](./docs/risks-and-decisions.md) with the next free
+  `R-####` id, and mark items `resolved (Mxx)` rather than deleting them.
 
 ## Project structure and commands
 
@@ -150,14 +154,17 @@ app/                        the only application module
   src/main/kotlin/com/voicechat/agent/
     domain/                 pure-Kotlin conversation/domain models (M02)
     contracts/              replaceable platform/provider interfaces (M02)
+    audio/                  microphone capture + lifecycle (M07)
     diagnostics/            privacy-safe turn tracing and timing (M04)
     persistence/            Room conversation storage (M05)
     replay/                 deterministic PCM replay + fixtures (M03)
+    stt/                    ML Kit GenAI speech-to-text adapter (M08)
     ui/                     Compose conversation UI + ViewModel (M06)
   schemas/                  exported Room schema JSON (M05)
   src/main/res/                              strings, theme, launcher icon, rules
   src/test/kotlin/com/voicechat/agent/
     domain/, contracts/     JVM domain and contract tests
+    audio/, stt/            JVM capture and STT adapter tests
     diagnostics/, replay/   JVM tracing and replay tests
     persistence/, ui/       JVM persistence (Robolectric) and UI tests
     fake/                   deterministic contract fakes

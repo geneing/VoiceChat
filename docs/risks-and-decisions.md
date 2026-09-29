@@ -7,7 +7,7 @@ limitations. It is not a decision record. Resolved choices live in
 that made them; this file records what is still not settled and who is expected
 to settle it.
 
-It currently covers M00-M06. Later milestone agents **append** items here as
+It currently covers M00-M08. Later milestone agents **append** items here as
 they find them and **close** items they resolve.
 
 ## Convention
@@ -37,6 +37,7 @@ genuinely unknown, write "unknown" rather than guessing.
 - [Build, toolchain, and project identity](#build-toolchain-and-project-identity) — R-0038-R-0042
 - [Device validation and performance](#device-validation-and-performance) — R-0043-R-0047
 - [Privacy and security](#privacy-and-security) — R-0048-R-0049
+- [Capture and STT follow-ups (M07-M08)](#capture-and-stt-follow-ups-m07-m08) — R-0050-R-0056
 
 ## Speech: on-device STT, TTS, VAD, and turn completion
 
@@ -131,3 +132,15 @@ genuinely unknown, write "unknown" rather than guessing.
 | --- | --- | --- | --- | --- | --- | --- |
 | R-0048 | open | privacy | External LLM use is a network feature: the transfer must be disclosed, and any change that sends audio, transcript, prompt, or model data off-device must be documented. | AGENTS.md | M13, M22, M26 | Destination and remote text/context transfer shown before a remote request; related docs updated with each such change. |
 | R-0049 | open | privacy | No static or packaged-resource secret checks exist yet. | implementation-plan.md (M13), AGENTS.md | M13, M26 | Checks find no secrets in source, resources, build files, logs, or generated docs; credentials stored only in Keystore-backed storage. |
+
+## Capture and STT follow-ups (M07-M08)
+
+| ID | Status | Area | Item and open question | Source | Resolves in | Evidence to close |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-0050 | open | capture | Audio-focus policy is provisional: capture takes transient `USAGE_ASSISTANT` focus and records focus loss but does not stop on it, because TTS/barge-in do not exist yet. | audio-capture.md | M11, M24 | Focus policy finalized against real TTS playback and barge-in, with route/focus tests. |
+| R-0051 | open | capture | Capture session events carry no trace/turn ID (a session can span turns), so orchestrator correlation is deferred. | audio-capture.md | M21 | M21 associates capture events with the correct turn and trace ID. |
+| R-0052 | open | capture | The bounded capture buffer drops frames when a consumer lags; drops are counted and surfaced, but the sustained-backpressure policy (drop vs block vs error) is unvalidated in a live pipeline. | audio-capture.md | M09, M21 | Backpressure behavior measured in the live STT/VAD loop; no silent loss beyond the counted drops. |
+| R-0053 | open | speech | The M08 ML Kit adapter compiles and is unit-tested, but runtime status gating, `fromPfd` streaming, and final-segment merging are unverified on hardware. | stt.md | M08 (manual run), M26 | Pixel 10 manual run records `checkStatus()`/provisioning and proves on-device transcription. |
+| R-0054 | open | speech | Final-segment merge assumes `curText += response.text`; if the engine returns cumulative text per final, the merge would duplicate text. | stt.md | M08 (manual run) | Verified against real `FinalTextResponse` behavior; merge adjusted if cumulative. |
+| R-0055 | open | speech | The engine reports no confidence, so low-confidence handling is a `null` pass-through with no threshold policy. | stt.md | M09, M21 | Defined behavior for absent/low confidence that still surfaces usable text. |
+| R-0056 | open | speech | `fromPfd` requires real-time audio, so the adapter is capture-coupled and not feed-forward, and replay must keep using the M03 adapter. | stt.md, audio-replay-harness.md | M24 | Live loop uses real-time capture; any feed-forward requirement is documented and tested. |
