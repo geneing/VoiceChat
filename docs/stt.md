@@ -11,6 +11,16 @@ Pixel 10 test that remains to be run. It complements
 > unit tested. The engine itself has **not** been run on a device from this
 > repository; that is the manual test in [Manual Pixel 10 test](#manual-pixel-10-test).
 
+> **Important — audio must be fed at a real-time rate.** ML Kit GenAI Speech
+> Recognition requires data to be provided to the file descriptor at a real-time
+> rate (for example, roughly 16,000 samples / 32 KB per second), and standard
+> file-backed descriptors that read at full speed are **not** supported. Any test
+> or harness that feeds this engine from a file must pace it to real time; the
+> M03 replay harness reads fixtures as fast as possible and therefore cannot
+> drive the real engine. On-device STT validation must use live capture (M07) or
+> an explicitly real-time-paced feeder. Source:
+> <https://developers.google.com/ml-kit/genai/speech-recognition/android>.
+
 ## Engine
 
 - **Engine:** ML Kit GenAI Speech Recognition — the initial and only STT engine

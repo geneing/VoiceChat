@@ -6,6 +6,15 @@ PCM fixtures instead of a live microphone. It complements the strategy in
 [validation.md](./validation.md) and
 [voice-quality-and-latency.md](./voice-quality-and-latency.md).
 
+> **Important — replay cannot feed the real ML Kit STT engine.** ML Kit GenAI
+> Speech Recognition (M08) requires audio delivered to its file descriptor at a
+> real-time rate (about 32 KB per second) and does not support file-backed
+> descriptors that read at full speed. This harness replays fixtures as fast as
+> possible, so it can drive the `SpeechToText` **contract** and fakes
+> deterministically but must not be wired to the real engine. On-device STT
+> checks use live capture or an explicitly real-time-paced feeder. Source:
+> <https://developers.google.com/ml-kit/genai/speech-recognition/android>.
+
 Implementation lives in `app/src/main/kotlin/com/voicechat/agent/replay/`. The
 package is pure Kotlin: it contains no `android.*` / `androidx.*` imports, no
 network types, and no microphone code, so it runs in ordinary JVM unit tests.

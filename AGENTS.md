@@ -130,6 +130,10 @@ interfaces are design guidance, not mandated symbol names.
   of live microphones: use labeled recordings and harness-generated TTS speech
   with reproducible noise, reverberation, echo, and distortion variants.
   Retain a smaller consented human-speech and physical-device validation set.
+  Note that the real on-device STT engine (ML Kit GenAI Speech Recognition)
+  requires audio at a real-time rate (about 32 KB/s) and does not accept
+  full-speed file-backed input, so replay drives the contract/fakes but on-device
+  STT validation must use live capture or an explicitly paced feeder.
 - Validate on Pixel 10 for the primary end-to-end path, and test unavailable
   AICore/model/network cases. Never make performance claims without recording
   device, model, runtime, conditions, and measurement method.

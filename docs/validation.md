@@ -10,6 +10,15 @@ than depend on a live microphone or a human being available for every run.
 Build a harness that can feed timestamped PCM recordings directly into capture,
 VAD, and STT boundaries and run deterministic LLM/TTS fakes for orchestration.
 
+> **Important — real-time pacing for the real STT engine.** ML Kit GenAI Speech
+> Recognition requires audio delivered to its file descriptor at a real-time rate
+> (roughly 16,000 samples / 32 KB per second); standard file-backed descriptors
+> that read at full speed are not supported. The replay harness deliberately
+> feeds fixtures as fast as possible, so it exercises the `SpeechToText` contract
+> and fakes but must not be connected to the real engine. Any on-device STT test
+> must use live capture or an explicitly real-time-paced feeder. Source:
+> <https://developers.google.com/ml-kit/genai/speech-recognition/android>.
+
 - Keep a labeled, permissioned reference corpus of human speech with expected
   transcripts and metadata such as language, speaker/accent where consented,
   microphone path, and environment.
