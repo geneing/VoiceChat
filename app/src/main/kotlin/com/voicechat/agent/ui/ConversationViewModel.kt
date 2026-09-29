@@ -39,6 +39,7 @@ import com.voicechat.agent.domain.VoiceAgentException
 import com.voicechat.agent.domain.context.ContextMessage
 import com.voicechat.agent.domain.context.ContextRole
 import com.voicechat.agent.domain.context.ModelContextBuilder
+import com.voicechat.agent.log.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -153,6 +154,7 @@ class ConversationViewModel(
 
     override fun onNewConversation() {
         discardActiveGeneration()
+        AppLog.d { "ui: new conversation" }
         currentConversation = null
         _uiState.update {
             it.copy(
@@ -164,6 +166,7 @@ class ConversationViewModel(
 
     override fun onOpenConversation(id: ConversationId) {
         discardActiveGeneration()
+        AppLog.d { "ui: open conversation" }
         currentConversation = null
         _uiState.update { state ->
             state.copy(
@@ -180,10 +183,12 @@ class ConversationViewModel(
                 try {
                     repository.load(id)
                 } catch (failure: Throwable) {
+                    AppLog.w(failure) { "ui: open conversation failed" }
                     _uiState.update { it.openFailed(failure.toNotice()) }
                     return@launch
                 }
             if (loaded == null) {
+                AppLog.w { "ui: open conversation not found" }
                 _uiState.update { it.openFailed(ConversationNotice.Failure(ErrorCode.PERSISTENCE_FAILED, retryable = true)) }
                 return@launch
             }
@@ -191,6 +196,7 @@ class ConversationViewModel(
             // the conversation never claims work a restart could not finish.
             val reconciled = loaded.reconcileAfterProcessDeath()
             if (reconciled != loaded) {
+                AppLog.i { "ui: reconciled conversation after process death turns=${reconciled.turns.size}" }
                 saveQuietly(reconciled)
             }
             currentConversation = reconciled
@@ -215,6 +221,7 @@ class ConversationViewModel(
     override fun onCancel() {
         val job = generationJob ?: return
         if (!job.isActive) return
+        AppLog.d { "ui: cancel requested" }
         // Optimistic feedback; the generation job persists the interrupted turn and
         // then finalizes the state with the persisted turns.
         _uiState.update { state ->
@@ -299,6 +306,7 @@ class ConversationViewModel(
             try {
                 repository.delete(pending.id)
             } catch (failure: Throwable) {
+                AppLog.e(failure) { "ui: delete conversation failed" }
                 _uiState.update { state -> state.copy(list = state.list.copy(notice = failure.toNotice())) }
                 return@launch
             }
@@ -346,6 +354,7 @@ class ConversationViewModel(
      * This uses the same [submitTurn] path as manual text.
      */
     fun commitProvisionalTranscript(committedText: String) {
+        AppLog.d { "ui: commit voice transcript chars=${committedText.length}" }
         _uiState.update { state -> state.copy(dialog = state.dialog?.copy(provisionalUserText = null)) }
         submitTurn(committedText, UserTurnSource.VOICE)
     }
@@ -360,6 +369,7 @@ class ConversationViewModel(
         val committed = text.trim()
         if (committed.isEmpty()) return
         if (generationJob?.isActive == true) return
+        AppLog.d { "ui: submit turn source=$source chars=${committed.length}" }
         val marker = beginGeneration()
         _uiState.update { state ->
             state.copy(
@@ -451,6 +461,10 @@ class ConversationViewModel(
         val requestSpan = trace.start(DiagnosticStage.LLM_REQUEST)
         trace.requestSelected(selection.providerId.value, selection.modelId.value, reasoning?.name)
         trace.markStreamStarted()
+        AppLog.d {
+            "ui: generation start provider=${selection.providerId.value} model=${selection.modelId.value} " +
+                "contextMessages=${request.messages.size}"
+        }
 
         val rendered = StringBuilder()
         var terminal = false
@@ -549,6 +563,10 @@ class ConversationViewModel(
         trace: TurnTraceRecorder,
         marker: Any,
     ) {
+        AppLog.d {
+            "ui: turn terminal generation=$generationState delivery=$deliveryState " +
+                "generated=${generatedText.length} delivered=${deliveredText.length} error=${error?.code?.name ?: "none"}"
+        }
         val outcome = persistAssistant(conversation, generatedText, deliveredText, generationState, deliveryState, marker)
         when (generationState) {
             GenerationState.COMPLETED -> {
@@ -650,6 +668,7 @@ class ConversationViewModel(
     ) {
         if (closed) return
         if (activeGeneration !== marker) return
+        AppLog.w { "ui: persistence failed; restored draft chars=${originalText.length}" }
         activeGeneration = null
         _uiState.update { state ->
             state.copy(

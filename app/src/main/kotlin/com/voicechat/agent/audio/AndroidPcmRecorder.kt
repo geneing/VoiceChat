@@ -9,6 +9,7 @@ import com.voicechat.agent.domain.AudioFormat
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
+import com.voicechat.agent.log.AppLog
 import android.media.AudioFormat as AndroidAudioFormat
 
 /**
@@ -42,6 +43,7 @@ class AndroidPcmRecorderFactory(
 ) : PcmRecorderFactory {
     override fun create(): PcmRecorderEngine {
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            AppLog.w { "capture: RECORD_AUDIO not granted at recorder create" }
             throw VoiceAgentException(VoiceAgentError(ErrorCode.AUDIO_PERMISSION_DENIED, "RECORD_AUDIO is not granted"))
         }
         val channelMask = inputChannelMask(format.channelCount)
@@ -52,6 +54,10 @@ class AndroidPcmRecorderFactory(
                 frameSizeSamples = frameSizeSamples,
                 minBufferSizeProvider = minBufferSizeProvider,
             )
+        AppLog.d {
+            "capture: negotiating AudioRecord source=${audioSourceName(audioSource)} " +
+                "format=${format.sampleRateHz}Hz/${format.channelCount}ch bufferBytes=$bufferSizeBytes"
+        }
         val record =
             try {
                 recordFactory?.invoke(audioSource, format.sampleRateHz, channelMask, ENCODING_PCM_16_BIT, bufferSizeBytes)

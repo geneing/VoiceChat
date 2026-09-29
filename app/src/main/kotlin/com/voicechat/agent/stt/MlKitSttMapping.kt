@@ -54,3 +54,19 @@ internal fun GenAiException.toFailureKind(): SttFailureKind =
 
         else -> SttFailureKind.RECOGNITION_FAILED
     }
+
+/**
+ * Maps an `ErrorResponse` to a vendor-neutral engine response.
+ *
+ * `ErrorCode.UNKNOWN` (0) is the code ML Kit GenAI Speech Recognition was
+ * observed to emit immediately after `stopRecognition()` and just before the
+ * terminal `CompletedResponse` (see `docs/stt.md`). It is a stop-induced,
+ * non-error termination, so it maps to [SttEngineResponse.Stopped]; the assembler
+ * decides whether it is benign. Every other code keeps its typed failure kind.
+ */
+internal fun GenAiException.toEngineResponse(): SttEngineResponse =
+    if (errorCode == GenAiException.ErrorCode.UNKNOWN) {
+        SttEngineResponse.Stopped
+    } else {
+        SttEngineResponse.Failure(toFailureKind())
+    }

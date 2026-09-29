@@ -5,6 +5,7 @@ import com.google.mlkit.genai.speechrecognition.SpeechRecognition
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.UnavailableReason
 import com.voicechat.agent.domain.VoiceAgentError
+import com.voicechat.agent.log.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -36,10 +37,16 @@ object MlKitSttStatus {
         withContext(Dispatchers.IO) {
             val recognizer = SpeechRecognition.getClient(engine.toRecognizerOptions())
             try {
-                SttAvailabilityMapper.map(engine, recognizer.checkStatus().toSttFeatureStatus())
+                val availability = SttAvailabilityMapper.map(engine, recognizer.checkStatus().toSttFeatureStatus())
+                AppLog.i {
+                    "stt: availability mode=${engine.mode} model=${engine.modelId.value} " +
+                        "-> ${availability::class.simpleName}"
+                }
+                availability
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Throwable) {
+                AppLog.w(failure) { "stt: availability check failed (${failure.javaClass.simpleName})" }
                 SttAvailability.Unavailable(
                     engine = engine,
                     reason = UnavailableReason.UNKNOWN,
@@ -63,11 +70,13 @@ object MlKitSttStatus {
      */
     fun download(engine: SttEngine): Flow<SttDownloadStatus> =
         flow {
+            AppLog.i { "stt: model download start model=${engine.modelId.value}" }
             val recognizer = SpeechRecognition.getClient(engine.toRecognizerOptions())
             try {
                 recognizer.download().collect { status ->
                     when (status) {
                         is DownloadStatus.DownloadStarted -> {
+                            AppLog.d { "stt: download started bytes=${status.bytesToDownload}" }
                             emit(SttDownloadStatus.Started(status.bytesToDownload))
                         }
 
@@ -76,10 +85,14 @@ object MlKitSttStatus {
                         }
 
                         is DownloadStatus.DownloadCompleted -> {
+                            AppLog.i { "stt: model download completed model=${engine.modelId.value}" }
                             emit(SttDownloadStatus.Completed)
                         }
 
                         is DownloadStatus.DownloadFailed -> {
+                            AppLog.e(status.e) {
+                                "stt: model download failed (${status.e.toFailureKind().name.lowercase()})"
+                            }
                             emit(
                                 SttDownloadStatus.Failed(
                                     VoiceAgentError(

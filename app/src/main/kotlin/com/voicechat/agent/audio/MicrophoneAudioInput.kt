@@ -13,6 +13,7 @@ import com.voicechat.agent.domain.TraceId
 import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
+import com.voicechat.agent.log.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -89,6 +90,7 @@ class MicrophoneAudioInput(
             throw VoiceAgentException(VoiceAgentError(ErrorCode.AUDIO_DEVICE_UNAVAILABLE, "capture input is closed"))
         }
         if (!permission.isGranted()) {
+            AppLog.w { "capture: RECORD_AUDIO not granted; refusing to start" }
             reporter.failed(ErrorCode.AUDIO_PERMISSION_DENIED, sourceLabel)
             throw VoiceAgentException(VoiceAgentError(ErrorCode.AUDIO_PERMISSION_DENIED, "RECORD_AUDIO is not granted"))
         }
@@ -97,6 +99,7 @@ class MicrophoneAudioInput(
             try {
                 recorderFactory.create()
             } catch (e: VoiceAgentException) {
+                AppLog.e(e) { "capture: recorder create failed ${e.error.code}" }
                 reporter.failed(e.error.code, sourceLabel)
                 throw e
             }
@@ -111,6 +114,9 @@ class MicrophoneAudioInput(
         try {
             engine.start()
             reporter.started(engine.format, sourceLabel, currentRoute())
+            AppLog.i {
+                "capture: started source=$sourceLabel format=${engine.format} route=${currentRoute()?.label ?: "unknown"}"
+            }
             routeJob = monitorRoutes()
 
             val buffer = ShortArray(config.frameSizeSamples)
@@ -129,6 +135,7 @@ class MicrophoneAudioInput(
                     frameCount % config.permissionRecheckIntervalFrames == 0L &&
                     !permission.isGranted()
                 ) {
+                    AppLog.w { "capture: RECORD_AUDIO revoked during capture" }
                     throw VoiceAgentException(
                         VoiceAgentError(ErrorCode.AUDIO_PERMISSION_DENIED, "RECORD_AUDIO was revoked during capture"),
                     )
@@ -145,11 +152,17 @@ class MicrophoneAudioInput(
                 yield()
             }
             reporter.stopped(frameCount, droppedFrames, levels)
+            AppLog.i {
+                "capture: stopped frames=$frameCount drops=$droppedFrames " +
+                    "peak=${levels.peakLevel} clipped=${levels.clippedSamples}"
+            }
         } catch (cancellation: CancellationException) {
             reporter.cancelled(frameCount, droppedFrames, levels)
+            AppLog.d { "capture: cancelled frames=$frameCount drops=$droppedFrames" }
             throw cancellation
         } catch (failure: VoiceAgentException) {
             reporter.failed(failure.error.code, sourceLabel)
+            AppLog.e(failure) { "capture: failed ${failure.error.code} after frames=$frameCount" }
             throw failure
         } finally {
             routeJob?.cancel()
@@ -166,13 +179,17 @@ class MicrophoneAudioInput(
             monitor
                 .routes()
                 .catch { cause -> if (cause is CancellationException) throw cause }
-                .collect { route -> reporter.routeChanged(route) }
+                .collect { route ->
+                    AppLog.d { "capture: route changed to ${route.label}" }
+                    reporter.routeChanged(route)
+                }
         }
     }
 
     private fun currentRoute(): AudioRoute? = routeMonitor?.let { monitor -> runCatching { monitor.current() }.getOrNull() }
 
     private fun readError(code: Int): VoiceAgentException {
+        AppLog.e { "capture: AudioRecord.read returned $code" }
         val errorCode =
             if (code == AudioRecord.ERROR_DEAD_OBJECT) {
                 ErrorCode.AUDIO_DEVICE_UNAVAILABLE

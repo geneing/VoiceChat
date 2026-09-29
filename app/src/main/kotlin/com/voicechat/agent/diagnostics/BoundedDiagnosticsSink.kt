@@ -3,6 +3,7 @@ package com.voicechat.agent.diagnostics
 import com.voicechat.agent.contracts.DiagnosticEvent
 import com.voicechat.agent.contracts.DiagnosticsSink
 import com.voicechat.agent.contracts.NoOpDiagnosticsSink
+import com.voicechat.agent.log.AppLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Bounded, non-blocking [DiagnosticsSink].
@@ -49,6 +51,9 @@ class BoundedDiagnosticsSink(
 
     private val droppedState = MutableStateFlow(0L)
 
+    /** Ensures a full buffer is reported once rather than on every dropped event. */
+    private val dropReported = AtomicBoolean(false)
+
     /**
      * Running count of events dropped because the buffer was full.
      *
@@ -58,6 +63,7 @@ class BoundedDiagnosticsSink(
     val droppedEventCount: StateFlow<Long> get() = droppedState.asStateFlow()
 
     init {
+        AppLog.d { "diagnostics: bounded sink started capacity=$capacity" }
         scope.launch {
             for (event in channel) {
                 downstream.record(event)
@@ -68,6 +74,9 @@ class BoundedDiagnosticsSink(
     override fun record(event: DiagnosticEvent) {
         if (channel.trySend(event).isFailure) {
             droppedState.update { it + 1 }
+            if (dropReported.compareAndSet(false, true)) {
+                AppLog.w { "diagnostics: buffer full; events are being dropped" }
+            }
         }
     }
 

@@ -36,6 +36,16 @@ sealed interface SttEngineResponse {
         val detail: String? = null,
     ) : SttEngineResponse
 
+    /**
+     * A stop-induced, non-error termination.
+     *
+     * Observed on device: after `stopRecognition()`, ML Kit can emit
+     * `ErrorResponse(errorCode = 0)` (the `UNKNOWN` code) immediately before the
+     * terminal `CompletedResponse`. That is not a recognition failure and must
+     * not mask a good transcript; [SttResultAssembler] treats it as benign.
+     */
+    data object Stopped : SttEngineResponse
+
     /** The recognizer ended the session cleanly. */
     data object Completed : SttEngineResponse
 }
@@ -72,7 +82,12 @@ class SttResultAssembler(
     private val languageTag: String? = null,
 ) {
     private var revision: Int = 0
+
+    @Volatile
     private var finished: Boolean = false
+
+    @Volatile
+    private var stopRequested: Boolean = false
     private val finalSegments = mutableListOf<String>()
     private var lastPartialText: String = ""
     private var lastConfidence: Float? = null
@@ -86,8 +101,27 @@ class SttResultAssembler(
             is SttEngineResponse.Partial -> onPartial(response.text)
             is SttEngineResponse.Final -> onFinalSegment(response.text, response.confidence)
             is SttEngineResponse.Failure -> onFailure(response.kind, response.detail)
+            SttEngineResponse.Stopped -> onStopped()
             SttEngineResponse.Completed -> finish()
         }
+
+    /**
+     * Marks that the audio input ended and reports whether the adapter should ask
+     * the engine to stop.
+     *
+     * ML Kit GenAI Speech Recognition was observed on device **not** to complete
+     * its response flow when the audio descriptor reaches EOF; only
+     * `stopRecognition()` completes it. So on input end the adapter must stop
+     * recognition, and the terminal `CompletedResponse` (or the flow ending) then
+     * finalizes the transcript through [onResponse]/[finish]. Returns `true` at
+     * most once, and `false` when the session already ended. This method is the
+     * pure seam the adapter calls, so the ordering rule is JVM-testable.
+     */
+    fun onInputEnded(): Boolean {
+        if (finished || stopRequested) return false
+        stopRequested = true
+        return true
+    }
 
     /**
      * Ends the session if it has not already ended, emitting the single final
@@ -121,6 +155,23 @@ class SttResultAssembler(
         finished = true
         return listOf(SttEvent.Failed(errorFor(kind, detail)))
     }
+
+    /**
+     * Handles a stop-induced [SttEngineResponse.Stopped].
+     *
+     * It never masks a transcript: once a stop was requested, or once any text
+     * has been assembled, the stop response is ignored and the terminal
+     * completion (or [finish]) produces the single final transcript. With no text
+     * and no stop request, however, a genuinely unknown engine error is still
+     * reported rather than silently swallowed.
+     */
+    private fun onStopped(): List<SttEvent> {
+        if (finished) return emptyList()
+        if (stopRequested || hasAssembledText()) return emptyList()
+        return onFailure(SttFailureKind.RECOGNITION_FAILED, "recognition stopped with an unknown engine error")
+    }
+
+    private fun hasAssembledText(): Boolean = finalSegments.isNotEmpty() || lastPartialText.isNotBlank()
 
     private fun finalize(): List<SttEvent> {
         if (finished) return emptyList()

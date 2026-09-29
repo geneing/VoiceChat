@@ -2,6 +2,7 @@ package com.voicechat.agent.persistence
 
 import android.content.Context
 import com.voicechat.agent.contracts.ConversationRepository
+import com.voicechat.agent.log.AppLog
 
 /**
  * App-boundary factory for durable conversation storage.
@@ -12,6 +13,8 @@ import com.voicechat.agent.contracts.ConversationRepository
  */
 object ConversationPersistence {
     /** Creates the app's repository over the app-private Room database. */
-    fun create(context: Context): ConversationRepository =
-        RoomConversationRepository(ConversationDatabase.create(context).conversationDao())
+    fun create(context: Context): ConversationRepository {
+        AppLog.i { "persistence: opening conversation repository" }
+        return RoomConversationRepository(ConversationDatabase.create(context).conversationDao())
+    }
 }

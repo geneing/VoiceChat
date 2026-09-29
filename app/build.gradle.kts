@@ -20,6 +20,11 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+
+        // Instrumented (on-device) tests run through AndroidJUnitRunner; see
+        // Tests.md and docs/logging.md. They are compiled here but only executed
+        // on a device with `:app:connectedDebugAndroidTest`.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -40,6 +45,10 @@ android {
 
     buildFeatures {
         compose = true
+
+        // Generated BuildConfig.DEBUG drives release-safe logging: the log
+        // facade is enabled only in debug builds (docs/logging.md).
+        buildConfig = true
     }
 
     testOptions {
@@ -95,4 +104,15 @@ dependencies {
     // Compose UI tests on the JVM under Robolectric: text send, correction,
     // streaming render, conversation switching, and deletion (M06).
     testImplementation(libs.androidx.compose.ui.test.junit4)
+
+    // Instrumented (on-device) test foundation. Compiled on the host with
+    // `:app:assembleDebugAndroidTest`; executed only on a device with
+    // `:app:connectedDebugAndroidTest` (see Tests.md).
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
+    // Compose instrumented UI tests reuse the BOM-managed Compose UI test library;
+    // ui-test-manifest is already a debugImplementation for both test hosts.
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import com.voicechat.agent.log.AppLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,8 +53,10 @@ class AndroidAudioFocusController(
                         .setUsage(AudioAttributes.USAGE_ASSISTANT)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build(),
-                ).setOnAudioFocusChangeListener { change -> state.value = change.toFocusState() }
-                .build()
+                ).setOnAudioFocusChangeListener { change ->
+                    AppLog.d { "capture: audio focus change=${change.toFocusState()}" }
+                    state.value = change.toFocusState()
+                }.build()
         }
 
     override fun acquire(): Boolean {
@@ -61,6 +64,7 @@ class AndroidAudioFocusController(
         val focusRequest = request ?: return false
         val granted = manager.requestAudioFocus(focusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         state.value = if (granted) AudioFocusState.ACQUIRED else AudioFocusState.RELEASED
+        AppLog.d { "capture: audio focus acquire granted=$granted" }
         return granted
     }
 
@@ -69,6 +73,7 @@ class AndroidAudioFocusController(
         val focusRequest = request ?: return
         runCatching { manager.abandonAudioFocusRequest(focusRequest) }
         state.value = AudioFocusState.RELEASED
+        AppLog.d { "capture: audio focus abandoned" }
     }
 
     override fun state(): StateFlow<AudioFocusState> = state.asStateFlow()

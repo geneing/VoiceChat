@@ -53,9 +53,9 @@ All engine code lives in `app/src/main/kotlin/com/voicechat/agent/stt/`:
 | --- | --- |
 | `SttEngine.kt` | Platform-free engine identity (`SttMode`, `SttEngine`), the single-engine catalog, and preferred-available selection. |
 | `SttAvailability.kt` | Platform-free `SttFeatureStatus`, `SttAvailability`, `SttDownloadStatus`, and the "only `AVAILABLE` is ready" mapping. |
-| `SttResultAssembler.kt` | Platform-free translation of vendor-neutral responses into the `SttEvent` contract; revisions, segment merging, empty/low-confidence/failure handling. |
+| `SttResultAssembler.kt` | Platform-free translation of vendor-neutral responses into the `SttEvent` contract; revisions, segment merging, empty/low-confidence/failure handling, the input-end stop decision, and benign stop-induced termination handling. |
 | `PcmFraming.kt` | Platform-free re-encoding of 16 kHz mono PCM to the little-endian bytes the recognizer's custom-audio path requires. |
-| `MlKitSttMapping.kt` | Vendor translations (options DSL, feature status, error code) — ML Kit types stay here. |
+| `MlKitSttMapping.kt` | Vendor translations (options DSL, feature status, error code, `UNKNOWN` error → benign stop) — ML Kit types stay here. |
 | `MlKitSttStatus.kt` | `check()` (mandatory runtime gate) and `download()` using the supported APIs, off the main thread. |
 | `MlKitSpeechToText.kt` | The `SpeechToText` adapter: gates on `checkStatus()`, pumps frames to `AudioSource.fromPfd`, maps responses, records diagnostics. |
 
@@ -76,7 +76,9 @@ session. The adapter:
   `isFinal = true` transcript when the session completes (`CompletedResponse`
   or the response flow ending). A session that produced only partials finalizes
   the last hypothesis; a session with no text finalizes an explicit empty
-  transcript.
+  transcript. Input end is handled by the observed engine behavior below: the
+  adapter stops recognition, and the assembler finalizes on the terminal
+  completion.
 - **Empty input.** Empty/blank partials are ignored, but the session always ends
   with one final (possibly empty) transcript. It is never reported as a
   success with no result and never silently swallowed.
@@ -89,6 +91,39 @@ session. The adapter:
   emitted after a final result or a failure.
 - **Metadata.** Every transcript is stamped with the engine locale's language
   tag; diagnostics carry engine/model identity (below).
+
+### Finalization on input end (device observation and fix)
+
+A debug on-device probe (a paused M08 run; see [Tests.md](../Tests.md) for the
+debug probe) recorded two engine behaviors that the first adapter version did not
+handle:
+
+1. **The response flow does not complete on capture EOF.** Closing the audio
+   descriptor does not end `startRecognition(...)`'s flow; only
+   `stopRecognition()` completes it (with a terminal `CompletedResponse`).
+2. **A stop-induced `ErrorResponse(errorCode = 0)` can arrive immediately before
+   `CompletedResponse`.** Error code `0` is `GenAiException.ErrorCode.UNKNOWN`.
+   The first adapter version mapped it to `STT_RECOGNITION_FAILED`, which marked
+   the session finished and could mask an already-recognized transcript.
+
+The fix (implemented in `MlKitSpeechToText` and the pure `SttResultAssembler`):
+
+- When the audio input ends, the adapter stops recognition
+  (`SttResultAssembler.onInputEnded()` returns `true` once and the adapter calls
+  `stopRecognition()`), instead of waiting for a flow that never ends.
+- The assembler finalizes on the **terminal** `CompletedResponse` (or when the
+  response flow ends), so a final transcript is emitted for input end.
+- `GenAiException.ErrorCode.UNKNOWN` maps to `SttEngineResponse.Stopped`, a
+  benign stop-induced termination. The assembler ignores it when a stop was
+  requested or when text has already been assembled, so it cannot mask or fail a
+  good transcript. A genuinely unknown error with no stop request and no text is
+  still reported as `STT_RECOGNITION_FAILED`.
+- The adapter bounds the wait for the flow to complete after `stopRecognition()`
+  (3 s). On device the engine completes promptly; the bound exists so a stuck
+  flow finalizes the transcript instead of hanging the turn.
+
+This is a logic-level fix with JVM regression tests; it is **not** device
+verified. The on-device finalization check remains in [Tests.md](../Tests.md).
 
 ### Runtime gating (mandatory)
 
@@ -139,7 +174,13 @@ identity — orchestration binds STT events to the active turn (M21).
 - `SttResultAssemblerTest` — partial revisions, finalization, correction,
   merged final segments, empty input, completed-without-final, blank partials,
   typed failures, terminal stickiness, low/high/missing confidence,
-  numbers/names/negation/disfluency preserved verbatim, and language metadata.
+  numbers/names/negation/disfluency preserved verbatim, language metadata, and
+  the M08 finalization fix: a stop-induced `Stopped` response does not mask a
+  transcript, is ignored after input end or once text exists, is still a typed
+  failure with no text and no stop request, and `onInputEnded()` fires once.
+- `MlKitSttInstrumentedTest` (androidTest, device-only) — both catalog modes
+  report a typed availability, and the adapter refuses to run when the engine is
+  not ready.
 - `SttAvailabilityTest` — only `AVAILABLE` is ready; typed unavailable reason;
   single engine / distinct models; catalog order and preferred-available
   selection.
@@ -212,10 +253,18 @@ locked-bootloader/airplane-mode checks. Record the same fields below.
 - **No on-device validation yet.** The adapter compiles against the real API and
   is unit tested, but its runtime behavior (status gating, `fromPfd` streaming,
   segment merging) is unverified on hardware.
-- **Final-segment semantics.** Merging multiple `FinalTextResponse` segments
-  follows the official sample (`curText += response.text`). If the engine instead
-  returns cumulative text per final, the merge would duplicate it; confirm and
-  adjust during the manual run.
+- **Final-segment semantics (R-0054, still open).** The probe observed **only a
+  single** `FinalTextResponse` per session, so merging multiple final segments
+  (the official sample's `curText += response.text`) is unverified: if the engine
+  instead returns cumulative text per final, the merge would duplicate it. The
+  same probe showed **partials are cumulative** (each partial carries the text so
+  far rather than just the new tail), which the assembler already handles by
+  replacing the previous partial instead of concatenating. Confirm the final
+  behavior during the manual run and adjust the merge if needed.
+- **Finalization fix is logic-only.** The input-end stop, terminal finalization,
+  and benign stop-induced `UNKNOWN` handling are covered by JVM tests but have
+  not been exercised on hardware; the on-device finalization check is in
+  [Tests.md](../Tests.md).
 - **No confidence.** The engine does not expose a confidence score, so the
   low-confidence path is a pass-through (`null`) for now.
 - **Real-time pacing.** `fromPfd` requires real-time audio. The adapter relies on

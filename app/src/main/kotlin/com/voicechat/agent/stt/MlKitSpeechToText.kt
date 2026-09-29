@@ -19,15 +19,18 @@ import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.diagnostics.SystemMonotonicClock
 import com.voicechat.agent.domain.AudioFrame
 import com.voicechat.agent.domain.EngineId
+import com.voicechat.agent.log.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -78,6 +81,9 @@ class MlKitSpeechToText(
             var finalCharacterCount = 0
             var outcome = DiagnosticOutcome.CANCELLED
             var errorCode: String? = null
+            AppLog.d {
+                "stt: session start engine=${engine.engineId.value} model=${engine.modelId.value} locale=$languageTag"
+            }
             record(DiagnosticOutcome.STARTED, startedAtNanos, frameCount, finalCharacterCount, errorCode)
 
             val recognizer = SpeechRecognition.getClient(engine.toRecognizerOptions())
@@ -95,6 +101,7 @@ class MlKitSpeechToText(
                         } else {
                             SttFailureKind.UNAVAILABLE
                         }
+                    AppLog.w { "stt: refused to start; feature status=$status" }
                     val event =
                         SttResultAssembler(languageTag)
                             .onResponse(SttEngineResponse.Failure(kind, detail = "feature status $status"))
@@ -107,35 +114,66 @@ class MlKitSpeechToText(
 
                 val assembler = SttResultAssembler(languageTag)
                 coroutineScope {
-                    val pump =
+                    // ML Kit delivers responses on its own coroutine. A bounded
+                    // channel lets the stopper end this session even if the
+                    // engine's flow does not complete after a stop.
+                    val responses = Channel<SttEngineResponse>(Channel.UNLIMITED)
+                    val pump = launch { pumpAudio(audio, writeEnd) { frameCount++ } }
+                    val collector =
                         launch {
-                            pumpAudio(audio, writeEnd) { frameCount++ }
+                            try {
+                                recognizer
+                                    .startRecognition(speechRecognizerRequest { audioSource = AudioSource.fromPfd(readEnd) })
+                                    .collect { response -> responses.trySend(response.toEngineResponse()) }
+                                responses.close()
+                            } catch (cancellation: CancellationException) {
+                                // A sibling cancelled this collection; leave the
+                                // channel open so the reader can still finalize.
+                                throw cancellation
+                            } catch (failure: Throwable) {
+                                responses.close(failure)
+                            }
+                        }
+                    // The response flow does not complete on capture EOF; only
+                    // stopRecognition() completes it. Stop once capture ends, then
+                    // bound the wait so a stuck flow cannot hang the turn.
+                    val stopper =
+                        launch {
+                            pump.join()
+                            AppLog.d { "stt: input ended frames=$frameCount; stopping recognition" }
+                            if (assembler.onInputEnded()) {
+                                withContext(NonCancellable) { runCatching { recognizer.stopRecognition() } }
+                            }
+                            if (withTimeoutOrNull(STOP_COMPLETION_TIMEOUT_MILLIS) { collector.join() } == null) {
+                                AppLog.w { "stt: recognition did not complete after stop; finalizing anyway" }
+                                collector.cancel()
+                                responses.close()
+                            }
                         }
 
                     try {
-                        recognizer
-                            .startRecognition(speechRecognizerRequest { audioSource = AudioSource.fromPfd(readEnd) })
-                            .collect { response ->
-                                assembler.onResponse(response.toEngineResponse()).forEach { event ->
-                                    when (event) {
-                                        is SttEvent.Result -> {
-                                            if (event.transcript.isFinal) {
-                                                outcome = DiagnosticOutcome.COMPLETED
-                                                finalCharacterCount = event.transcript.text.length
-                                            }
-                                        }
-
-                                        is SttEvent.Failed -> {
-                                            outcome = DiagnosticOutcome.FAILED
-                                            errorCode = event.error.code.name
+                        for (response in responses) {
+                            assembler.onResponse(response).forEach { event ->
+                                when (event) {
+                                    is SttEvent.Result -> {
+                                        if (event.transcript.isFinal) {
+                                            outcome = DiagnosticOutcome.COMPLETED
+                                            finalCharacterCount = event.transcript.text.length
                                         }
                                     }
-                                    emit(event)
+
+                                    is SttEvent.Failed -> {
+                                        outcome = DiagnosticOutcome.FAILED
+                                        errorCode = event.error.code.name
+                                    }
                                 }
+                                emit(event)
                             }
+                        }
                     } catch (cancellation: CancellationException) {
                         throw cancellation
                     } catch (_: Throwable) {
+                        AppLog.e { "stt: recognition stream failed" }
                         assembler
                             .onResponse(
                                 SttEngineResponse.Failure(
@@ -160,13 +198,17 @@ class MlKitSpeechToText(
                     }
 
                     withContext(NonCancellable) { runCatching { recognizer.stopRecognition() } }
+                    stopper.cancel()
+                    collector.cancel()
                     pump.cancel()
                 }
             } catch (cancellation: CancellationException) {
+                AppLog.d { "stt: session cancelled frames=$frameCount" }
                 outcome = DiagnosticOutcome.CANCELLED
                 throw cancellation
             } finally {
                 record(outcome, startedAtNanos, frameCount, finalCharacterCount, errorCode)
+                AppLog.d { "stt: session end outcome=$outcome frames=$frameCount chars=$finalCharacterCount" }
                 activeRecognizer.compareAndSet(recognizer, null)
                 runCatching { recognizer.close() }
                 runCatching { readEnd.close() }
@@ -184,7 +226,7 @@ class MlKitSpeechToText(
             is SpeechRecognizerResponse.PartialTextResponse -> SttEngineResponse.Partial(text)
             is SpeechRecognizerResponse.FinalTextResponse -> SttEngineResponse.Final(text)
             is SpeechRecognizerResponse.CompletedResponse -> SttEngineResponse.Completed
-            is SpeechRecognizerResponse.ErrorResponse -> SttEngineResponse.Failure(e.toFailureKind())
+            is SpeechRecognizerResponse.ErrorResponse -> e.toEngineResponse()
         }
 
     private suspend fun statusOrNull(recognizer: SpeechRecognizer): Int? =
@@ -242,5 +284,15 @@ class MlKitSpeechToText(
                     },
             ),
         )
+    }
+
+    private companion object {
+        /**
+         * Bound on how long the adapter waits for the engine's response flow to
+         * complete after `stopRecognition()`. The engine completes promptly on
+         * device; the bound exists so a stuck flow finalizes the transcript
+         * instead of hanging the turn.
+         */
+        const val STOP_COMPLETION_TIMEOUT_MILLIS = 3_000L
     }
 }

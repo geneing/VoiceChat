@@ -7,6 +7,7 @@ import com.voicechat.agent.domain.ConversationSummary
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
+import com.voicechat.agent.log.AppLog
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
@@ -32,7 +33,10 @@ internal class RoomConversationRepository(
         dao
             .observeSummaries()
             .map { rows -> rows.map { it.toDomain() } }
-            .catch { throw persistenceFailure("observe") }
+            .catch {
+                AppLog.e(it) { "persistence: observe conversations failed" }
+                throw persistenceFailure("observe")
+            }
 
     override suspend fun load(id: ConversationId): Conversation? =
         persistenceCall("load") {
@@ -42,6 +46,9 @@ internal class RoomConversationRepository(
 
     override suspend fun save(conversation: Conversation) =
         persistenceCall("save") {
+            AppLog.d {
+                "persistence: save conversation turns=${conversation.turns.size}"
+            }
             dao.replaceConversation(conversation.toEntity(), conversation.toTurnEntities())
         }
 
@@ -58,10 +65,13 @@ internal class RoomConversationRepository(
         block: suspend () -> T,
     ): T =
         try {
-            block()
+            val result = block()
+            AppLog.d { "persistence: $operation ok" }
+            result
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Throwable) {
+            AppLog.e(failure) { "persistence: $operation failed" }
             throw VoiceAgentException(
                 error = VoiceAgentError(ErrorCode.PERSISTENCE_FAILED, "conversation $operation failed"),
                 cause = failure,

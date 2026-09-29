@@ -249,4 +249,92 @@ class SttResultAssemblerTest {
 
         assertNull(final.languageTag)
     }
+
+    // --- M08 finalization fix: stop-induced termination -----------------------
+
+    @Test
+    fun aStopInducedStoppedResponseDoesNotMaskASuccessfulTranscript() {
+        // Mirrors the fixed adapter order observed on device: partials and a
+        // final segment, then a stop-induced ErrorResponse(errorCode = 0) mapped
+        // to Stopped immediately before the terminal CompletedResponse.
+        val assembler = newAssembler()
+
+        val events =
+            buildList {
+                addAll(assembler.onResponse(SttEngineResponse.Partial("hello wor")))
+                addAll(assembler.onResponse(SttEngineResponse.Final("hello world")))
+                assertTrue("input end must ask the adapter to stop", assembler.onInputEnded())
+                addAll(assembler.onResponse(SttEngineResponse.Stopped))
+                addAll(assembler.onResponse(SttEngineResponse.Completed))
+                addAll(assembler.finish())
+            }
+
+        val transcripts = events.transcripts()
+        assertEquals("hello world", transcripts.last().text)
+        assertTrue(transcripts.last().isFinal)
+        assertEquals(1, transcripts.count { it.isFinal })
+        assertTrue("a stop-induced response must never produce a failure", events.none { it is SttEvent.Failed })
+    }
+
+    @Test
+    fun stoppedAfterInputEndIsIgnoredEvenWithoutATerminalCompleted() {
+        val assembler = newAssembler()
+
+        val events =
+            buildList {
+                addAll(assembler.onResponse(SttEngineResponse.Final("keep me")))
+                assembler.onInputEnded()
+                addAll(assembler.onResponse(SttEngineResponse.Stopped))
+                // The engine ended its flow without Completed; the adapter's
+                // post-collect finish() still finalizes the transcript.
+                addAll(assembler.finish())
+            }
+
+        assertEquals("keep me", events.transcripts().last().text)
+        assertTrue(events.none { it is SttEvent.Failed })
+    }
+
+    @Test
+    fun stoppedIsIgnoredWhenTextWasAlreadyAssembledEvenWithoutAnExplicitStop() {
+        val assembler = newAssembler()
+
+        val events =
+            buildList {
+                addAll(assembler.onResponse(SttEngineResponse.Partial("guess")))
+                addAll(assembler.onResponse(SttEngineResponse.Stopped))
+                addAll(assembler.finish())
+            }
+
+        assertEquals("guess", events.transcripts().last().text)
+        assertTrue(events.none { it is SttEvent.Failed })
+    }
+
+    @Test
+    fun stoppedWithNoTextAndNoStopRequestIsStillReportedAsAFailure() {
+        val assembler = newAssembler()
+
+        val error = assembler.onResponse(SttEngineResponse.Stopped).onlyFailure()
+
+        assertEquals(ErrorCode.STT_RECOGNITION_FAILED, error.code)
+        assertTrue(assembler.isFinished)
+    }
+
+    @Test
+    fun onInputEndedReturnsTrueOnceAndFalseAfterTheSessionEnds() {
+        val assembler = newAssembler()
+        assembler.onResponse(SttEngineResponse.Partial("hi"))
+
+        assertTrue(assembler.onInputEnded())
+        assertFalse("a second input end must not stop twice", assembler.onInputEnded())
+        assembler.finish()
+        assertFalse("an ended session must not request a stop", assembler.onInputEnded())
+    }
+
+    @Test
+    fun stoppedAfterAFailureEmitsNothing() {
+        val assembler = newAssembler()
+        assembler.onResponse(SttEngineResponse.Failure(SttFailureKind.RECOGNITION_FAILED))
+
+        assertTrue(assembler.onResponse(SttEngineResponse.Stopped).isEmpty())
+    }
 }
