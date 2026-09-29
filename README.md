@@ -2,8 +2,9 @@
 
 A Kotlin Android voice-agent project using Jetpack Compose, targeting Pixel 10.
 The repository contains a buildable Android scaffold, a pure-Kotlin domain and
-contract layer for the voice pipeline, and the design and decision documentation.
-The voice, model, and provider features are not implemented yet.
+contract layer for the voice pipeline, durable conversation storage, a Compose
+conversation UI with a manual text path, and the design and decision
+documentation. The voice, model, and provider features are not implemented yet.
 
 ## Intended experience
 
@@ -78,6 +79,10 @@ remote.
   replay, fixture manifest, and synthetic speech-test variants (M03).
 - [Turn tracing](./docs/turn-tracing.md) — per-turn trace IDs, stage timing,
   bounded non-blocking export, and default redaction (M04).
+- [Conversation persistence](./docs/persistence.md) — Room schema/migrations,
+  repository semantics, process-death recovery, and bounded context (M05).
+- [Conversation UI](./docs/conversation-ui.md) — Compose screens, state holder,
+  manual text path, and the shared text/voice turn seam (M06).
 - [Android device notes](./docs/android-device-notes.md) — Pixel 10 findings
   from GVP and Smart Turn v3.2 integration lessons from speech-android to
   validate for this app rather than copy blindly.
@@ -114,14 +119,18 @@ a verified `distributionSha256Sum`.
 The repository builds and runs a minimal Android app (milestone M01), exposes
 the core domain types and replaceable contracts for the voice pipeline (M02), and
 adds deterministic audio-replay fixtures for speech-path tests (M03) plus
-privacy-safe per-turn tracing and timing (M04). `:app` is the only Gradle module.
-The Compose screen remains a placeholder; the `domain`, `contracts`,
-`diagnostics`, and `replay` packages are pure Kotlin (no `android.*` imports,
-enforced by a unit test), and the 116-test JVM suite covers domain invariants,
-contract event ordering and cancellation, the deterministic fakes, fixture
-replay determinism, and trace correlation/redaction/timing. There is still no
-microphone, STT/TTS, model, provider, or persistence implementation, and the app
-declares no permissions.
+privacy-safe per-turn tracing and timing (M04). Milestone M05 adds durable
+Room-backed conversation persistence with a bounded model-context builder, and
+M06 adds the Compose conversation list/dialog UI with a manual text path. `:app`
+is the only Gradle module. The `domain`, `contracts`, and `diagnostics` packages
+are pure Kotlin (no `android.*` imports, enforced by a unit test), and the
+168-test JVM suite covers domain invariants, contract event ordering and
+cancellation, the deterministic fakes, fixture replay determinism, trace
+correlation/redaction/timing, repository CRUD/migration and context bounds
+(Robolectric), and the conversation UI. A real provider is intentionally not
+wired in yet: the UI renders an explicit "LLM not configured" error instead of a
+fake reply. There is still no microphone, STT/TTS, model, or provider
+implementation, and the app declares no permissions.
 
 The scaffold requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17
 source/target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0,

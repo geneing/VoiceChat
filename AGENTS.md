@@ -10,11 +10,13 @@ possible through supported AICore / ML Kit GenAI APIs and a deliberately
 curated set of TensorFlow Lite (TFLite / LiteRT) models.
 
 The app is scaffolded and its core domain types and replaceable contracts exist
-(M02), with deterministic audio-replay fixtures (M03) and privacy-safe turn
-tracing (M04), but its voice, model, and provider features are not implemented
-yet. Treat the product documents as requirements and direction, not as proof
-that a feature, dependency, model, or device capability already exists. Update
-this file when the project structure and verified commands change.
+(M02), with deterministic audio-replay fixtures (M03), privacy-safe turn
+tracing (M04), durable Room-backed conversation persistence with a bounded
+context builder (M05), and a Compose conversation UI with a manual text path
+(M06). Its voice, model, and provider features are still not implemented yet.
+Treat the product documents as requirements and direction, not as proof that a
+feature, dependency, model, or device capability already exists. Update this
+file when the project structure and verified commands change.
 
 ## Product and platform constraints
 
@@ -147,12 +149,15 @@ app/                        the only application module
     domain/                 pure-Kotlin conversation/domain models (M02)
     contracts/              replaceable platform/provider interfaces (M02)
     diagnostics/            privacy-safe turn tracing and timing (M04)
+    persistence/            Room conversation storage (M05)
     replay/                 deterministic PCM replay + fixtures (M03)
-    ui/                     Compose UI
+    ui/                     Compose conversation UI + ViewModel (M06)
+  schemas/                  exported Room schema JSON (M05)
   src/main/res/                              strings, theme, launcher icon, rules
   src/test/kotlin/com/voicechat/agent/
     domain/, contracts/     JVM domain and contract tests
     diagnostics/, replay/   JVM tracing and replay tests
+    persistence/, ui/       JVM persistence (Robolectric) and UI tests
     fake/                   deterministic contract fakes
   src/test/resources/replay/                 frozen replay fixture bytes
 .github/workflows/ci.yml    CI running the same fast checks
@@ -160,9 +165,11 @@ test_data/                  speech sound files usable to simulate STT
                             input in tests
 ```
 
-`test_data/` holds `.m4a` sound files that contain speech. They are local test
+`test_data/` holds sound files that contain speech: local recordings (`.m4a`)
+and the downloaded `smart-turn-v3.2-eng/` set (original `.flac` plus decoded
+16 kHz mono PCM `.wav`, with `manifest.csv` provenance). They are local test
 input for simulating STT capture in tests, not app assets; do not package them
-in the APK.
+in the APK. Check the license/consent terms before relying on any recording.
 
 Gradle runs on the Windows host through the wrapper, never inside WSL. The
 project has no `local.properties`, so set the SDK path before each invocation:
