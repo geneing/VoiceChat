@@ -1,0 +1,18 @@
+# Shared editor and ktlint/Spotless configuration.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.{kt,kts}]
+indent_size = 4
+# Compose composables are PascalCase by convention; ktlint's function-naming
+# rule would otherwise reject them.
+ktlint_function_naming_ignore_when_annotated_with = Composable
+
+[*.{yml,yaml}]
+indent_size = 2

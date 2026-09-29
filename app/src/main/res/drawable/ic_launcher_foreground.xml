@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Placeholder launcher glyph: a simple microphone silhouette drawn inside the
+    adaptive-icon safe zone. Replace with the final brand asset before release.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,32a8,8 0 0,1 8,8v12a8,8 0 0,1 -16,0v-12a8,8 0 0,1 8,-8z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,52h4v2a10,10 0 0,0 20,0v-2h4v2a14,14 0 0,1 -12,13.85v6.15h8v4h-20v-4h8v-6.15a14,14 0 0,1 -12,-13.85z" />
+</vector>

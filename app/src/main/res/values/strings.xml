@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Voice Agent</string>
+    <string name="scaffold_status">Build scaffold ready. On-device speech needs API %1$d or newer.</string>
+</resources>
