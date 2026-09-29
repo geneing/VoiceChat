@@ -16,7 +16,9 @@ context builder (M05), and a Compose conversation UI with a manual text path
 (M06). Its voice, model, and provider features are still not implemented yet.
 Treat the product documents as requirements and direction, not as proof that a
 feature, dependency, model, or device capability already exists. Update this
-file when the project structure and verified commands change.
+file when the project structure and verified commands change. Unresolved risks,
+open decisions, and known limitations are tracked in
+[docs/risks-and-decisions.md](./docs/risks-and-decisions.md).
 
 ## Product and platform constraints
 

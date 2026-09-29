@@ -65,6 +65,8 @@ remote.
 - [Decision record (M00)](./docs/decisions.md) — verified toolchain, speech,
   model-runtime, and provider decisions, the provider capability matrix, and the
   deferred/unsupported list, with sources.
+- [Risks and open decisions](./docs/risks-and-decisions.md) — living tracker of
+  unresolved risks, open questions, and known limitations across the milestones.
 - [Architecture](./docs/architecture.md) — intended pipeline and component
   boundaries.
 - [Model and runtime support](./docs/model-runtime.md) — provider and model
