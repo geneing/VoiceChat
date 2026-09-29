@@ -73,6 +73,11 @@ dependencies {
     // Bounded event-stream contracts in the domain/contracts packages.
     implementation(libs.kotlinx.coroutines.core)
 
+    // On-device speech-to-text (M08). ML Kit GenAI Speech Recognition is the only
+    // STT engine (docs/decisions.md §2.1); it is gated at runtime by
+    // checkStatus()/checkFeatureStatus() and kept behind the SpeechToText contract.
+    implementation(libs.mlkit.genai.speech.recognition)
+
     // Durable conversation storage (M05). Room entity/DAO code lives in the
     // persistence package and maps to the platform-free domain types.
     implementation(libs.androidx.room.runtime)
