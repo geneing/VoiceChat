@@ -1,10 +1,14 @@
 # Android Voice Agent
 
 A Kotlin Android voice-agent project using Jetpack Compose, targeting Pixel 10.
-The repository contains a buildable Android scaffold, a pure-Kotlin domain and
-contract layer for the voice pipeline, durable conversation storage, a Compose
-conversation UI with a manual text path, and the design and decision
-documentation. The voice, model, and provider features are not implemented yet.
+The repository contains a buildable Android app that implements the on-device
+voice loop (microphone capture → on-device speech-to-text → a selected external
+LLM → on-device text-to-speech) with responsive barge-in, durable conversation
+storage, capability-aware settings, an optional on-device semantic end-of-turn
+detector, and a set of external provider adapters, alongside the design and
+decision documentation. Features are implemented in source and covered by a JVM
+test suite; Pixel 10 device validation and the speech/latency evaluation (M25)
+are still pending, so no performance or recognition-accuracy claim is made here.
 
 ## Intended experience
 
@@ -37,14 +41,13 @@ prompts. Development will emphasize deterministic replay of recorded and
 synthetic speech, including noisy and distorted car/street scenarios, alongside
 clear local diagnostics for LLM requests and pipeline timing.
 
-The repository contains a single-module Gradle app (`:app`) that builds and runs
-a minimal Jetpack Compose screen. Its `com.voicechat.agent.domain` and
-`com.voicechat.agent.contracts` packages hold the pure-Kotlin conversation
-models and the replaceable audio, STT, VAD/turn-completion, LLM, TTS, model,
-persistence, and diagnostics interfaces (M02). It declares no permissions and
-contains no microphone capture, STT/TTS, model, provider, or persistence
-implementation; those arrive in later milestones. The normal external-LLM path
-will need network access and is not fully offline.
+The repository contains a single-module Gradle app (`:app`). Its
+`com.voicechat.agent.domain` and `com.voicechat.agent.contracts` packages hold
+the pure-Kotlin conversation models and the replaceable audio, STT,
+VAD/turn-completion, LLM, TTS, model, persistence, and diagnostics interfaces
+(M02); the remaining packages implement the pipeline. The app declares the
+`RECORD_AUDIO` and `INTERNET` permissions. The external-LLM path is a network
+feature and is not fully offline; STT and TTS stay on-device.
 
 ## Device and runtime direction
 
@@ -128,6 +131,11 @@ remote.
 - [Logging](./docs/logging.md) — release-safe developer logging and redaction.
 - [On-device test plan](./Tests.md) — what to run on the phone and what to
   record, per milestone.
+- [Evaluation (M25)](./docs/evaluation.md) — the speech-quality/endpoint/latency
+  harness, how to run it, the Smart Turn acceptance criteria, and the (currently
+  empty) Pixel 10 result tables.
+- [Release checklist (M26)](./docs/release-checklist.md) — first-run setup,
+  provider/model configuration, supported devices, and known limitations.
 - [Android device notes](./docs/android-device-notes.md) — Pixel 10 findings
   from GVP and Smart Turn v3.2 integration lessons from speech-android to
   validate for this app rather than copy blindly.
@@ -161,75 +169,50 @@ a verified `distributionSha256Sum`.
 
 ## Project status
 
-The repository builds and runs a minimal Android app (milestone M01), exposes
-the core domain types and replaceable contracts for the voice pipeline (M02), and
-adds deterministic audio-replay fixtures for speech-path tests (M03) plus
-privacy-safe per-turn tracing and timing (M04). Milestone M05 adds durable
-Room-backed conversation persistence with a bounded model-context builder, M06
-adds the Compose conversation list/dialog UI with a manual text path, M07 adds
-microphone capture with point-of-use permission and lifecycle handling, M08
-adds the on-device ML Kit GenAI speech-to-text adapter with runtime availability
-gating, M09 adds measured-audio VAD/onset with bounded VAD-only endpointing, M10
-adds optional Smart Turn v3.2 semantic end-of-turn detection through a narrowly
-scoped ONNX Runtime (opt-in and default off), M11 adds on-device platform TTS
-restricted to embedded voices, M12 adds the
-provider-independent LLM streaming contract with a deterministic fake, M13 adds
-Keystore-backed credential storage with the provider capability registry, M14
-adds the OpenAI adapter and the shared remote HTTP/JSON/SSE transport the other
-providers reuse, M15 adds OpenRouter (fallback routing disabled), M16 adds
-DeepSeek (thinking control, chain-of-thought excluded), M17 adds OpenCode Go,
-M18 adds OpenCode Zen, and M19 adds Hermes (per-model protocol dispatch with no
-assumed parity and a configurable, TLS-validated server destination), M21 adds
-the pure-Kotlin turn orchestration state machine with cancellation and
-delivered-only persistence, and M22 adds capability-aware settings persisted in
-DataStore, and M23 wires the persisted selection and credentials through a
-registry-driven provider factory into the orchestrator so a configured provider
-adapter serves the turn (OpenCode Go as the initial path), and M24 adds the
+Implemented **in source** and covered by the JVM suite (M01–M24): the buildable
+Compose app, the pure-Kotlin domain and contracts, deterministic replay fixtures,
+privacy-safe turn tracing, Room conversation persistence with a bounded context
+builder, the conversation UI with manual-text and voice paths, microphone
+capture, ML Kit GenAI STT with runtime availability gating, measured-audio
+VAD/onset with bounded endpointing, optional Smart Turn v3.2 over a narrowly
+scoped ONNX Runtime (opt-in, default off), on-device platform TTS (embedded
+voices only), the provider-independent LLM streaming contract with a
+deterministic fake, Keystore-backed credential storage and the provider
+capability registry, the OpenAI/OpenRouter/DeepSeek/OpenCode Go/OpenCode
+Zen/Hermes adapters over the shared HTTP/JSON/SSE transport, pure-Kotlin turn
+orchestration with cancellation and delivered-only persistence,
+capability-aware DataStore settings, the text-first provider slice, and the
 voice session coordinator with responsive barge-in. M20 adds eligible on-device
-local LLM runtimes: AICore/Gemini Nano discovery through the beta ML Kit GenAI
-Prompt API, a LiteRT-LM `.litertlm` adapter behind the same LLM contract, a
-curated (currently empty) allow-listed catalog with a bounded, integrity-checked,
-atomic app-private install lifecycle, typed availability, and explicit
-local-versus-remote selection that never falls back silently (device run
-deferred). `:app` is the only
-Gradle module. The `domain`, `contracts`, `log`,
-`diagnostics`, `orchestration`, `replay`, `settings`, `vad`, and `turn` packages
-(and the `tts` engine seam, credential/providers logic, and the `remote`
-transport core) are pure Kotlin (no `android.*` imports, enforced by unit tests);
-`audio`, `stt`, `tts`, `local`, `turn/OnnxSmartTurnEngine`, `turn/OkHttpSmartTurnModelSource`,
+local LLM runtimes with a curated (currently empty) allow-listed catalog and
+explicit local-versus-remote selection that never falls back silently.
+
+M25 adds the speech-quality/endpoint/latency evaluation harness
+([docs/evaluation.md](./docs/evaluation.md)); its Pixel 10 result rows are empty
+and no performance budget is fixed. M26 (release hardening) is in progress: the
+voice loop bounds a stalled recognizer, surfaces a typed text-only state when TTS
+is unavailable, and honors the persisted STT mode; the transport bounds
+in-flight provider calls; and app-scoped dependencies live in an `AppContainer`
+owned by the `Application` instead of being rebuilt per activity.
+
+**Status vocabulary.** "Implemented in source" ≠ "host-tested" ≠ "compiled for
+device" ≠ "executed on Pixel 10". The `androidTest` sources compile but the
+device matrix in [Tests.md](./Tests.md) is **not run**, and each provider has an
+opt-in, credential-gated smoke test that is skipped in routine CI. Do not treat a
+feature as device-validated until its Tests.md row records the run.
+
+The `domain`, `contracts`, `log`, `diagnostics`, `eval`, `orchestration`,
+`replay`, `settings`, `vad`, and `turn` packages (and the `tts` engine seam,
+credential/providers logic, and the `remote` transport core) are pure Kotlin (no
+`android.*` imports, enforced by unit tests); `audio`, `stt`, `tts`, `local`,
+`turn/OnnxSmartTurnEngine`, `turn/OkHttpSmartTurnModelSource`,
 `remote/OkHttpStreamingEngine`, and the AndroidKeyStore/DataStore
-implementations hold the platform / ML Kit / network adapters. The 813-test JVM
-suite covers domain invariants, contract ordering and cancellation, the
-deterministic fakes, fixture replay determinism, trace correlation/redaction/
-timing, repository CRUD/migration and context bounds (Robolectric), the
-conversation and settings UI, capture/STT/TTS/VAD adapters, the Smart Turn
-adapter/config/model-lifecycle/endpoint path, LLM-contract semantics, credential
-store/registry, turn orchestration, the text-first slice, the voice loop and
-barge-in, local runtime discovery/catalog/lifecycle and the on-device adapters,
-and the recorded OpenAI/OpenRouter/DeepSeek/OpenCode Go/OpenCode
-Zen/Hermes SSE fixtures.
-On-device tests live under
-`app/src/androidTest` and are catalogued in [Tests.md](./Tests.md) but are not run
-yet; each provider also has an opt-in, credential-gated smoke test that is
-skipped in routine CI. The conversation path now runs the selected provider
-adapter when one is configured and credentialed, and otherwise shows the
-explicit "LLM not configured" state (M23), and the voice loop drives capture →
-VAD/onset → STT → orchestration → TTS with responsive barge-in (M24). The app
-declares the `RECORD_AUDIO`
-and `INTERNET` permissions; speech/latency evaluation (M25) and
-release hardening (M26) are not implemented yet. The implemented Smart Turn
-(M10) is opt-in and default off with its on-device numbers still to be measured
-by M25, and the M20 local runtime path has device validation deferred.
+implementations hold the platform / ML Kit / network adapters.
 
-The scaffold requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17
-source/target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0,
-Kotlin 2.4.20, Compose BOM 2026.09.00, `compileSdk 37`, `targetSdk 36`, and
-`minSdk 31`. Coroutines are pinned to 1.9.0, the version already resolved
-transitively by AndroidX lifecycle. The reasoning behind each value is in the
-[decision record](./docs/decisions.md).
-
-The M00 [decision record](./docs/decisions.md) also records the on-device speech
-choices, the initial model-runtime allow-list, and each provider's
-endpoint/auth/streaming/reasoning capabilities, with the deferred and unsupported
-items called out. Model catalog entries, provider implementations, and speech
-integration are added by later milestones and are not implemented yet.
+The app requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17 source and
+target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0, Kotlin
+2.4.20, Compose BOM 2026.09.00, `compileSdk 37`, `targetSdk 36`, and `minSdk 31`.
+Coroutines are pinned to 1.9.0, the version already resolved transitively by
+AndroidX lifecycle. The reasoning behind each value is in the
+[decision record](./docs/decisions.md), and first-run setup, provider/model
+configuration, supported devices, and known limitations are in
+[release checklist](./docs/release-checklist.md).

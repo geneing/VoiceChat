@@ -26,8 +26,13 @@ end-to-end provider slice that drives the selected adapter through orchestration
 Smart Turn v3.2 semantic end-of-turn detection through ONNX Runtime (M10,
 opt-in and default off), plus eligible on-device local LLM runtimes with a
 curated (currently empty) model catalog and explicit local-versus-remote
-selection (M20). Speech/latency evaluation
-(M25) and release hardening (M26) are still not implemented. Treat the product
+selection (M20). Speech/latency evaluation (M25) now has a pure-Kotlin harness
+(`eval/`) with host tests, but its Pixel 10 result rows are empty, so no latency
+or accuracy claim exists. Release hardening (M26) is in progress: the voice loop
+bounds a stalled recognizer, surfaces a typed text-only state, and honors the
+persisted STT mode; the transport bounds in-flight calls; and app-scoped
+resources are owned by `AppContainer`. The on-device matrix in `Tests.md` is
+still **not run**. Treat the product
 documents as
 requirements and direction, not as proof that a feature, dependency, model, or
 device capability already exists. Update this file when the project structure
