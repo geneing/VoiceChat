@@ -11,6 +11,13 @@
     -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!--
+        The OpenAI adapter (M14) is the first provider that sends an LLM request
+        off-device, so INTERNET is declared here. STT/TTS stay on-device; only
+        the user-approved prompt/context text is sent (docs/privacy-and-security.md).
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name=".VoiceChatApplication"
         android:allowBackup="false"

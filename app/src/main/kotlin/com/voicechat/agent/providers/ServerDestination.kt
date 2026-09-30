@@ -54,6 +54,21 @@ data class ServerDestination(
         if (basePath.isNotEmpty()) builder.append(basePath)
         return builder.toString()
     }
+
+    /**
+     * The absolute URL for [path] on this destination, used by a provider adapter
+     * to reach one documented endpoint (for example `/responses`) without
+     * re-deriving the base URL. The path is joined with a single `/`.
+     */
+    fun url(path: String = ""): String {
+        val defaultPort = if (scheme == "https") 443 else 80
+        val builder = StringBuilder().append(scheme).append("://").append(host)
+        if (port != defaultPort) builder.append(':').append(port)
+        builder.append(basePath.trimEnd('/'))
+        val suffix = path.trimStart('/')
+        if (suffix.isNotEmpty()) builder.append('/').append(suffix)
+        return builder.toString()
+    }
 }
 
 /** Result of validating a destination; invalid carries a typed, safe error. */

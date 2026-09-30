@@ -1,0 +1,5 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_trunc_0001","model":"gpt-test-1","object":"response"}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_test_0001","output_index":0,"content_index":0,"delta":"partial answer","sequence_number":3}

@@ -1,0 +1,8 @@
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_test_0001","output_index":0,"content_index":0,"delta":"ok","sequence_number":2}
+
+event: response.output_text.delta
+data: {this frame is not valid json}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_bad_0001","model":"gpt-test-1","status":"completed"}}

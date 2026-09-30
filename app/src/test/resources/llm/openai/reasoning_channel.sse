@@ -1,0 +1,11 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_reason_0001","model":"gpt-test-1","object":"response"}}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_test_0001","output_index":0,"summary_index":0,"delta":"thinking about the question","sequence_number":3}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_test_0001","output_index":1,"content_index":0,"delta":"answer","sequence_number":5}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_reason_0001","model":"gpt-test-1","status":"completed","reasoning":{"effort":"high"},"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}

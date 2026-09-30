@@ -507,3 +507,75 @@ passed unless it was run on the device.**
 The live `/models` catalog (so the model list is populated) and the OpenRouter
 browser/token exchange are M14–M19 work (R-0101, R-0102); the persisted selection
 is consumed by the turn path in M23 (R-0103).
+
+## M14 — OpenAI adapter and shared remote transport
+
+M14 is a **JVM-first** milestone. The shared remote transport and the OpenAI
+adapter are pure Kotlin behind the M12 contract; every protocol case is a
+recorded SSE fixture or a scripted engine with **no socket, clock, DNS, or real
+credential**. There is no M14-specific instrumented test, so no row is added to
+the automated on-device table above; the existing instrumented tests were
+compiled only. See [docs/llm-transport.md](./docs/llm-transport.md) and
+[docs/openai-adapter.md](./docs/openai-adapter.md).
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device, no network): fixture replay for the
+# normal stream, empty response, malformed frames, rate limit, auth failure,
+# server error, network loss, and cancellation mid-stream.
+.\gradlew.bat :app:testDebugUnitTest
+
+# Compile the instrumented tests WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+```
+
+What the JVM suite proves instead (details in the two linked documents):
+
+- the request goes to the documented `POST /v1/responses` with `Authorization:
+  Bearer <credential>` and **`"store": false`** (R-0018), and `"stream": true`;
+- incremental `response.output_text.delta` frames become deltas, a
+  terminal `response.completed` carries `usage`/`model`/`reasoning`, and a
+  stream that ends without a terminal event is `LLM_MALFORMED_RESPONSE` (R-0067);
+- the `reasoning_*` channel is excluded from assistant text and only the
+  reported `reasoning.effort` is surfaced (R-0066);
+- 401/403 → `LLM_AUTHENTICATION_FAILED`, 429 → `LLM_RATE_LIMITED`,
+  408/504 → `LLM_TIMEOUT`, other 4xx → `LLM_INVALID_REQUEST`, 5xx →
+  `LLM_UNAVAILABLE`, a dropped connection → `LLM_NETWORK_FAILED`, both as
+  streamed `error` events and as HTTP statuses;
+- a mid-stream network loss and a mid-stream cancellation keep the partial text
+  as partial and never report completion;
+- the credential check (`GET /v1/models`) maps 401/403 to an authentication
+  rejection and keeps a transient failure typed (R-0073);
+- `HTTP`/`JSON` library types stay inside the transport and `domain/`+`contracts/`
+  do not import the transport (`RemoteSourcePurityTest`); the app contract stays
+  vendor-free (`LlmContractPurityTest`);
+- no credential, prompt, or assistant text appears in the developer log.
+
+### Opt-in real-provider smoke test (marked NOT run)
+
+`providers.openai.OpenAiSmokeTest` is the one M14 test that can touch the real
+service. It is **skipped** (JUnit `Assume`), and so never runs in routine CI,
+unless **both** `VOICECHAT_OPENAI_SMOKE=1` and `OPENAI_API_KEY` are set:
+
+```powershell
+$env:VOICECHAT_OPENAI_SMOKE = "1"
+$env:OPENAI_API_KEY = "<your key>"                 # externally supplied only
+$env:VOICECHAT_OPENAI_SMOKE_MODEL = "gpt-5.6-luna" # optional
+.\gradlew.bat :app:testDebugUnitTest --tests "*OpenAiSmokeTest"
+```
+
+It **was not run** for this milestone. This is tracked as R-0091 (adapter) and
+R-0096 (credential check). What to record for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit, and the
+  selected model and reasoning level.
+- Network/region conditions and the observed time to first text and total
+  completion time.
+- The completion outcome and any typed failure reason — **never** the prompt or
+  the response text, and **never** the API key. The smoke test itself asserts on
+  completion/counts only and prints no content.
+
+Device-level latency, cancellation-acknowledgement timing, and live provider
+behavior remain unmeasured and are tracked in R-0069, R-0091, and R-0096. **Do
+not mark any of these passed unless the command was actually run.**

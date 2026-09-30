@@ -82,6 +82,13 @@ dependencies {
     // Bounded event-stream contracts in the domain/contracts packages.
     implementation(libs.kotlinx.coroutines.core)
 
+    // Shared remote LLM transport (M14): streaming HTTP + JSON. These types stay
+    // inside `com.voicechat.agent.remote` and provider adapters; the app-facing
+    // LanguageModel/LlmRequest contract never imports them (LlmContractPurityTest,
+    // RemoteSourcePurityTest). See docs/llm-transport.md.
+    implementation(libs.okhttp)
+    implementation(libs.kotlinx.serialization.json)
+
     // On-device speech-to-text (M08). ML Kit GenAI Speech Recognition is the only
     // STT engine (docs/decisions.md §2.1); it is gated at runtime by
     // checkStatus()/checkFeatureStatus() and kept behind the SpeechToText contract.
