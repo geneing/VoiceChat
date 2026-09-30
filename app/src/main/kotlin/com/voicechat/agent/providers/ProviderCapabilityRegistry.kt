@@ -77,6 +77,7 @@ class ProviderCapabilityRegistry(
                         reasoningLevels =
                             setOf(
                                 ReasoningLevel.NONE,
+                                ReasoningLevel.MINIMAL,
                                 ReasoningLevel.LOW,
                                 ReasoningLevel.MEDIUM,
                                 ReasoningLevel.HIGH,

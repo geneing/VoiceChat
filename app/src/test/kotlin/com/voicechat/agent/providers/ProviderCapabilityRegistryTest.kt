@@ -78,7 +78,9 @@ class ProviderCapabilityRegistryTest {
     fun openAiAndOpenRouterExposeTheirDocumentedReasoningLevels() {
         val openAi = registry.capabilities(KnownProviders.OPENAI)!!
         assertTrue(openAi.models.reasoningLevels.containsAll(setOf(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH)))
-        assertFalse(openAi.models.reasoningLevels.contains(ReasoningLevel.MINIMAL))
+        // Re-verified at M14 (2026-09-29): the documented effort union now includes
+        // `minimal`, so the OpenAI row carries it. See docs/openai-adapter.md.
+        assertTrue(openAi.models.reasoningLevels.contains(ReasoningLevel.MINIMAL))
 
         val openRouter = registry.capabilities(KnownProviders.OPENROUTER)!!
         assertTrue(openRouter.models.reasoningLevels.contains(ReasoningLevel.MINIMAL))

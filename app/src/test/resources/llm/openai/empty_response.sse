@@ -1,0 +1,5 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_empty_0001","model":"gpt-test-1","object":"response"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_empty_0001","model":"gpt-test-1","status":"completed","usage":{"input_tokens":5,"output_tokens":0,"total_tokens":5}}}

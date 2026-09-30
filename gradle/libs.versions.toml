@@ -34,6 +34,18 @@ mlkitGenaiSpeech = "1.0.0-alpha1"
 # not depend on a transitive version. See docs/decisions.md and M02.
 coroutines = "1.9.0"
 
+# Remote LLM transport (M14). OkHttp 5.1.0 is the pinned streaming-capable HTTP
+# client; it is Apache-2.0 and already on Maven Central (verified resolvable
+# 2026-09-29). Its JVM artifact depends on okio 3.15.0. The public app contract
+# never sees an OkHttp type (see docs/llm-transport.md, LlmContractPurityTest).
+okhttp = "5.1.0"
+# JSON for the shared remote transport and provider adapters (M14).
+# kotlinx-serialization-json 1.10.0 is Apache-2.0 and used through a small
+# library-free `JsonNode` facade in the transport, so no serialization type
+# reaches the contract or the adapters (verified resolvable 2026-09-29). It
+# requires kotlin-stdlib 2.3.0, below the pinned 2.4.20 toolchain.
+kotlinxSerialization = "1.10.0"
+
 # Testing.
 junit = "4.13.2"
 # Robolectric runs the Room repository/schema tests on the JVM so they need no
@@ -67,6 +79,10 @@ androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref =
 mlkit-genai-speech-recognition = { module = "com.google.mlkit:genai-speech-recognition", version.ref = "mlkitGenaiSpeech" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+# Shared remote transport (M14): streaming HTTP + JSON. Used only by the
+# `remote` package and provider adapters, never by the contracts/domain seam.
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 junit = { module = "junit:junit", version.ref = "junit" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 # Instrumented (on-device) test foundation: runner/rules/JUnit extension. Compose
