@@ -94,6 +94,13 @@ dependencies {
     // checkStatus()/checkFeatureStatus() and kept behind the SpeechToText contract.
     implementation(libs.mlkit.genai.speech.recognition)
 
+    // Optional Smart Turn v3.2 semantic end-of-turn model (M10). ONNX Runtime is
+    // allow-listed ONLY for the pinned artifact (docs/decisions.md §3.1, §3.3);
+    // the model itself is downloaded app-privately and is never packaged in the
+    // APK. The `turn` package keeps it behind a small, fakeable engine seam, so
+    // the JVM tests never load the native runtime.
+    implementation(libs.onnxruntime.android)
+
     // Durable conversation storage (M05). Room entity/DAO code lives in the
     // persistence package and maps to the platform-free domain types.
     implementation(libs.androidx.room.runtime)

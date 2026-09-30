@@ -12,12 +12,18 @@ import com.voicechat.agent.providers.RegisteredProviderLanguageModelFactory
 import com.voicechat.agent.remote.OkHttpStreamingEngine
 import com.voicechat.agent.remote.RemoteTransport
 import com.voicechat.agent.settings.PreferencesSettingsStore
+import com.voicechat.agent.turn.OnnxSmartTurnEngine
+import com.voicechat.agent.turn.SmartTurnDetectorFactory
+import com.voicechat.agent.turn.SmartTurnEngineFactory
+import com.voicechat.agent.turn.SmartTurnModelStore
 import com.voicechat.agent.ui.AndroidSettingsCapabilityProvider
 import com.voicechat.agent.ui.ConversationDefaults
 import com.voicechat.agent.ui.VoiceAgentRoot
 import com.voicechat.agent.ui.settingsViewModelFactory
 import com.voicechat.agent.ui.theme.VoiceAgentTheme
 import com.voicechat.agent.voice.VoiceSessionAssembly
+import kotlinx.coroutines.flow.first
+import java.io.File
 
 /**
  * Single activity entry point.
@@ -61,12 +67,27 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 val settingsFlow = remember { settingsStore.observe() }
+                // M10: Smart Turn is opt-in and default-off. The factory reads the
+                // persisted flag at session start and only constructs the detector
+                // when it is enabled *and* the app-private model is verified.
+                val smartTurnDetectorProvider =
+                    remember {
+                        SmartTurnDetectorFactory(
+                            store =
+                                SmartTurnModelStore(
+                                    File(applicationContext.filesDir, SmartTurnModelStore.DIRECTORY_NAME),
+                                ),
+                            enabled = { settingsStore.observe().first().smartTurnEnabled },
+                            engineFactory = SmartTurnEngineFactory { file -> OnnxSmartTurnEngine.load(file) },
+                        )
+                    }
                 val voiceFactory =
                     remember {
                         VoiceSessionAssembly.platformFactory(
                             context = applicationContext,
                             repository = repository,
                             fallbackLanguageModel = languageModel,
+                            turnCompletion = smartTurnDetectorProvider,
                         )
                     }
                 VoiceAgentRoot(

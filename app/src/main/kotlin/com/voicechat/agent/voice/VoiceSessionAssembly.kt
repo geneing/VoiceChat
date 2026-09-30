@@ -7,6 +7,7 @@ import com.voicechat.agent.contracts.DiagnosticsSink
 import com.voicechat.agent.contracts.LanguageModel
 import com.voicechat.agent.contracts.NoOpDiagnosticsSink
 import com.voicechat.agent.contracts.TextToSpeech
+import com.voicechat.agent.contracts.TurnCompletionDetector
 import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.diagnostics.SystemMonotonicClock
 import com.voicechat.agent.domain.Conversation
@@ -22,6 +23,8 @@ import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttEngines
 import com.voicechat.agent.tts.OnDeviceTts
+import com.voicechat.agent.turn.NoSmartTurnDetectorProvider
+import com.voicechat.agent.turn.SmartTurnDetectorProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,6 +57,7 @@ object VoiceSessionAssembly {
         diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
         clock: MonotonicClock = SystemMonotonicClock,
         locale: Locale = Locale.getDefault(),
+        turnCompletion: SmartTurnDetectorProvider = NoSmartTurnDetectorProvider,
     ): VoiceSessionFactory =
         VoiceSessionFactory { listener, providerSource ->
             PlatformVoiceSession(
@@ -65,6 +69,7 @@ object VoiceSessionAssembly {
                 locale = locale,
                 downstream = listener,
                 providerSource = providerSource,
+                turnCompletion = turnCompletion,
             )
         }
 }
@@ -83,6 +88,7 @@ private class PlatformVoiceSession(
     private val locale: Locale,
     private val downstream: VoiceSessionListener,
     private val providerSource: VoiceTurnProviderSource,
+    private val turnCompletion: SmartTurnDetectorProvider,
 ) : VoiceSessionController,
     VoiceSessionListener {
     private val _state = MutableStateFlow(VoiceSessionState.IDLE)
@@ -109,12 +115,21 @@ private class PlatformVoiceSession(
             } catch (failure: Throwable) {
                 null
             }
+        // M10: resolve the optional semantic detector once per session. A disabled
+        // or unavailable Smart Turn returns null and the bounded VAD-only policy
+        // applies; it is never fabricated, and it is closed with the session.
+        val semanticDetector = resolveSemanticDetector()
         val session =
             VoiceSessionCoordinator(
                 audioInput = audioInput,
                 speechToText = speechToText,
                 textToSpeech = textToSpeech,
-                turnDetector = PolicyVoiceTurnDetector.forRoute(diagnostics = diagnostics, clock = clock),
+                turnDetector =
+                    PolicyVoiceTurnDetector.forRoute(
+                        diagnostics = diagnostics,
+                        clock = clock,
+                        semanticDetector = semanticDetector,
+                    ),
                 orchestratorFactory = {
                     TurnOrchestrator(
                         repository = repository,
@@ -134,6 +149,13 @@ private class PlatformVoiceSession(
             session.run(conversation)
         } finally {
             coordinator = null
+            try {
+                semanticDetector?.close()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (ignored: Throwable) {
+                // Release best-effort; the session already ended.
+            }
             try {
                 speechToText.close()
             } catch (cancellation: CancellationException) {
@@ -164,6 +186,18 @@ private class PlatformVoiceSession(
 
     private suspend fun readyEngine(): SttEngine? =
         SttEngines.catalog(locale).firstOrNull { MlKitSttStatus.check(it) is SttAvailability.Ready }
+
+    /** Resolves the optional semantic detector; a failure degrades to the VAD-only policy. */
+    private suspend fun resolveSemanticDetector(): TurnCompletionDetector? =
+        try {
+            turnCompletion.detector()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (ignored: Throwable) {
+            // The detector already records its own typed unavailable reason; the
+            // loop must still run with the bounded VAD-only endpoint.
+            null
+        }
 
     // region VoiceSessionListener passthrough (coordinator -> UI listener)
 

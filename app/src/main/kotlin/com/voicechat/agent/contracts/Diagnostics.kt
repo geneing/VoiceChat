@@ -133,6 +133,18 @@ enum class DiagnosticAttribute {
 
     /** Offset from capture start, in milliseconds, at which the event occurred. */
     VAD_OFFSET_MILLIS,
+
+    /*
+     * Smart Turn semantic completion attributes (M10). They carry the model's
+     * probability (a number, never audio), the model identity, and the
+     * integrity/verdict status — never a sample value or the audio window.
+     */
+
+    /** The Smart Turn model's probability that a candidate pause completes the turn. */
+    TURN_COMPLETION_PROBABILITY,
+
+    /** Model integrity/verdict status code (`VERIFIED`, `MISSING`, `CORRUPT`, `LOAD_FAILED`, …). */
+    MODEL_INTEGRITY,
 }
 
 /**

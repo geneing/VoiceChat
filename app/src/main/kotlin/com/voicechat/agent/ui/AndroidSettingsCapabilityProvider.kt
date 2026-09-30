@@ -4,11 +4,13 @@ import android.content.Context
 import com.voicechat.agent.providers.DocumentedModelCatalog
 import com.voicechat.agent.settings.SettingsCapabilities
 import com.voicechat.agent.settings.SettingsCapabilityProvider
-import com.voicechat.agent.settings.SmartTurnState
 import com.voicechat.agent.stt.MlKitSttStatus
 import com.voicechat.agent.stt.SttEngines
 import com.voicechat.agent.tts.AndroidTtsEngine
 import com.voicechat.agent.tts.TtsVoice
+import com.voicechat.agent.turn.SmartTurnCatalog
+import com.voicechat.agent.turn.SmartTurnModelStore
+import java.io.File
 
 /**
  * App-boundary [SettingsCapabilityProvider] that reads the **real** runtime
@@ -23,7 +25,9 @@ import com.voicechat.agent.tts.TtsVoice
  *   reported as such;
  * - TTS voices come from `getVoices()` and the settings screen filters to embedded
  *   voices;
- * - Smart Turn is M10 and is honestly unavailable until it is implemented;
+ * - Smart Turn availability (M10) comes from the app-private model file and its
+ *   size + SHA-256 integrity check: installed → Available, missing →
+ *   DownloadRequired, wrong size/hash → Unavailable with a reason;
  * - the model catalog is the **documented** static list (M23): the ids a
  *   provider's own page places, not a live `/models` result, so a selection is
  *   real without claiming the live surface is wired (R-0102 stays open).
@@ -33,11 +37,16 @@ class AndroidSettingsCapabilityProvider(
 ) : SettingsCapabilityProvider {
     private val appContext = context.applicationContext
 
+    // One store per provider instance so repeated snapshots reuse the same
+    // app-private directory; verification runs off the main thread inside state().
+    private val smartTurnStore: SmartTurnModelStore =
+        SmartTurnModelStore(File(appContext.filesDir, SmartTurnModelStore.DIRECTORY_NAME))
+
     override suspend fun snapshot(): SettingsCapabilities =
         SettingsCapabilities(
             sttAvailability = SttEngines.catalog().map { MlKitSttStatus.check(it) },
             ttsVoices = readTtsVoices(),
-            smartTurn = SMART_TURN_UNAVAILABLE,
+            smartTurn = SmartTurnCatalog.settingsState(smartTurnStore.state()),
             models = DocumentedModelCatalog.availableModels(),
         )
 
@@ -55,10 +64,5 @@ class AndroidSettingsCapabilityProvider(
         } finally {
             runCatching { engine.close() }
         }
-    }
-
-    private companion object {
-        val SMART_TURN_UNAVAILABLE =
-            SmartTurnState.Unavailable("Smart Turn is not installed; the bounded VAD endpoint is used.")
     }
 }
