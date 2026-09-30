@@ -20,15 +20,15 @@ measured-audio VAD/onset and bounded endpointing (M09), on-device platform TTS
 (M13), pure-Kotlin turn orchestration with cancellation (M21), the OpenAI (M14),
 OpenRouter (M15), DeepSeek (M16), OpenCode Go (M17), OpenCode Zen (M18), and
 Hermes (M19) adapters over a shared remote HTTP/JSON/SSE transport,
-capability-aware settings with DataStore persistence (M22), and a text-first
+capability-aware settings with DataStore persistence (M22), a text-first
 end-to-end provider slice that drives the selected adapter through orchestration
-(M23). Smart Turn (M10), local model runtimes (M20), voice-loop integration and
-barge-in (M24), speech/latency evaluation (M25), and release hardening (M26) are
-still not implemented. Treat the product documents as requirements and
-direction, not as proof that a feature, dependency, model, or device capability
-already exists. Update this file when the project structure and verified
-commands change. Unresolved risks, open decisions, and known limitations are
-tracked in [docs/risks-and-decisions.md](./docs/risks-and-decisions.md).
+(M23), and a voice-loop coordinator with responsive barge-in (M24). Smart Turn
+(M10), local model runtimes (M20), speech/latency evaluation (M25), and release
+hardening (M26) are still not implemented. Treat the product documents as
+requirements and direction, not as proof that a feature, dependency, model, or
+device capability already exists. Update this file when the project structure
+and verified commands change. Unresolved risks, open decisions, and known
+limitations are tracked in [docs/risks-and-decisions.md](./docs/risks-and-decisions.md).
 
 ## Product and platform constraints
 
@@ -181,6 +181,7 @@ app/                        the only application module
     tts/                    on-device platform TTS adapter (M11)
     ui/                     Compose conversation + settings UI (M06/M22)
     vad/                    measured-audio VAD/onset + endpointing (M09)
+    voice/                  voice session coordinator + barge-in (M24)
   schemas/                  exported Room schema JSON (M05)
   src/main/res/                              strings, theme, launcher icon, rules
   src/test/kotlin/com/voicechat/agent/
@@ -192,7 +193,7 @@ app/                        the only application module
     persistence/, settings/ JVM persistence (Robolectric) and settings tests
     replay/, remote/        JVM replay and remote-transport tests
     security/, ui/          JVM secret scan and Compose UI tests
-    vad/                    JVM VAD tests
+    vad/, voice/            JVM VAD and voice-session tests
     fake/                   deterministic contract fakes
   src/test/resources/replay/                 frozen replay fixture bytes
   src/test/resources/llm/                    recorded provider SSE fixtures

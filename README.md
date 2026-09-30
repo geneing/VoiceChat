@@ -102,6 +102,8 @@ remote.
   machine, cancellation, and delivered-only persistence (M21).
 - [Text-first slice](./docs/text-first-slice.md) — the registry-driven provider
   factory, selection/credential wiring, and disclosure before send (M23).
+- [Voice loop](./docs/voice-loop.md) — the voice session coordinator, barge-in,
+  delivered-only reconciliation, and interruption recovery (M24).
 - [LLM remote transport](./docs/llm-transport.md) — the shared HTTP/JSON/SSE
   transport, error mapping, and fixture replay harness (M14).
 - [OpenAI adapter](./docs/openai-adapter.md) — the verified OpenAI endpoint,
@@ -175,29 +177,31 @@ the pure-Kotlin turn orchestration state machine with cancellation and
 delivered-only persistence, and M22 adds capability-aware settings persisted in
 DataStore, and M23 wires the persisted selection and credentials through a
 registry-driven provider factory into the orchestrator so a configured provider
-adapter serves the turn (OpenCode Go as the initial path). `:app` is the only
+adapter serves the turn (OpenCode Go as the initial path), and M24 adds the
+voice session coordinator with responsive barge-in. `:app` is the only
 Gradle module. The `domain`, `contracts`, `log`,
 `diagnostics`, `orchestration`, `replay`, `settings`, and `vad` packages (and the
 `tts` engine seam, credential/providers logic, and the `remote` transport core)
 are pure Kotlin (no `android.*` imports, enforced by unit tests); `audio`, `stt`,
 `tts`, `remote/OkHttpStreamingEngine`, and the AndroidKeyStore/DataStore
-implementations hold the platform / ML Kit / network adapters. The 756-test JVM
+implementations hold the platform / ML Kit / network adapters. The 772-test JVM
 suite covers domain invariants, contract ordering and cancellation, the
 deterministic fakes, fixture replay determinism, trace correlation/redaction/
 timing, repository CRUD/migration and context bounds (Robolectric), the
 conversation and settings UI, capture/STT/TTS/VAD adapters, LLM-contract
 semantics, credential store/registry, turn orchestration, the text-first slice,
-and the recorded
+the voice loop and barge-in, and the recorded
 OpenAI/OpenRouter/DeepSeek/OpenCode Go/OpenCode Zen/Hermes SSE fixtures.
 On-device tests live under
 `app/src/androidTest` and are catalogued in [Tests.md](./Tests.md) but are not run
 yet; each provider also has an opt-in, credential-gated smoke test that is
 skipped in routine CI. The conversation path now runs the selected provider
 adapter when one is configured and credentialed, and otherwise shows the
-explicit "LLM not configured" state (M23). The app declares the `RECORD_AUDIO`
+explicit "LLM not configured" state (M23), and the voice loop drives capture →
+VAD/onset → STT → orchestration → TTS with responsive barge-in (M24). The app
+declares the `RECORD_AUDIO`
 and `INTERNET` permissions; Smart Turn (M10), local model runtimes (M20),
-voice-loop integration and barge-in (M24), evaluation (M25), and release
-hardening (M26) are not implemented yet.
+evaluation (M25), and release hardening (M26) are not implemented yet.
 
 The scaffold requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17
 source/target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0,
