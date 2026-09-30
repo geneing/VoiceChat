@@ -19,10 +19,12 @@ measured-audio VAD/onset and bounded endpointing (M09), on-device platform TTS
 (M12), Keystore-backed credential storage with a provider capability registry
 (M13), pure-Kotlin turn orchestration with cancellation (M21), the OpenAI (M14),
 OpenRouter (M15), DeepSeek (M16), OpenCode Go (M17), OpenCode Zen (M18), and
-Hermes (M19) adapters over a shared remote HTTP/JSON/SSE transport, and
-capability-aware settings with DataStore persistence (M22). Smart Turn (M10),
-local model runtimes (M20), and the integration and release milestones (M23-M26)
-are still not implemented. Treat the product documents as requirements and
+Hermes (M19) adapters over a shared remote HTTP/JSON/SSE transport,
+capability-aware settings with DataStore persistence (M22), and a text-first
+end-to-end provider slice that drives the selected adapter through orchestration
+(M23). Smart Turn (M10), local model runtimes (M20), voice-loop integration and
+barge-in (M24), speech/latency evaluation (M25), and release hardening (M26) are
+still not implemented. Treat the product documents as requirements and
 direction, not as proof that a feature, dependency, model, or device capability
 already exists. Update this file when the project structure and verified
 commands change. Unresolved risks, open decisions, and known limitations are
