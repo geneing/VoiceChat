@@ -197,8 +197,12 @@ class LocalVsRemoteSelectionTest {
 
             val models = provider.observe(ModelTask.LANGUAGE_MODEL).collectFirst()
 
-            assertEquals(1, models.size)
-            assertFalse(models.single() is ModelAvailability.Ready)
+            // AICore is always reported; app-managed catalog entries may add more.
+            val aicore = models.single { it.model.id == LocalModels.GEMINI_NANO_ID }
+            assertFalse(aicore is ModelAvailability.Ready)
+            // And no catalog entry may claim to be Ready without an installed,
+            // verified file.
+            assertTrue(models.none { it is ModelAvailability.Ready })
         }
 
     @Test
@@ -212,8 +216,11 @@ class LocalVsRemoteSelectionTest {
 
             val models = provider.observe(ModelTask.LANGUAGE_MODEL).collectFirst()
 
-            assertTrue(models.single() is ModelAvailability.Ready)
-            assertEquals(LocalModels.GEMINI_NANO_ID, models.single().model.id)
+            val aicore = models.single { it.model.id == LocalModels.GEMINI_NANO_ID }
+            assertTrue(aicore is ModelAvailability.Ready)
+            // The catalog entry must still be reported (as DownloadRequired),
+            // never silently dropped.
+            assertEquals(LocalModelCatalog.entries().size, models.size - 1)
         }
 
     private suspend fun kotlinx.coroutines.flow.Flow<List<ModelAvailability>>.collectFirst(): List<ModelAvailability> {

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug-only manifest overlay.
+
+    Debug builds swap in an Application subclass that also imports an
+    adb-pushed credential file (scripts/push-credentials.sh) into the
+    AndroidKeyStore-backed store. Release builds never see this class, the
+    import step, or the credential file.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:name=".debug.DebugVoiceChatApplication"
+        tools:replace="android:name" />
+
+</manifest>

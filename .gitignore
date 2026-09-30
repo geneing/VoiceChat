@@ -6,6 +6,19 @@ build/
 # Local CodeGraph tool index (developer tooling, not part of the project)
 .codegraph/
 
+# Downloaded model artifacts (developer tooling, too large for git). Fetch them
+# with scripts/fetch-models.sh; only the manifest and checksums are tracked.
+models/*
+!models/README.md
+!models/*.json
+!models/*.sha256
+
+# Local secrets handed over for debug/device runs. Never committed; a debug-only
+# import step loads the value into the AndroidKeyStore-backed store on the device.
+# Only the format note is tracked.
+secrets/*
+!secrets/README.md
+
 # Local configuration file (sdk path, etc)
 local.properties
 
@@ -36,3 +49,8 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Downloaded Smart Turn evaluation audio (large, license/consent not yet verified
+# for re-use — see R-0037). Fetch locally with scripts/fetch-models.sh; do not
+# commit until the intake process passes.
+test_data/smart-turn-v3.2-eng/

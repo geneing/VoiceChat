@@ -406,6 +406,29 @@ What to record for every run:
 Unrun device items are tracked as R-0070, R-0071, and R-0075; **do not mark any
 row passed unless it was run on the device.**
 
+### Debug credential import (developer/device aid)
+
+`scripts/push-credentials.sh` + the debug-only `DebugVoiceChatApplication`
+pre-load a provider key from the gitignored `secrets/` directory into the
+Keystore-backed store, so a device run does not require retyping the key. See
+[docs/credentials.md](./docs/credentials.md#debug-credential-import-developerdevice-only).
+
+```powershell
+# 1) put the key in the gitignored file, then from WSL:
+bash scripts/push-credentials.sh          # adb push -> run-as cp into files/debug-credentials/
+# 2) install/launch the debug build; the debug app imports it on launch.
+```
+
+Verified **2026-09-30** on the Pixel 10 (Android 17, `debug`):
+`adb push` of a 68-byte `secrets/opencode-go.key` followed by a cold launch
+logged `credentials: stored provider=opencode-go kind=API_KEY` and
+`debug-credentials: imported OpenCode Go credential from opencode-go.key`; the
+plaintext file was deleted (`files/debug-credentials` empty) and
+`shared_prefs/voicechat-credentials.xml` held only a Base64 ciphertext blob with
+no `OPENCODE_API_KEY` plaintext. The parser is covered on the JVM by
+`debug.DebugCredentialImportTest`. This is a developer aid, not a product
+feature; release builds do not compile it.
+
 ## M21 — Turn orchestration and cancellation
 
 M21 is a **JVM-first** milestone: the turn state machine and orchestrator are
@@ -1285,8 +1308,25 @@ passed 2/2. The pinned model was **not installed** (`Smart Turn availability:
 Missing`; artifact `smart-turn-v3.2-int8`
 `b48fdbe20772bcec1fef02f4a1a355236ef6359e`), so device inference was correctly
 **not exercised** and availability resolved to `DownloadRequired`; the
-wrong-size→`MODEL_CORRUPT` check passed. Load/inference/memory/CPU numbers remain
-**unmeasured** (R-0190, M25).
+wrong-size→`MODEL_CORRUPT` check passed.
+
+**Run 2026-09-30 (same device, pinned artifact installed via
+`scripts/push-models.sh`, `adb shell am instrument
+… SmartTurnInstrumentedTest` on the already-installed APKs so `files/` is not
+wiped):** `SmartTurnInstrumentedTest` passed 2/2 and the real graph was
+exercised: `Smart Turn availability: Installed(… smart-turn-v3.2-int8.onnx,
+sizeBytes=11123370)`, artifact
+`smart-turn-v3.2-int8 b48fdbe20772bcec1fef02f4a1a355236ef6359e`, and one
+inference on a silence window returned `probability 0.40689537` (finite, in
+`[0,1]`). Load/inference/memory/CPU durations and false-commit/false-hold counts
+remain **unmeasured** (R-0190, M25).
+
+> **Note:** `:app:connectedDebugAndroidTest` reinstalls the app and therefore wipes
+> app-private `files/`, so the model must be re-pushed *after* the last Gradle
+> install. To run the model-dependent tests without wiping `files/`, install both
+> APKs with `adb install` and run `adb shell am instrument -w -e class
+> com.voicechat.agent.turn.SmartTurnInstrumentedTest
+> com.voicechat.agent.test/androidx.test.runner.AndroidJUnitRunner`.
 
 What to record for every run:
 

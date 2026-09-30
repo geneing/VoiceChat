@@ -10,9 +10,10 @@ import org.junit.Test
 /**
  * M20 acceptance for the allow-listed local-model catalog.
  *
- * The catalog is deliberately empty; these tests prove both that an honest empty
- * catalog is a valid result and that a candidate missing required metadata or
- * carrying a bad checksum is refused rather than admitted.
+ * The catalog is deliberately empty (no local LLM ships; OpenCode Go is the
+ * primary LLM path); these tests prove both that an honest empty catalog is a
+ * valid result and that a candidate missing required metadata or carrying a bad
+ * checksum is refused rather than admitted.
  */
 class LocalModelCatalogTest {
     @Test
@@ -22,6 +23,18 @@ class LocalModelCatalogTest {
         assertTrue((status as LocalCatalogStatus.NoAllowListedModel).reason.isNotBlank())
         assertTrue(LocalModelCatalog.entries().isEmpty())
         assertTrue(LocalModelCatalog.allowListed.isEmpty())
+    }
+
+    @Test
+    fun anEmptyCandidateListIsStillHonest() {
+        // An empty candidate list must remain a valid "no model" result rather
+        // than a crash or a fabricated entry.
+        val models =
+            emptyList<LocalModelArtifact>().mapNotNull { artifact ->
+                (LocalModelCatalogValidator.validate(artifact) as? LocalCatalogValidation.Accepted)?.model
+            }
+        assertTrue(models.isEmpty())
+        assertTrue(LocalModelCatalog.EMPTY_REASON.isNotBlank())
     }
 
     @Test

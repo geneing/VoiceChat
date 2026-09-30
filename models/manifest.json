@@ -1,0 +1,16 @@
+{
+  "$comment": "Machine-readable mirror of the pinned artifacts. The authoritative checksums are in scripts/fetch-models.sh; this file is for tooling and docs. Keep the two in sync. Verified against the publishers' Hugging Face APIs and by independent download on 2026-09-30.",
+  "artifacts": [
+    {
+      "id": "smart-turn",
+      "filename": "smart-turn-v3.2-int8.onnx",
+      "destination": "smart-turn/smart-turn-v3.2-int8.onnx",
+      "url": "https://huggingface.co/soniqo/Smart-Turn-v3.2-ONNX/resolve/b48fdbe20772bcec1fef02f4a1a355236ef6359e/smart-turn-v3.2-int8.onnx",
+      "sizeBytes": 11123370,
+      "sha256": "00cd131551e8d1e9011f31345edb632a26116dd83e159782c4ddff610718ea31",
+      "license": "BSD-2-Clause",
+      "source": "soniqo/Smart-Turn-v3.2-ONNX@b48fdbe20772bcec1fef02f4a1a355236ef6359e",
+      "runtime": "onnxruntime-android 1.29.0"
+    }
+  ]
+}

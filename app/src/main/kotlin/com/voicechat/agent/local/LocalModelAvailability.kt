@@ -182,6 +182,16 @@ object LocalAvailabilityMapper {
                 )
             }
 
+            is LocalInstallState.SizeMismatch -> {
+                unavailable(
+                    model = model,
+                    state = LocalModelState.CORRUPT,
+                    reason = UnavailableReason.MODEL_NOT_PROVISIONED,
+                    code = ErrorCode.MODEL_CORRUPT,
+                    detail = "the installed artifact size does not match the catalog",
+                )
+            }
+
             is LocalInstallState.Failed -> {
                 unavailable(
                     model = model,

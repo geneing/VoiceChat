@@ -7,6 +7,7 @@ import com.voicechat.agent.contracts.ModelTask
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -48,10 +49,12 @@ class LocalRuntimeInstrumentedTest {
     }
 
     @Test
-    fun theLocalModelCatalogIsHonestlyEmptyToday() {
+    fun theLocalModelCatalogIsHonestAboutItsContents() {
         val status = LocalModelCatalog.status
         Log.i(TAG, "M20 catalog status: $status")
         assertTrue(status is LocalCatalogStatus.NoAllowListedModel || status is LocalCatalogStatus.Available)
+        // Every shipped entry must pass the allow-list gate on device too.
+        assertEquals(LocalModelCatalog.allowListed.size, LocalModelCatalog.entries().size)
     }
 
     @Test

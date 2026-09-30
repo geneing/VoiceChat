@@ -213,6 +213,33 @@ No validator logs or echoes the credential.
   because tests use obviously-fake keys. It also asserts no packaged
   `.jks`/`.keystore`/`google-services.json`.
 
+## Debug credential import (developer/device only)
+
+For device debugging it is useful to pre-load a provider key without retyping it
+into the Settings UI. `scripts/push-credentials.sh` copies a local `NAME=value`
+file from the gitignored `secrets/` directory into the app's **private** storage
+at `files/debug-credentials/opencode-go.key` (the standard `adb push` →
+`run-as cp` trick; no storage permission, no rooted device). The value never
+touches the repository, is never logged, and is never bundled.
+
+A **debug-only** application class (`app/src/debug`, registered by the debug
+manifest overlay) imports it on launch through the *same* `CredentialStore` path
+the UI uses — so the value is AES/GCM-encrypted by the AndroidKeyStore key and
+only ciphertext remains — then deletes the plaintext file. Release builds do not
+compile the importer, the debug application, or the manifest overlay:
+`DebugVoiceChatApplication` is only present in `assembleDebug`/`installDebug`.
+
+Format (see `secrets/README.md`):
+
+```
+OPENCODE_API_KEY=<the OpenCode Go API key>
+```
+
+`OPENCODE_API_KEY` maps to the OpenCode Go provider
+([opencode-go-adapter.md](./opencode-go-adapter.md)); an unknown entry is ignored
+and the file is removed. The parser
+(`DebugCredentialImport.parseEntry`) is unit-tested in `testDebug`.
+
 ## Tests
 
 | Concern | Test |
@@ -229,6 +256,7 @@ No validator logs or echoes the credential.
 | QR payload rules | `providers.PairingQrPolicyTest` |
 | optional credential validation + auth error | `providers.CredentialValidationTest` |
 | no bundled secret | `security.RepositorySecretScanTest` |
+| debug credential-file parser | `debug.DebugCredentialImportTest` (debug variant) |
 | real AndroidKeyStore store/replace/remove + restart instance | `credentials.AndroidKeystoreCredentialStoreInstrumentedTest` (compiled; device run in [Tests.md](../Tests.md)) |
 
 The instrumented test is **compile-only** in CI and was not run on a device for

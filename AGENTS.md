@@ -206,7 +206,12 @@ app/                        the only application module
   src/test/resources/replay/                 frozen replay fixture bytes
   src/test/resources/llm/                    recorded provider SSE fixtures
   src/androidTest/                           on-device tests (see Tests.md)
+  src/debug/                                 debug-only Application + credential import
+  src/testDebug/                             debug-variant JVM tests
 .github/workflows/ci.yml    CI running the same fast checks
+scripts/                    fetch/push helpers: pinned models + debug credentials
+models/                     downloaded model artifacts (gitignored; README/manifest tracked)
+secrets/                    local secrets for debug runs (gitignored; README tracked)
 test_data/                  speech sound files usable to simulate STT
                             input in tests
 ```
@@ -216,6 +221,15 @@ and the downloaded `smart-turn-v3.2-eng/` set (original `.flac` plus decoded
 16 kHz mono PCM `.wav`, with `manifest.csv` provenance). They are local test
 input for simulating STT capture in tests, not app assets; do not package them
 in the APK. Check the license/consent terms before relying on any recording.
+
+`models/` holds downloaded, pinned model artifacts (currently only the Smart Turn
+v3.2 ONNX file). They are **not committed**; fetch them with
+`scripts/fetch-models.sh` and install them into app-private storage with
+`scripts/push-models.sh` (see `models/README.md`). `secrets/` holds developer
+credentials for device debugging and is gitignored;
+`scripts/push-credentials.sh` installs one into app-private storage, where a
+debug-only Application imports it into the AndroidKeyStore-backed store (see
+`docs/credentials.md`). Never commit a model file or a secret.
 
 Gradle runs on the Windows host through the wrapper, never inside WSL. The
 project has no `local.properties`, so set the SDK path before each invocation:

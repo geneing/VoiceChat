@@ -2,6 +2,7 @@ package com.voicechat.agent.local
 
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.VoiceAgentError
+import java.io.File
 import java.security.MessageDigest
 
 /**
@@ -68,6 +69,16 @@ sealed interface LocalInstallState {
         val actualSha256: String,
     ) : LocalInstallState
 
+    /**
+     * An installed file exists but its byte size differs from the declared size
+     * (truncated, partial copy, or a different build). Used for the large-bundle
+     * check that deliberately avoids hashing the whole file.
+     */
+    data class SizeMismatch(
+        val expectedBytes: Long,
+        val actualBytes: Long,
+    ) : LocalInstallState
+
     /** The install failed; the artifact is not usable. */
     data class Failed(
         val error: VoiceAgentError,
@@ -101,16 +112,26 @@ object LocalModelIntegrity {
 class LocalModelInstaller(
     private val store: LocalModelFileStore,
 ) {
-    /** The current installed state of [model], verified against its checksum. */
+    /**
+     * The current installed state of [model], verified against its declared
+     * size.
+     *
+     * Verification is **size-only** on purpose: an allow-listed bundle can be
+     * over a gigabyte, and hashing it on every availability check would read the
+     * whole file every time (and once exhausted the heap, reporting a false
+     * `IntegrityFailed`). The full SHA-256 is still enforced at install time in
+     * [install], where the bytes are already in hand; here the exact byte size is
+     * the integrity signal, which is enough to distinguish installed from
+     * missing/truncated.
+     */
     fun state(model: ValidatedLocalModel): LocalInstallState {
         val name = fileNameFor(model.artifact)
         val size = store.size(name) ?: return LocalInstallState.NotInstalled
-        val expected = model.artifact.sha256 ?: return LocalInstallState.NotInstalled
-        val actual = store.read(name)?.let(LocalModelIntegrity::sha256Hex)
-        return if (actual != null && LocalModelIntegrity.matches(expected, actual)) {
+        val expectedSize = model.artifact.downloadBytes ?: return LocalInstallState.NotInstalled
+        return if (size == expectedSize) {
             LocalInstallState.Installed(path = store.pathFor(name) ?: name, sizeBytes = size)
         } else {
-            LocalInstallState.IntegrityFailed(expectedSha256 = expected, actualSha256 = actual ?: "")
+            LocalInstallState.SizeMismatch(expectedBytes = expectedSize, actualBytes = size)
         }
     }
 

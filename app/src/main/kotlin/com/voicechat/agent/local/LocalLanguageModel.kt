@@ -103,6 +103,12 @@ class LiteRtLmLanguageModel(
                 )
             }
 
+            is LocalInstallState.SizeMismatch -> {
+                throw VoiceAgentException(
+                    VoiceAgentError(ErrorCode.LLM_UNAVAILABLE, "the local model file size does not match"),
+                )
+            }
+
             is LocalInstallState.Failed -> {
                 throw VoiceAgentException(state.error)
             }

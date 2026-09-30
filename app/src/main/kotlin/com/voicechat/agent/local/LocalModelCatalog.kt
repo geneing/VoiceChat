@@ -142,19 +142,26 @@ sealed interface LocalCatalogStatus {
 /**
  * The curated, allow-listed `.litertlm` catalog (M20).
  *
- * The catalog is **empty** today. It ships empty rather than pointing at an
+ * The catalog is **empty** by design. It ships empty rather than pointing at an
  * unverified bundle because `docs/model-runtime.md` requires a validated
  * publisher, license, runtime version, resource figures, and checksum before an
  * artifact may be exposed, and no `.litertlm` bundle has been verified to that
- * bar for this toolchain. Adding a model is a deliberate, reviewed catalog entry
- * plus its `docs/local-models.md` record — never a user-supplied URL.
+ * bar for this toolchain. The external OpenCode Go provider is the primary LLM
+ * path; no local LLM ships. Adding a model is a deliberate, reviewed catalog
+ * entry (in [DocumentedLocalModels]) plus its `docs/local-models.md` record —
+ * never a user-supplied URL.
  *
  * An empty catalog is a valid, honest result: [status] reports
- * [LocalCatalogStatus.NoAllowListedModel] with the reason.
+ * [LocalCatalogStatus.NoAllowListedModel] with the reason. The list is a
+ * mechanism, not a promise: an entry whose metadata is incomplete at runtime is
+ * rejected by [LocalModelCatalogValidator].
  */
 object LocalModelCatalog {
-    /** Raw candidates, before the allow-list gate. Currently none. */
-    val allowListed: List<LocalModelArtifact> = emptyList()
+    /**
+     * Raw candidates, before the allow-list gate. Currently none; a future
+     * verified entry would live in [DocumentedLocalModels].
+     */
+    val allowListed: List<LocalModelArtifact> = DocumentedLocalModels.all
 
     /** The reason the catalog is empty (used by [status] and the docs). */
     const val EMPTY_REASON: String =
