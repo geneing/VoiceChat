@@ -72,6 +72,7 @@ they do not fake availability, and none requires a human speaker.
 | Class | What it asserts |
 | --- | --- |
 | `audio.MicrophoneCaptureInstrumentedTest` | Without `RECORD_AUDIO`, capture refuses with `AUDIO_PERMISSION_DENIED`; a closed input refuses with `AUDIO_DEVICE_UNAVAILABLE`; with the permission granted a session emits 16 kHz mono frames and a second session can start after the first stops (no busy recorder). |
+| `audio.VadCaptureInstrumentedTest` | Live M07 capture feeds the real M09 `EnergyVoiceActivityDetector` and `BoundedTurnEndpointPolicy`: a bounded window of real audio produces typed events without failing, and the policy emits at least one endpoint with a non-negative offset. It is a runs-and-does-not-crash smoke check, not a quality measurement. |
 | `stt.MlKitSttInstrumentedTest` | Both catalog modes return a typed `SttAvailability` without throwing; the adapter reports the single engine ID; and, when the engine is **not** ready, the adapter refuses to run and emits a typed `STT_MODEL_NOT_READY`/`STT_UNAVAILABLE` failure. When the engine is ready this case is skipped (`Assume`), never faked. |
 | `tts.AndroidTtsInstrumentedTest` | The platform TTS engine initializes and enumerates installed voices; a "ready" voice must be one `getVoices()` reported and not network-required (network voices are never selectable); immediate `stop()` during playback ends the utterance with a terminal event without hanging (skipped with `Assume` when no embedded voice exists); the `OnDeviceTts` contract adapter rejects empty input and closes. Availability is recorded, never faked. |
 | `ui.ConversationAppInstrumentedTest` | The app launches on device and renders the conversation list (Room + Compose smoke). |
@@ -172,6 +173,62 @@ Genuinely manual and **not** automated: audible first-audible timing, speaker /
 wired / Bluetooth routing, focus interaction, real voice quality, and the
 airplane-mode proof. Do not claim these from the JVM tests.
 
+## M09 — VAD, fast onset, and bounded endpointing
+
+Path: measured-audio VAD (normalized frame RMS + zero-crossing rate) behind the
+M02 `VoiceActivityDetector`, plus the bounded VAD-only
+`BoundedTurnEndpointPolicy` with a configurable maximum-silence cap. No VAD
+model is used (see [docs/vad-endpointing.md](./docs/vad-endpointing.md)).
+
+Run the JVM replay suite first; it proves exactly one endpoint per logical turn,
+pause/resume keeping one turn, the silence cap, and empty/no-speech. Then run the
+compile-only instrumented build, and on the device the M09 instrumented test:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device)
+.\gradlew.bat :app:testDebugUnitTest
+
+# Compile the instrumented test WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+
+# Run the M09 instrumented test ON the device
+.\gradlew.bat :app:connectedDebugAndroidTest `
+  "-Pandroid.testInstrumentationRunnerArguments.class=com.voicechat.agent.audio.VadCaptureInstrumentedTest"
+```
+
+`VadCaptureInstrumentedTest` only proves live capture feeds the detector and the
+policy terminates. Onset latency, false endpoints/holds, the right silence cap,
+and per-route behavior are **manual measurements** below; never claim them from
+the JVM or smoke tests.
+
+What to record for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit.
+- Active input route kind (built-in mic, wired headset, Bluetooth) and the
+  capture source/format (16 kHz mono 16-bit).
+- The `VadConfig` in effect (route-aware onset/hangover RMS, zero-crossing rate,
+  onset/pause frames, maximum-silence cap) if it was changed from the default.
+- For each check: exact steps, the spoken/played phrase, observed events
+  (`SPEECH_STARTED` / `CANDIDATE_PAUSE` / `SPEECH_RESUMED` / `HELD` /
+  `ENDPOINTED`), and whether it passed.
+
+| Check | How | Record |
+| --- | --- | --- |
+| Onset latency | Speak a single word and read the `SPEECH_STARTED` offset (from capture start or from the first audible word). | Onset delay per route; confirm it is low enough for barge-in and does not need a fixed grace period. |
+| False endpoint (false commit) | Speak a phrase with a natural internal pause and keep going. | No `ENDPOINTED` before the phrase ends; the pause appears as `CANDIDATE_PAUSE` + `HELD`, then `SPEECH_RESUMED`. |
+| False hold | Speak a complete short phrase and stop. | Exactly one `ENDPOINTED` within the configured maximum-silence cap after speech ends. |
+| Prolonged silence | Stay silent for well beyond the cap after a phrase. | Exactly one `ENDPOINTED(SILENCE_CAP)`; the turn does not hang open. |
+| Exactly one endpoint per turn | Repeat the above and count `ENDPOINTED` events per logical turn. | Exactly one final endpoint per turn; resumed speech after a committed endpoint is a new turn. |
+| Empty/no-speech | Start capture, make no sound, stop. | One explicit `ENDPOINTED(EMPTY_NO_SPEECH)`; no committed utterance. |
+| Route/conditions | Repeat onset and endpoint checks on built-in mic, wired headset, and Bluetooth, and with speaker playback/echo, road/wind noise, and music playing. | Per-route onset latency and false endpoint/hold counts; do not copy threshold values from another project. |
+| Resources | Observe CPU/memory while endpointing runs with STT. | Sustained CPU/memory for the detector; flag if it competes with STT/TTS. |
+
+CPU/memory and route-specific latency numbers are unmeasured until this runs
+(R-0061, R-0063). This section is a checklist, not a result: **do not mark any
+row passed unless it was run on the device.**
+
 ## Manual checklist that cannot be automated
 
 - Audio levels, noise floor, clipping, and route behavior on real hardware
@@ -213,8 +270,9 @@ must not log transcripts in production code (see [docs/logging.md](./docs/loggin
 Add a new subsection per milestone below, keeping the same "what to record"
 shape. Suggested future entries:
 
-- **M09 VAD / endpointing** — onset latency, false endpoints/holds, exactly one
-  endpoint per turn, maximum-silence cap, CPU/memory on device.
+- **M09 VAD / endpointing** — documented in the [M09 section](#m09--vad-fast-onset-and-bounded-endpointing)
+  above (onset latency, false endpoints/holds, exactly one endpoint per turn,
+  maximum-silence cap, route/conditions, CPU/memory on device).
 - **M10 Smart Turn v3.2** — model load, inference time, veto/hold behavior,
   silence cap, missing/corrupt model.
 - **M11 on-device TTS** — implemented; see [M11 — On-device
