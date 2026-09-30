@@ -22,9 +22,11 @@ OpenRouter (M15), DeepSeek (M16), OpenCode Go (M17), OpenCode Zen (M18), and
 Hermes (M19) adapters over a shared remote HTTP/JSON/SSE transport,
 capability-aware settings with DataStore persistence (M22), a text-first
 end-to-end provider slice that drives the selected adapter through orchestration
-(M23), and a voice-loop coordinator with responsive barge-in (M24). Smart Turn
-(M10), local model runtimes (M20), speech/latency evaluation (M25), and release
-hardening (M26) are still not implemented. Treat the product documents as
+(M23), and a voice-loop coordinator with responsive barge-in (M24), and optional
+Smart Turn v3.2 semantic end-of-turn detection through ONNX Runtime (M10,
+opt-in and default off). Local model runtimes (M20), speech/latency evaluation
+(M25), and release hardening (M26) are still not implemented. Treat the product
+documents as
 requirements and direction, not as proof that a feature, dependency, model, or
 device capability already exists. Update this file when the project structure
 and verified commands change. Unresolved risks, open decisions, and known
@@ -179,6 +181,7 @@ app/                        the only application module
     settings/               settings model + DataStore persistence (M22)
     stt/                    ML Kit GenAI speech-to-text adapter (M08)
     tts/                    on-device platform TTS adapter (M11)
+    turn/                   Smart Turn v3.2 ONNX detector + model lifecycle (M10)
     ui/                     Compose conversation + settings UI (M06/M22)
     vad/                    measured-audio VAD/onset + endpointing (M09)
     voice/                  voice session coordinator + barge-in (M24)
@@ -193,6 +196,7 @@ app/                        the only application module
     persistence/, settings/ JVM persistence (Robolectric) and settings tests
     replay/, remote/        JVM replay and remote-transport tests
     security/, ui/          JVM secret scan and Compose UI tests
+    turn/                   JVM Smart Turn config/adapter/lifecycle/endpoint tests
     vad/, voice/            JVM VAD and voice-session tests
     fake/                   deterministic contract fakes
   src/test/resources/replay/                 frozen replay fixture bytes

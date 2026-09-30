@@ -8,10 +8,11 @@ audio replay and speech-test foundations), M04 (privacy-safe turn tracing and
 timing), M05 (conversation persistence and bounded context), M06 (Compose
 conversation UI and manual text path), M07 (microphone capture and audio
 lifecycle), M08 (on-device ML Kit GenAI speech-to-text), M09 (VAD, fast onset,
-and bounded VAD-only endpointing), M11 (on-device TTS), M12 (LLM streaming
-contract and deterministic fake), M13 (credential storage and provider
-capability registry), M14 (OpenAI adapter and shared remote transport), M15
-(OpenRouter adapter), M16 (DeepSeek adapter), M17 (OpenCode Go adapter), M18
+and bounded VAD-only endpointing), M10 (optional Smart Turn v3.2 semantic
+end-of-turn with ONNX Runtime, opt-in and default off), M11 (on-device TTS),
+M12 (LLM streaming contract and deterministic fake), M13 (credential storage and
+provider capability registry), M14 (OpenAI adapter and shared remote transport),
+M15 (OpenRouter adapter), M16 (DeepSeek adapter), M17 (OpenCode Go adapter), M18
 (OpenCode Zen adapter), M19 (Hermes adapter), M21 (turn orchestration and
 cancellation), M22 (settings and capability-aware selection), M23 (text-first
 end-to-end provider slice), and M24 (voice-loop integration and responsive

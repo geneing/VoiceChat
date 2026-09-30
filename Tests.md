@@ -286,8 +286,10 @@ shape. Suggested future entries:
 - **M09 VAD / endpointing** — documented in the [M09 section](#m09--vad-fast-onset-and-bounded-endpointing)
   above (onset latency, false endpoints/holds, exactly one endpoint per turn,
   maximum-silence cap, route/conditions, CPU/memory on device).
-- **M10 Smart Turn v3.2** — model load, inference time, veto/hold behavior,
-  silence cap, missing/corrupt model.
+- **M10 Smart Turn v3.2** — implemented (opt-in, default off); see [M10 — Smart
+  Turn v3.2](#m10--smart-turn-v32-optional-semantic-end-of-turn) below for the
+  device checks (model load, inference time, veto/hold behavior, silence cap,
+  missing/corrupt model).
 - **M11 on-device TTS** — implemented; see [M11 — On-device
   text-to-speech](#m11--on-device-text-to-speech) above for the manual checks.
 - **M13 credentials** — implemented; see the [M13
@@ -1239,3 +1241,67 @@ Unrun device items are tracked as R-0046, R-0050, R-0060, R-0063, R-0080,
 R-0081, R-0082, and R-0083; **do not mark any row passed unless it was run on the
 device.**
 
+
+## M10 � Smart Turn v3.2 (optional semantic end-of-turn)
+
+Path: the optional `turn.SmartTurnCompletionDetector` over the pinned
+`smart-turn-v3.2-int8.onnx` artifact behind the M02 `TurnCompletionDetector`
+contract, invoked once per VAD-confirmed candidate pause by the M09
+`BoundedTurnEndpointPolicy`. It is **opt-in and default off**
+(`docs/decisions.md` �3.3, [docs/smart-turn.md](./docs/smart-turn.md)); with it
+off the behavior is exactly the M09 VAD-only bounded endpoint.
+
+Run the JVM suite first; it proves config validation, the adapter contract,
+missing/corrupt model handling, install/integrity, the disabled path, and that the
+detector runs once per candidate pause (never per frame). Then run the
+compile-only instrumented build, and on the device the M10 instrumented test:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device, no network, no native runtime, no model)
+.\gradlew.bat :app:testDebugUnitTest
+
+# Compile the instrumented test WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+
+# Run the M10 instrumented test ON the device (the model must be installed first)
+.\gradlew.bat :app:connectedDebugAndroidTest `
+  "-Pandroid.testInstrumentationRunnerArguments.class=com.voicechat.agent.turn.SmartTurnInstrumentedTest"
+```
+
+`SmartTurnInstrumentedTest` (a) reports availability, (b) when the pinned model is
+installed in the app-private directory, loads the real graph and asserts one
+inference returns a finite probability in `[0, 1]`, and (c) proves a wrong-size
+file is a typed `MODEL_CORRUPT` unavailable, never a success. When the model is
+**not** installed it returns early (not `Assume`, which Gradle reports as an
+assumption violation) and never fabricates availability. **No model is committed
+to the repository**, and the test was **compiled but not run** for M10.
+
+What to record for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit.
+- The artifact revision/size/SHA-256 actually installed and the integrity result;
+  the `smartTurnEnabled` setting and the detector's resolved state.
+- Load duration, inference duration, and probability per candidate pause
+  (`SMART_TURN_LOADED` / `SMART_TURN_INFERENCE` diagnostics), and the verdict
+  (`COMPLETE`/`INCOMPLETE`).
+- Peak memory and CPU while a Smart Turn session runs alongside STT/LLM/TTS.
+
+| Check | How | Record |
+| --- | --- | --- |
+| Availability report | Read the instrumented test's logged availability and the settings Smart Turn state. | Installed ? Available; missing ? DownloadRequired; wrong-size/hash ? Unavailable with a reason. Never claim a model is ready without the size+SHA-256 check. |
+| Missing model | Uninstall/delete the model file and start a voice session with Smart Turn enabled. | `SmartTurnDetectorFactory` returns `null` with a typed `MODEL_UNAVAILABLE`; the bounded VAD-only endpoint still terminates every turn. |
+| Corrupt model | Replace the model with a wrong-size or wrong-hash file. | Typed `MODEL_CORRUPT`; no load attempt; the user-visible reason appears in settings; the VAD-only endpoint still terminates. |
+| Load + inference | With a verified model installed, run one candidate pause. | One inference; a finite probability in `[0, 1]`; load and inference durations recorded. |
+| Veto / hold | Speak a partial thought that pauses naturally, then keep going. | `INCOMPLETE` holds the turn (`HELD(SEMANTIC_INCOMPLETE)`); resumed speech joins the **same** logical turn; exactly one final endpoint. |
+| Complete / false hold | Speak a complete short phrase and stop. | `COMPLETE` finalizes at the candidate pause; record the false-hold rate. |
+| Exact-once inference | Count `SMART_TURN_INFERENCE` events per candidate pause over a long turn. | Exactly one inference per candidate pause, never per audio frame; the fast onset/barge-in path never calls it. |
+| Silence cap | With Smart Turn enabled but always holding, stay silent past the cap. | Exactly one `ENDPOINTED(SILENCE_CAP)`; the turn never hangs open. |
+| Resources | Watch CPU/memory during a Smart Turn session with STT/LLM/TTS. | Sustained CPU/memory and whether inference competes with STT/TTS; no numbers are claimed until this runs. |
+
+**Real model numbers are M25.** On-device load time, inference time, memory, CPU,
+false-commit/false-hold tradeoffs, and threshold calibration are **unmeasured**
+and tracked as R-0190; M10's JVM suite proves the contract and opt-in behavior
+only. This section is a checklist, not a result: **do not mark any row passed
+unless it was run on the device.**

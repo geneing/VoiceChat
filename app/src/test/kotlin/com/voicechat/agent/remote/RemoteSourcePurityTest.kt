@@ -12,9 +12,13 @@ import java.io.File
  * This is what keeps "no vendor/HTTP/JSON type in the public contract" true as
  * real adapters appear: the adapter imports `RemoteTransport`/`RemoteJson`, never
  * `okhttp3` or `kotlinx.serialization`.
+ *
+ * Two files are the recognized HTTP boundaries: the LLM streaming engine and the
+ * M10 Smart Turn model download (`OkHttpSmartTurnModelSource.kt`), which reuses
+ * OkHttp but stays behind the pure `turn.SmartTurnModelSource` interface.
  */
 class RemoteSourcePurityTest {
-    private val okHttpFiles = setOf("OkHttpStreamingEngine.kt")
+    private val okHttpFiles = setOf("OkHttpStreamingEngine.kt", "OkHttpSmartTurnModelSource.kt")
     private val jsonFiles = setOf("RemoteJson.kt")
 
     @Test

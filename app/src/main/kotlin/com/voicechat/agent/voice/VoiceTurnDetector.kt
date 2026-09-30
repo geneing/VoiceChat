@@ -42,14 +42,24 @@ class PolicyVoiceTurnDetector(
 
     /** Convenience factory for the app boundary. */
     companion object {
+        /**
+         * Builds the production detector for one capture session.
+         *
+         * [semanticDetector] is the optional M10 Smart Turn detector: `null`
+         * (disabled or unavailable) keeps the bounded VAD-only endpoint, and a
+         * present detector is evaluated only at a candidate pause, never on the
+         * onset/barge-in path.
+         */
         fun forRoute(
             route: com.voicechat.agent.audio.AudioRoute? = null,
             diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
             clock: MonotonicClock = SystemMonotonicClock,
+            semanticDetector: com.voicechat.agent.contracts.TurnCompletionDetector? = null,
         ): PolicyVoiceTurnDetector =
             PolicyVoiceTurnDetector(
                 com.voicechat.agent.audio.CaptureTurnDetection.endpointPolicy(
                     route = route,
+                    semanticDetector = semanticDetector,
                     diagnostics = diagnostics,
                     clock = clock,
                 ),

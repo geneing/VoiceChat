@@ -40,6 +40,12 @@ mlkitGenaiSpeech = "1.0.0-alpha1"
 # not depend on a transitive version. See docs/decisions.md and M02.
 coroutines = "1.9.0"
 
+# Smart Turn v3.2 semantic end-of-turn runtime (M10). ONNX Runtime for Android is
+# allow-listed ONLY for the pinned Smart Turn artifact (docs/decisions.md §3.1,
+# §3.3); it is not general ONNX support. 1.29.0 (2026-08-13, MIT) was verified on
+# Maven Central on 2026-09-29, matching the decision record.
+onnxruntime = "1.29.0"
+
 # Remote LLM transport (M14). OkHttp 5.1.0 is the pinned streaming-capable HTTP
 # client; it is Apache-2.0 and already on Maven Central (verified resolvable
 # 2026-09-29). Its JVM artifact depends on okio 3.15.0. The public app contract
@@ -85,6 +91,8 @@ androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref =
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 # ML Kit GenAI Speech Recognition: the single on-device STT engine (M08).
 mlkit-genai-speech-recognition = { module = "com.google.mlkit:genai-speech-recognition", version.ref = "mlkitGenaiSpeech" }
+# ONNX Runtime for Android, scoped to the pinned Smart Turn v3.2 artifact only (M10).
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 # Shared remote transport (M14): streaming HTTP + JSON. Used only by the
