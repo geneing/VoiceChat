@@ -11,10 +11,11 @@ lifecycle), M08 (on-device ML Kit GenAI speech-to-text), M09 (VAD, fast onset,
 and bounded VAD-only endpointing), M11 (on-device TTS), M12 (LLM streaming
 contract and deterministic fake), M13 (credential storage and provider
 capability registry), M14 (OpenAI adapter and shared remote transport), M15
-(OpenRouter adapter), M16 (DeepSeek adapter), M17 (OpenCode Go adapter), M21
-(turn orchestration and cancellation), and M22 (settings and capability-aware
-selection) are implemented, so no later milestone should be reported as complete
-until its code and validation exist.
+(OpenRouter adapter), M16 (DeepSeek adapter), M17 (OpenCode Go adapter), M18
+(OpenCode Zen adapter), M19 (Hermes adapter), M21 (turn orchestration and
+cancellation), and M22 (settings and capability-aware selection) are
+implemented, so no later milestone should be reported as complete until its code
+and validation exist.
 
 ## Delivery rules
 

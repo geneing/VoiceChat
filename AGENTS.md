@@ -18,16 +18,15 @@ measured-audio VAD/onset and bounded endpointing (M09), on-device platform TTS
 (M11), a provider-independent LLM streaming contract with a deterministic fake
 (M12), Keystore-backed credential storage with a provider capability registry
 (M13), pure-Kotlin turn orchestration with cancellation (M21), the OpenAI (M14),
-OpenRouter (M15), DeepSeek (M16), and OpenCode Go (M17) adapters over a shared
-remote HTTP/JSON/SSE transport, and capability-aware settings with DataStore
-persistence (M22). Smart Turn (M10), the remaining provider adapters (M18
-OpenCode Zen, M19 Hermes), local model runtimes (M20), and the integration and
-release milestones (M23-M26) are still not implemented. Treat the product
-documents as requirements and direction, not as proof that a feature,
-dependency, model, or device capability already exists. Update this file when the
-project structure and verified commands change. Unresolved risks, open
-decisions, and known limitations are tracked in
-[docs/risks-and-decisions.md](./docs/risks-and-decisions.md).
+OpenRouter (M15), DeepSeek (M16), OpenCode Go (M17), OpenCode Zen (M18), and
+Hermes (M19) adapters over a shared remote HTTP/JSON/SSE transport, and
+capability-aware settings with DataStore persistence (M22). Smart Turn (M10),
+local model runtimes (M20), and the integration and release milestones (M23-M26)
+are still not implemented. Treat the product documents as requirements and
+direction, not as proof that a feature, dependency, model, or device capability
+already exists. Update this file when the project structure and verified
+commands change. Unresolved risks, open decisions, and known limitations are
+tracked in [docs/risks-and-decisions.md](./docs/risks-and-decisions.md).
 
 ## Product and platform constraints
 
@@ -172,7 +171,7 @@ app/                        the only application module
     log/                    release-safe developer logging (off in release)
     orchestration/          turn state machine + orchestrator (M21)
     persistence/            Room conversation storage (M05)
-    providers/              capability registry (M13) + OpenAI/OpenRouter/DeepSeek/OpenCode Go adapters (M14-M17)
+    providers/              capability registry (M13) + OpenAI/OpenRouter/DeepSeek/OpenCode Go/Zen/Hermes adapters (M14-M19)
     remote/                 shared remote HTTP/JSON/SSE transport (M14)
     replay/                 deterministic PCM replay + fixtures (M03)
     settings/               settings model + DataStore persistence (M22)

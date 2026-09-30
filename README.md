@@ -110,6 +110,10 @@ remote.
   completions, thinking control, and chain-of-thought exclusion (M16).
 - [OpenCode Go adapter](./docs/opencode-go-adapter.md) — per-model protocol
   dispatch (Chat Completions / Responses / Messages) with no assumed parity (M17).
+- [OpenCode Zen adapter](./docs/opencode-zen-adapter.md) — independent Zen
+  protocol dispatch with `/systemone` kept out of the chat path (M18).
+- [Hermes adapter](./docs/hermes-adapter.md) — configurable server destination,
+  TLS/redirect hardening, and server-side-tool disclosure (M19).
 - [Settings](./docs/settings.md) — capability-aware selection and DataStore
   persistence (M22).
 - [Logging](./docs/logging.md) — release-safe developer logging and redaction.
@@ -162,29 +166,31 @@ provider-independent LLM streaming contract with a deterministic fake, M13 adds
 Keystore-backed credential storage with the provider capability registry, M14
 adds the OpenAI adapter and the shared remote HTTP/JSON/SSE transport the other
 providers reuse, M15 adds OpenRouter (fallback routing disabled), M16 adds
-DeepSeek (thinking control, chain-of-thought excluded), M17 adds OpenCode Go
-(per-model protocol dispatch), M21 adds the pure-Kotlin turn orchestration state
-machine with cancellation and delivered-only persistence, and M22 adds
-capability-aware settings persisted in DataStore. `:app` is the only Gradle
-module. The `domain`, `contracts`, `log`, `diagnostics`, `orchestration`,
-`replay`, `settings`, and `vad` packages (and the `tts` engine seam,
-credential/providers logic, and the `remote` transport core) are pure Kotlin (no
-`android.*` imports, enforced by unit tests); `audio`, `stt`, `tts`,
-`remote/OkHttpStreamingEngine`, and the AndroidKeyStore/DataStore
-implementations hold the platform / ML Kit / network adapters. The 653-test JVM
+DeepSeek (thinking control, chain-of-thought excluded), M17 adds OpenCode Go,
+M18 adds OpenCode Zen, and M19 adds Hermes (per-model protocol dispatch with no
+assumed parity and a configurable, TLS-validated server destination), M21 adds
+the pure-Kotlin turn orchestration state machine with cancellation and
+delivered-only persistence, and M22 adds capability-aware settings persisted in
+DataStore. `:app` is the only Gradle module. The `domain`, `contracts`, `log`,
+`diagnostics`, `orchestration`, `replay`, `settings`, and `vad` packages (and the
+`tts` engine seam, credential/providers logic, and the `remote` transport core)
+are pure Kotlin (no `android.*` imports, enforced by unit tests); `audio`, `stt`,
+`tts`, `remote/OkHttpStreamingEngine`, and the AndroidKeyStore/DataStore
+implementations hold the platform / ML Kit / network adapters. The 737-test JVM
 suite covers domain invariants, contract ordering and cancellation, the
 deterministic fakes, fixture replay determinism, trace correlation/redaction/
 timing, repository CRUD/migration and context bounds (Robolectric), the
 conversation and settings UI, capture/STT/TTS/VAD adapters, LLM-contract
 semantics, credential store/registry, turn orchestration, and the recorded
-OpenAI/OpenRouter/DeepSeek/OpenCode Go SSE fixtures. On-device tests live under
+OpenAI/OpenRouter/DeepSeek/OpenCode Go/OpenCode Zen/Hermes SSE fixtures.
+On-device tests live under
 `app/src/androidTest` and are catalogued in [Tests.md](./Tests.md) but are not run
 yet; each provider also has an opt-in, credential-gated smoke test that is
 skipped in routine CI. The conversation path still defaults to the explicit
 "LLM not configured" error (settings can select a provider, but the turn path
 consumes the selection in M23). The app declares the `RECORD_AUDIO` and
-`INTERNET` permissions; Smart Turn (M10), OpenCode Zen (M18), Hermes (M19), and
-local model runtimes (M20) are not implemented yet.
+`INTERNET` permissions; Smart Turn (M10), local model runtimes (M20), and the
+M23-M26 integration and release milestones are not implemented yet.
 
 The scaffold requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17
 source/target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0,
