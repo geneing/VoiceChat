@@ -89,4 +89,20 @@ object SttEngines {
      * Advanced is preferred when it is actually available.
      */
     fun preferred(availabilities: List<SttAvailability>): SttEngine? = availabilities.firstOrNull { it is SttAvailability.Ready }?.engine
+
+    /**
+     * The first ready engine matching [mode], or `null`.
+     *
+     * When [mode] is set, **only** that mode is considered, so a persisted choice
+     * that is unavailable is reported as unavailable rather than silently
+     * substituted with the other mode (R-0181). `null` keeps the catalog order
+     * ([ADVANCED][SttMode.ADVANCED] preferred) for a user who has not chosen.
+     */
+    fun select(
+        availabilities: List<SttAvailability>,
+        mode: SttMode?,
+    ): SttEngine? =
+        availabilities
+            .firstOrNull { it is SttAvailability.Ready && (mode == null || it.engine.mode == mode) }
+            ?.engine
 }

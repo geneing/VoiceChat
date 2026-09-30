@@ -34,6 +34,7 @@ import com.voicechat.agent.fake.RecordingDiagnosticsSink
 import com.voicechat.agent.fake.RecordingVoiceSessionListener
 import com.voicechat.agent.fake.ScriptedLlmStep
 import com.voicechat.agent.fake.ScriptedSpeechToText
+import com.voicechat.agent.fake.StallingSpeechToText
 import com.voicechat.agent.orchestration.TurnOrchestrator
 import com.voicechat.agent.replay.ReplayAudioInput
 import com.voicechat.agent.vad.BoundedTurnEndpointPolicy
@@ -635,6 +636,44 @@ class VoiceSessionCoordinatorTest {
                     .single()
                     .second.text,
             )
+            job.cancelAndJoin()
+        }
+
+    @Test
+    fun aStalledRecognizerIsBoundedAndFailsTypedInsteadOfHangingTheSession() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val repository = InMemoryConversationRepository()
+            val detector = ManualVoiceTurnDetector()
+            val speechToText = StallingSpeechToText()
+            val listener = RecordingVoiceSessionListener()
+            val coordinator =
+                coordinatorFor(
+                    repository,
+                    detector,
+                    speechToText,
+                    FakeLanguageModel(),
+                    listener = listener,
+                    dispatcher = dispatcher,
+                )
+
+            val job = launch(dispatcher) { coordinator.run(conversation) }
+            detector.speech(SpeechActivity.SPEECH_STARTED)
+            runCurrent()
+            detector.endpoint(EndpointReason.SILENCE_CAP)
+            runCurrent()
+
+            // The recognizer ignores its closed input; the coordinator must not sit
+            // in listening state forever. Advance past the completion bound.
+            advanceTimeBy(5_001L)
+            runCurrent()
+
+            assertEquals(
+                listOf(ErrorCode.STT_RECOGNITION_FAILED),
+                listener.errors.map { it.code },
+            )
+            assertTrue("the stalled recognizer must be cancelled", speechToText.cancelled.isCompleted)
+            assertEquals(VoiceSessionState.FAILED, listener.sessionStates.last())
             job.cancelAndJoin()
         }
 

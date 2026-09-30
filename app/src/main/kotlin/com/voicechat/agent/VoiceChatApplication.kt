@@ -16,8 +16,21 @@ import com.voicechat.agent.log.AndroidLogging
  * unchanged.
  */
 open class VoiceChatApplication : Application() {
+    private val containerDelegate = lazy { AppContainer(this) }
+
+    /**
+     * The app-scoped dependency container (M26). Lazy so nothing is built until a
+     * screen needs it; one instance per process.
+     */
+    val container: AppContainer by containerDelegate
+
     override fun onCreate() {
         super.onCreate()
         AndroidLogging.install()
+    }
+
+    override fun onTerminate() {
+        if (containerDelegate.isInitialized()) containerDelegate.value.close()
+        super.onTerminate()
     }
 }

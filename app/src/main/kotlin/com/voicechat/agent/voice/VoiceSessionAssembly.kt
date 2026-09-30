@@ -15,11 +15,11 @@ import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.Transcript
 import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.domain.VoiceAgentError
+import com.voicechat.agent.domain.VoiceAgentException
 import com.voicechat.agent.orchestration.TurnOrchestrator
 import com.voicechat.agent.orchestration.TurnResult
 import com.voicechat.agent.stt.MlKitSpeechToText
 import com.voicechat.agent.stt.MlKitSttStatus
-import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttEngines
 import com.voicechat.agent.tts.OnDeviceTts
@@ -58,6 +58,12 @@ object VoiceSessionAssembly {
         clock: MonotonicClock = SystemMonotonicClock,
         locale: Locale = Locale.getDefault(),
         turnCompletion: SmartTurnDetectorProvider = NoSmartTurnDetectorProvider,
+        /**
+         * Resolves the persisted STT mode/locale/voice for one session (R-0181).
+         * Called once per session on the caller's coroutine; a selection that is
+         * unavailable is reported, never substituted.
+         */
+        selectionProvider: suspend () -> VoiceRuntimeSelection = { VoiceRuntimeSelection(locale = locale) },
     ): VoiceSessionFactory =
         VoiceSessionFactory { listener, providerSource ->
             PlatformVoiceSession(
@@ -66,10 +72,10 @@ object VoiceSessionAssembly {
                 fallbackLanguageModel = fallbackLanguageModel,
                 diagnostics = diagnostics,
                 clock = clock,
-                locale = locale,
                 downstream = listener,
                 providerSource = providerSource,
                 turnCompletion = turnCompletion,
+                selectionProvider = selectionProvider,
             )
         }
 }
@@ -85,10 +91,10 @@ private class PlatformVoiceSession(
     private val fallbackLanguageModel: LanguageModel,
     private val diagnostics: DiagnosticsSink,
     private val clock: MonotonicClock,
-    private val locale: Locale,
     private val downstream: VoiceSessionListener,
     private val providerSource: VoiceTurnProviderSource,
     private val turnCompletion: SmartTurnDetectorProvider,
+    private val selectionProvider: suspend () -> VoiceRuntimeSelection,
 ) : VoiceSessionController,
     VoiceSessionListener {
     private val _state = MutableStateFlow(VoiceSessionState.IDLE)
@@ -99,9 +105,10 @@ private class PlatformVoiceSession(
     private var coordinator: VoiceSessionCoordinator? = null
 
     override suspend fun run(conversation: Conversation) {
-        val engine = readyEngine()
+        val selection = selectionProvider()
+        val engine = readyEngine(selection)
         if (engine == null) {
-            val error = VoiceAgentError(ErrorCode.STT_UNAVAILABLE, "no ready on-device STT engine")
+            val error = VoiceAgentError(ErrorCode.STT_UNAVAILABLE, "no ready on-device STT engine for the selected mode")
             _state.value = VoiceSessionState.FAILED
             downstream.onSessionState(VoiceSessionState.FAILED)
             downstream.onError(error)
@@ -111,8 +118,16 @@ private class PlatformVoiceSession(
         val audioInput = MicrophoneAudioCapture.create(context = context, diagnostics = diagnostics, clock = clock)
         val textToSpeech: TextToSpeech? =
             try {
-                OnDeviceTts.create(context = context, locale = locale, diagnostics = diagnostics, clock = clock)
+                OnDeviceTts.create(context = context, locale = selection.locale, diagnostics = diagnostics, clock = clock)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
             } catch (failure: Throwable) {
+                // Do not silently degrade: report the typed no-voice/init failure so
+                // the dialog can explain that this session is text-only (R-0180).
+                val error =
+                    (failure as? VoiceAgentException)?.error
+                        ?: VoiceAgentError(ErrorCode.TTS_PLAYBACK_FAILED, "the on-device TTS engine could not be initialized")
+                downstream.onTextToSpeechUnavailable(error)
                 null
             }
         // M10: resolve the optional semantic detector once per session. A disabled
@@ -184,8 +199,10 @@ private class PlatformVoiceSession(
         coordinator?.stop()
     }
 
-    private suspend fun readyEngine(): SttEngine? =
-        SttEngines.catalog(locale).firstOrNull { MlKitSttStatus.check(it) is SttAvailability.Ready }
+    private suspend fun readyEngine(selection: VoiceRuntimeSelection): SttEngine? {
+        val statuses = SttEngines.catalog(selection.locale).map { MlKitSttStatus.check(it) }
+        return SttEngines.select(statuses, selection.sttMode)
+    }
 
     /** Resolves the optional semantic detector; a failure degrades to the VAD-only policy. */
     private suspend fun resolveSemanticDetector(): TurnCompletionDetector? =
@@ -234,6 +251,8 @@ private class PlatformVoiceSession(
     override fun onNoSpeech() = downstream.onNoSpeech()
 
     override fun onError(error: VoiceAgentError) = downstream.onError(error)
+
+    override fun onTextToSpeechUnavailable(error: VoiceAgentError) = downstream.onTextToSpeechUnavailable(error)
 
     // endregion
 }

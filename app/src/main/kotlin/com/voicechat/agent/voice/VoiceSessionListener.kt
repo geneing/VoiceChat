@@ -66,6 +66,18 @@ interface VoiceSessionListener {
     /** A typed error (STT, capture, or provider) surfaced; not a silent success. */
     fun onError(error: VoiceAgentError) = Unit
 
+    /**
+     * The selected on-device TTS could not be used, so this session is **text-only**.
+     *
+     * The voice loop still runs and streams assistant text, but nothing is spoken.
+     * A typed [error] is surfaced instead of silently dropping the voice response
+     * stage, so the dialog can explain the degradation
+     * (`docs/risks-and-decisions.md` R-0180). [error] distinguishes a device with
+     * no embedded voice ([com.voicechat.agent.domain.ErrorCode.TTS_NO_ON_DEVICE_VOICE])
+     * from an initialization failure.
+     */
+    fun onTextToSpeechUnavailable(error: VoiceAgentError) = Unit
+
     /** Records nothing. */
     object NONE : VoiceSessionListener
 }

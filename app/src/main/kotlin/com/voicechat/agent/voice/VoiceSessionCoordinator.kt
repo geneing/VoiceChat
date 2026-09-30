@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 /**
@@ -121,11 +122,21 @@ class VoiceSessionCoordinator(
 
     private val bargeInRecords = mutableListOf<MutableBargeIn>()
 
+    /**
+     * Guards the generation identity fields ([generationJob], [generationTurnId],
+     * [activeOrchestrator], [conversation]) and the listening-turn handoff. Those
+     * fields are written by the generation coroutine and read by the
+     * detection/capture coroutines, so a plain field read is a data race. The
+     * lock is held only for short field reads/writes — never across a suspension
+     * or a listener callback — so it cannot stall the onset/barge-in path.
+     */
+    private val stateLock = Any()
+
     /** Barge-in timings recorded so far, oldest first. */
     val bargeIns: List<BargeInTiming> get() = synchronized(bargeInRecords) { bargeInRecords.map { it.snapshot() } }
 
     override suspend fun run(conversation: Conversation) {
-        this.conversation = conversation
+        synchronized(stateLock) { this.conversation = conversation }
         stopped = false
         coroutineScope {
             val scope = this
@@ -155,10 +166,15 @@ class VoiceSessionCoordinator(
                     turn.job?.cancel()
                 }
                 activeListening = null
-                generationJob?.cancel()
-                generationJob = null
-                activeOrchestrator = null
-                generationTurnId = null
+                val inFlightGeneration =
+                    synchronized(stateLock) {
+                        generationJob.also {
+                            generationJob = null
+                            activeOrchestrator = null
+                            generationTurnId = null
+                        }
+                    }
+                inFlightGeneration?.cancel()
                 sessionScope = null
                 setState(if (stopped) VoiceSessionState.STOPPED else VoiceSessionState.IDLE)
             }
@@ -171,8 +187,9 @@ class VoiceSessionCoordinator(
         detectInput?.close()
         captureJob?.cancel()
         activeListening?.let { it.input.close() }
-        activeOrchestrator?.interrupt(onsetAtNanos = null)
-        generationJob?.cancel()
+        val (orchestrator, generation) = synchronized(stateLock) { activeOrchestrator to generationJob }
+        orchestrator?.interrupt(onsetAtNanos = null)
+        generation?.cancel()
     }
 
     // region capture
@@ -247,11 +264,36 @@ class VoiceSessionCoordinator(
         }
         activeListening = null
         turn.input.close()
-        turn.job?.join()
+        // Bound the wait for the recognizer to finish after its input closes: a
+        // stalled engine must not hold the session in listening state forever
+        // (`docs/risks-and-decisions.md` R-0082, CODE_REVIEW P1). The bound is
+        // separate from the VAD maximum-silence cap.
+        val completed =
+            withTimeoutOrNull(STT_COMPLETION_TIMEOUT_MILLIS) {
+                turn.job?.join()
+                true
+            } ?: false
+        if (!completed) {
+            turn.failure =
+                VoiceAgentError(
+                    ErrorCode.STT_RECOGNITION_FAILED,
+                    "the recognizer did not finish within ${STT_COMPLETION_TIMEOUT_MILLIS} ms of input end",
+                )
+            turn.job?.cancel()
+            diagnostics.record(
+                DiagnosticEvent(
+                    stage = DiagnosticStage.SPEECH_TO_TEXT,
+                    outcome = DiagnosticOutcome.CANCELLED,
+                    monotonicTimeNanos = clock.nanoTime(),
+                    turnId = turn.turnId,
+                    attributes = mapOf(DiagnosticAttribute.REQUEST_STATE to "completion_timeout"),
+                ),
+            )
+        }
         finishTurn(turn)
     }
 
-    private fun isGenerating(): Boolean = generationJob?.isActive == true
+    private fun isGenerating(): Boolean = synchronized(stateLock) { generationJob?.isActive == true }
 
     // endregion
 
@@ -349,21 +391,21 @@ class VoiceSessionCoordinator(
         transcript: Transcript,
     ) {
         val scope = sessionScope ?: return
-        val base = conversation ?: return
+        val base = synchronized(stateLock) { conversation } ?: return
         val provider = providerSource.providerFor(base)
         resolveBargeIn(VoiceInterruptionRecovery.COMMITTED)
         listener.onInterruptionRecovered(VoiceInterruptionRecovery.COMMITTED)
         listener.onUtteranceCommitted(turnId, transcript)
         setState(VoiceSessionState.WORKING)
-        val previous = generationJob
-        generationJob =
+        val previous = synchronized(stateLock) { generationJob }
+        val job =
             scope.launch(dispatcher) {
                 var orchestrator: TurnOrchestrator? = null
                 try {
                     // Serialize persistence: the new turn's context must include the
                     // interrupted turn's stored truth, and two saves must not race.
                     previous?.join()
-                    val convo = conversation ?: return@launch
+                    val convo = synchronized(stateLock) { conversation } ?: return@launch
                     val request =
                         TurnRequest(
                             conversation = convo,
@@ -372,8 +414,10 @@ class VoiceSessionCoordinator(
                             reasoning = provider.reasoning,
                         )
                     orchestrator = orchestratorFactory()
-                    activeOrchestrator = orchestrator
-                    generationTurnId = turnId
+                    synchronized(stateLock) {
+                        activeOrchestrator = orchestrator
+                        generationTurnId = turnId
+                    }
                     orchestrator.run(
                         request = request,
                         observer = coordinatorObserver(turnId),
@@ -384,21 +428,24 @@ class VoiceSessionCoordinator(
                 } catch (failure: Throwable) {
                     fail(failure.toVoiceAgentError())
                 } finally {
-                    if (activeOrchestrator === orchestrator) activeOrchestrator = null
-                    if (generationTurnId == turnId) generationTurnId = null
+                    synchronized(stateLock) {
+                        if (activeOrchestrator === orchestrator) activeOrchestrator = null
+                        if (generationTurnId == turnId) generationTurnId = null
+                    }
                 }
             }
+        synchronized(stateLock) { generationJob = job }
     }
 
     private fun coordinatorObserver(turnId: TurnId): TurnObserver =
         object : TurnObserver {
             override fun onUserTurnCommitted(conversation: Conversation) {
-                this@VoiceSessionCoordinator.conversation = conversation
+                synchronized(stateLock) { this@VoiceSessionCoordinator.conversation = conversation }
                 listener.onConversationChanged(conversation)
             }
 
             override fun onLiveAssistantText(text: String) {
-                if (generationTurnId != turnId) return
+                if (currentGenerationTurnId() != turnId) return
                 listener.onAssistantText(turnId, text)
                 if (textToSpeech != null && _state.value == VoiceSessionState.WORKING) {
                     setState(VoiceSessionState.SPEAKING)
@@ -406,28 +453,34 @@ class VoiceSessionCoordinator(
             }
 
             override fun onTurnFinished(result: TurnResult) {
-                this@VoiceSessionCoordinator.conversation = result.conversation
-                if (generationTurnId == turnId) generationTurnId = null
+                synchronized(stateLock) {
+                    this@VoiceSessionCoordinator.conversation = result.conversation
+                    if (generationTurnId == turnId) generationTurnId = null
+                }
                 settleBargeIn(turnId)
                 listener.onTurnFinished(result)
                 // A turn that settles after a newer generation started must not
                 // clobber the newer turn's session state (stale-state rule).
-                if (generationTurnId == null || generationTurnId == turnId) {
+                val active = currentGenerationTurnId()
+                if (active == null || active == turnId) {
                     setState(if (activeListening != null) VoiceSessionState.LISTENING else VoiceSessionState.IDLE)
                 }
             }
         }
+
+    private fun currentGenerationTurnId(): TurnId? = synchronized(stateLock) { generationTurnId }
 
     // endregion
 
     // region barge-in
 
     private fun bargeIn(): MutableBargeIn? {
-        val orchestrator = activeOrchestrator
+        val (orchestrator, interruptedTurnId) =
+            synchronized(stateLock) { activeOrchestrator to generationTurnId }
         val onset = clock.nanoTime()
         orchestrator?.interrupt(onset)
         val stopIssued = clock.nanoTime()
-        val interruptedTurnId = generationTurnId ?: return null
+        if (interruptedTurnId == null) return null
         val record =
             MutableBargeIn(
                 interruptedTurnId = interruptedTurnId,
@@ -549,6 +602,13 @@ class VoiceSessionCoordinator(
 
         /** Frames one listening turn may queue for the recognizer. */
         const val STT_BUFFER = 128
+
+        /**
+         * Bound on waiting for the recognizer to finish after its input closes.
+         * A stalled engine must not hold the session in listening state; on
+         * timeout the turn fails with a typed error and the session recovers.
+         */
+        const val STT_COMPLETION_TIMEOUT_MILLIS = 5_000L
 
         const val NANOS_PER_MILLI = 1_000_000L
     }
