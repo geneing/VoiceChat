@@ -120,6 +120,12 @@ class ConversationViewModel(
     private val settingsFlow: Flow<VoiceSettings>? = null,
     private val providerRegistry: ProviderCapabilityRegistry? = null,
     private val providerFactory: ProviderLanguageModelFactory? = null,
+    /**
+     * The on-device model factory (M20). When supplied, a persisted local-model
+     * selection is resolved to an on-device adapter instead of a remote one; the
+     * two never cross over.
+     */
+    private val localModelFactory: com.voicechat.agent.local.LocalLanguageModelFactory? = null,
 ) : ViewModel(),
     ConversationActions,
     VoiceSessionListener,
@@ -479,6 +485,7 @@ class ConversationViewModel(
                 conversationId = conversationId,
                 registry = providerRegistry!!,
                 factory = providerFactory!!,
+                localFactory = localModelFactory,
             )
         } else {
             ActiveProviderTurn(
@@ -949,6 +956,8 @@ fun conversationViewModelFactory(
     settingsFlow: Flow<VoiceSettings>? = null,
     providerRegistry: ProviderCapabilityRegistry? = null,
     providerFactory: ProviderLanguageModelFactory? = null,
+    /** The M20 on-device model factory; `null` keeps the remote-only behavior. */
+    localModelFactory: com.voicechat.agent.local.LocalLanguageModelFactory? = null,
     /**
      * The M24 app-boundary voice factory. When supplied, the ViewModel attaches it
      * and the dialog gains a voice control; when null the app stays text-only and
@@ -968,6 +977,7 @@ fun conversationViewModelFactory(
                 settingsFlow = settingsFlow,
                 providerRegistry = providerRegistry,
                 providerFactory = providerFactory,
+                localModelFactory = localModelFactory,
             ).also { viewModel ->
                 voiceSessionFactory?.let(viewModel::attachVoiceSession)
             }

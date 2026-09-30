@@ -22,9 +22,11 @@ OpenRouter (M15), DeepSeek (M16), OpenCode Go (M17), OpenCode Zen (M18), and
 Hermes (M19) adapters over a shared remote HTTP/JSON/SSE transport,
 capability-aware settings with DataStore persistence (M22), a text-first
 end-to-end provider slice that drives the selected adapter through orchestration
-(M23), and a voice-loop coordinator with responsive barge-in (M24). Smart Turn
-(M10), local model runtimes (M20), speech/latency evaluation (M25), and release
-hardening (M26) are still not implemented. Treat the product documents as
+(M23), a voice-loop coordinator with responsive barge-in (M24), and eligible
+on-device local LLM runtimes with a curated (currently empty) model catalog and
+explicit local-versus-remote selection (M20). Smart Turn (M10), speech/latency
+evaluation (M25), and release hardening (M26) are still not implemented. Treat the
+product documents as
 requirements and direction, not as proof that a feature, dependency, model, or
 device capability already exists. Update this file when the project structure
 and verified commands change. Unresolved risks, open decisions, and known
@@ -171,6 +173,7 @@ app/                        the only application module
     credentials/            Keystore-backed credential storage (M13)
     diagnostics/            privacy-safe turn tracing and timing (M04)
     log/                    release-safe developer logging (off in release)
+    local/                  eligible on-device LLM runtimes + curated catalog (M20)
     orchestration/          turn state machine + orchestrator (M21)
     persistence/            Room conversation storage (M05)
     providers/              capability registry (M13) + OpenAI/OpenRouter/DeepSeek/OpenCode Go/Zen/Hermes adapters (M14-M19)
@@ -189,6 +192,7 @@ app/                        the only application module
     audio/, stt/, tts/      JVM capture, STT, and TTS adapter tests
     credentials/, providers/  JVM credential, registry, and adapter tests
     diagnostics/, log/      JVM tracing and logging tests
+    local/                  JVM runtime discovery, catalog, lifecycle, and local-adapter tests
     orchestration/          JVM turn state-machine and orchestrator tests
     persistence/, settings/ JVM persistence (Robolectric) and settings tests
     replay/, remote/        JVM replay and remote-transport tests

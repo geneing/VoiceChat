@@ -35,6 +35,26 @@ ktlint = "1.8.0"
 # https://dl.google.com/dl/android/maven2/com/google/mlkit/genai-speech-recognition/1.0.0-alpha1/genai-speech-recognition-1.0.0-alpha1.pom
 mlkitGenaiSpeech = "1.0.0-alpha1"
 
+# On-device LLM runtime discovery (M20). ML Kit GenAI Prompt API is the supported
+# AICore/Gemini Nano surface; its status API (checkStatus) is the runtime
+# discovery gate. Beta release, verified on Google Maven 2026-09-29:
+# https://dl.google.com/dl/android/maven2/com/google/mlkit/genai-prompt/maven-metadata.xml
+# (latest/release 1.0.0-beta4, published 2026-07-21). Requires API 26+; app minSdk 31.
+mlkitGenaiPrompt = "1.0.0-beta4"
+
+# LiteRT (formerly TFLite) — the pinned app-managed `.tflite` runtime
+# (docs/decisions.md §2.3). Verified on Google Maven 2026-09-29; latest/release
+# 2.2.0, published 2026-08-13:
+# https://dl.google.com/dl/android/maven2/com/google/ai/edge/litert/litert/maven-metadata.xml
+litert = "2.2.0"
+
+# LiteRT-LM — the optional local-LLM runtime for `.litertlm` bundles
+# (docs/decisions.md §2.3). The M00 note described v0.16.0 from the guide; the
+# current published release verified on Google Maven 2026-09-29 is 0.17.1
+# (published 2026-09-16):
+# https://dl.google.com/dl/android/maven2/com/google/ai/edge/litertlm/litertlm-android/maven-metadata.xml
+litertlm = "0.17.1"
+
 # Coroutines/Flow for the bounded event-stream contracts. Already resolved
 # transitively by lifecycle/Compose; pinned explicitly so the domain layer does
 # not depend on a transitive version. See docs/decisions.md and M02.
@@ -85,6 +105,13 @@ androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref =
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 # ML Kit GenAI Speech Recognition: the single on-device STT engine (M08).
 mlkit-genai-speech-recognition = { module = "com.google.mlkit:genai-speech-recognition", version.ref = "mlkitGenaiSpeech" }
+# ML Kit GenAI Prompt API: the supported AICore/Gemini Nano runtime discovery and
+# text-generation surface (M20).
+mlkit-genai-prompt = { module = "com.google.mlkit:genai-prompt", version.ref = "mlkitGenaiPrompt" }
+# LiteRT base runtime + LiteRT-LM `.litertlm` runtime (M20). Kept behind the
+# `local` package so no vendor type reaches the app contract.
+litert = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
+litertlm-android = { module = "com.google.ai.edge.litertlm:litertlm-android", version.ref = "litertlm" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 # Shared remote transport (M14): streaming HTTP + JSON. Used only by the

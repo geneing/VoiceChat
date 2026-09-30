@@ -42,6 +42,7 @@ fun VoiceAgentRoot(
     settingsFlow: Flow<VoiceSettings>? = null,
     providerRegistry: ProviderCapabilityRegistry? = null,
     providerFactory: ProviderLanguageModelFactory? = null,
+    localModelFactory: com.voicechat.agent.local.LocalLanguageModelFactory? = null,
     voiceSessionFactory: VoiceSessionFactory? = null,
 ) {
     val viewModel: ConversationViewModel =
@@ -54,6 +55,7 @@ fun VoiceAgentRoot(
                     settingsFlow = settingsFlow,
                     providerRegistry = providerRegistry,
                     providerFactory = providerFactory,
+                    localModelFactory = localModelFactory,
                     voiceSessionFactory = voiceSessionFactory,
                 ),
         )

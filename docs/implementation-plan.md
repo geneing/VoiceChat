@@ -12,7 +12,8 @@ and bounded VAD-only endpointing), M11 (on-device TTS), M12 (LLM streaming
 contract and deterministic fake), M13 (credential storage and provider
 capability registry), M14 (OpenAI adapter and shared remote transport), M15
 (OpenRouter adapter), M16 (DeepSeek adapter), M17 (OpenCode Go adapter), M18
-(OpenCode Zen adapter), M19 (Hermes adapter), M21 (turn orchestration and
+(OpenCode Zen adapter), M19 (Hermes adapter), M20 (eligible local LLM runtimes
+and curated model catalog), M21 (turn orchestration and
 cancellation), M22 (settings and capability-aware selection), M23 (text-first
 end-to-end provider slice), and M24 (voice-loop integration and responsive
 barge-in) are implemented, so no later milestone should be reported as complete
