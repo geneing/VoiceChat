@@ -153,12 +153,43 @@ class TurnTraceRecorder(
         )
     }
 
-    /** Marks an explicit request-state transition (for example `streaming`, `cancelled`). */
+    /** Records an explicit request-state transition (for example `streaming`, `cancelled`). */
     fun requestState(state: String) =
         progress(
             stage = DiagnosticStage.LLM_REQUEST,
             attributes = mapOf(DiagnosticAttribute.REQUEST_STATE to state),
         )
+
+    /**
+     * Records the typed reason one request/stream ended without completing
+     * normally (a stable `LlmFailureReason` name, or `completed`).
+     *
+     * Only the reason name is recorded, never the adapter's detail string, so
+     * provider text cannot reach the trace through this path.
+     */
+    fun requestEndReason(reason: String) =
+        progress(
+            stage = DiagnosticStage.LLM_REQUEST,
+            attributes = mapOf(DiagnosticAttribute.REQUEST_END_REASON to reason),
+        )
+
+    /**
+     * Records token usage the provider actually reported.
+     *
+     * A `null` field is omitted rather than written as `0`, so the trace never
+     * claims a count the provider did not send. Only counts are recorded.
+     */
+    fun requestUsage(
+        promptTokens: Int?,
+        completionTokens: Int?,
+        totalTokens: Int?,
+    ) {
+        val usage = usageSummary(promptTokens, completionTokens, totalTokens) ?: return
+        progress(
+            stage = DiagnosticStage.LLM_REQUEST,
+            attributes = mapOf(DiagnosticAttribute.USAGE to usage),
+        )
+    }
 
     /**
      * Records one streamed assistant delta.
@@ -339,5 +370,24 @@ class TurnTraceRecorder(
 
     private companion object {
         const val NANOS_PER_MILLI = 1_000_000L
+
+        /**
+         * `prompt=…,completion=…,total=…` with only the reported parts, or `null`
+         * when the provider reported nothing. Stable order so a trace diff is
+         * readable.
+         */
+        fun usageSummary(
+            promptTokens: Int?,
+            completionTokens: Int?,
+            totalTokens: Int?,
+        ): String? {
+            val parts =
+                buildList {
+                    promptTokens?.let { add("prompt=$it") }
+                    completionTokens?.let { add("completion=$it") }
+                    totalTokens?.let { add("total=$it") }
+                }
+            return parts.takeIf { it.isNotEmpty() }?.joinToString(separator = ",")
+        }
     }
 }

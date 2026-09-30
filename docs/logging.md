@@ -84,6 +84,7 @@ construction; the logger relies on these rules and on review.
 | STT (M08) | availability result, start/refuse-to-start, input-end stop, session end with outcome/frame counts, model download progress/failure. |
 | Persistence (M05) | repository open, per-operation load/save/delete success/failure, process-death recovery. |
 | UI (M06) | conversation open/send/cancel/retry/delete, generation start/terminal state, storage failure. Never transcript text. |
+| LLM contract (M12) | request start (provider/model identity, message and character counts, reasoning level, streaming capability), one line per fake/adapter emission (event kind, index, character count), and stream end (completed, delta count, character count, terminal kind, failure reason, whether usage was reported, provider-reported model). Never prompt, delta, or response text; `LlmStreamLoggingTest` proves the content-free rule. |
 | Diagnostics (M04) | bounded sink start and a one-time overflow warning. |
 
 Logging is intentionally not per audio frame and not per UI recomposition.

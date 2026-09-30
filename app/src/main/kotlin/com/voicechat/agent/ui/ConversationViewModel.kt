@@ -15,6 +15,8 @@ import com.voicechat.agent.contracts.LlmRequest
 import com.voicechat.agent.contracts.LlmRole
 import com.voicechat.agent.contracts.LlmStreamEvent
 import com.voicechat.agent.contracts.NoOpDiagnosticsSink
+import com.voicechat.agent.contracts.TurnStreamTrace
+import com.voicechat.agent.contracts.consume
 import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.diagnostics.SystemMonotonicClock
 import com.voicechat.agent.diagnostics.TurnTraceFactory
@@ -455,6 +457,8 @@ class ConversationViewModel(
         val request =
             LlmRequest(
                 model = selection,
+                // Bound the context once, in M05's ModelContextBuilder: the
+                // request carries only the window the app chose to send.
                 messages = contextBuilder.build(conversation).messages.map { it.toLlmMessage() },
                 reasoning = reasoning,
             )
@@ -463,64 +467,87 @@ class ConversationViewModel(
         trace.markStreamStarted()
         AppLog.d {
             "ui: generation start provider=${selection.providerId.value} model=${selection.modelId.value} " +
-                "contextMessages=${request.messages.size}"
+                "contextMessages=${request.messages.size} contextChars=${request.characterCount}"
         }
 
         val rendered = StringBuilder()
         var terminal = false
+        val streamTrace =
+            UiStreamTrace(trace, clock) { liveText ->
+                rendered.clear()
+                rendered.append(liveText)
+                publishLiveAssistant(marker, liveText)
+            }
         try {
-            languageModel.stream(request).collect { event ->
-                when (event) {
-                    is LlmStreamEvent.Delta -> {
-                        rendered.append(event.text)
-                        trace.llmDelta(clock.nanoTime(), event.text.length)
-                        publishLiveAssistant(marker, rendered.toString())
-                    }
+            // One reference consumer owns the stream bookkeeping (ordering,
+            // partial text, usage, provider-reported model); this method only
+            // renders deltas and reacts to the terminal state.
+            val result = languageModel.consume(request, streamTrace)
+            val generatedText = rendered.toString()
+            if (result.model != null && result.model.value != selection.modelId.value) {
+                // The provider served a different model than the user selected:
+                // record it so a silent switch is visible (R-0017).
+                AppLog.w { "ui: provider reported a different model than selected" }
+            }
+            terminal = result.terminal != null
+            when (val ended = result.terminal) {
+                is LlmStreamEvent.Completed -> {
+                    requestSpan.succeed()
+                    finishTurn(
+                        conversation = conversation,
+                        generatedText = generatedText,
+                        deliveredText = generatedText,
+                        generationState = GenerationState.COMPLETED,
+                        deliveryState = DeliveryState.COMPLETED,
+                        error = null,
+                        trace = trace,
+                        marker = marker,
+                    )
+                }
 
-                    is LlmStreamEvent.Completed -> {
-                        requestSpan.succeed()
-                        terminal = true
-                        finishTurn(
-                            conversation = conversation,
-                            generatedText = rendered.toString(),
-                            deliveredText = rendered.toString(),
-                            generationState = GenerationState.COMPLETED,
-                            deliveryState = DeliveryState.COMPLETED,
-                            error = null,
-                            trace = trace,
-                            marker = marker,
-                        )
-                    }
+                is LlmStreamEvent.Cancelled -> {
+                    requestSpan.cancel()
+                    finishTurn(
+                        conversation = conversation,
+                        generatedText = ended.partialText,
+                        deliveredText = generatedText,
+                        generationState = GenerationState.CANCELLED,
+                        deliveryState = DeliveryState.INTERRUPTED,
+                        error = null,
+                        trace = trace,
+                        marker = marker,
+                    )
+                }
 
-                    is LlmStreamEvent.Cancelled -> {
-                        requestSpan.cancel()
-                        terminal = true
-                        finishTurn(
-                            conversation = conversation,
-                            generatedText = event.partialText,
-                            deliveredText = rendered.toString(),
-                            generationState = GenerationState.CANCELLED,
-                            deliveryState = DeliveryState.INTERRUPTED,
-                            error = null,
-                            trace = trace,
-                            marker = marker,
-                        )
-                    }
+                is LlmStreamEvent.Failed -> {
+                    requestSpan.fail()
+                    finishTurn(
+                        conversation = conversation,
+                        generatedText = ended.partialText,
+                        deliveredText = generatedText,
+                        generationState = GenerationState.FAILED,
+                        deliveryState = DeliveryState.FAILED,
+                        error = ended.error,
+                        trace = trace,
+                        marker = marker,
+                    )
+                }
 
-                    is LlmStreamEvent.Failed -> {
-                        requestSpan.fail()
-                        terminal = true
-                        finishTurn(
-                            conversation = conversation,
-                            generatedText = event.partialText,
-                            deliveredText = rendered.toString(),
-                            generationState = GenerationState.FAILED,
-                            deliveryState = DeliveryState.FAILED,
-                            error = event.error,
-                            trace = trace,
-                            marker = marker,
-                        )
-                    }
+                // An adapter that ends the flow without a terminal event cannot
+                // say whether the text was whole, so it is treated as a failure
+                // rather than persisted as a completed reply.
+                null, is LlmStreamEvent.Delta -> {
+                    requestSpan.fail()
+                    finishTurn(
+                        conversation = conversation,
+                        generatedText = generatedText,
+                        deliveredText = generatedText,
+                        generationState = GenerationState.FAILED,
+                        deliveryState = DeliveryState.FAILED,
+                        error = VoiceAgentError(ErrorCode.LLM_MALFORMED_RESPONSE),
+                        trace = trace,
+                        marker = marker,
+                    )
                 }
             }
         } catch (cancellation: CancellationException) {
@@ -783,6 +810,53 @@ private fun ConversationUiState.openFailed(notice: ConversationNotice): Conversa
         dialog = null,
         list = list.copy(notice = notice),
     )
+
+/**
+ * Bridges the shared stream consumer to the M06 UI and the M04 trace.
+ *
+ * It records only counts, stable state/reason names, and reported token counts
+ * through [TurnTraceRecorder]. Delta text never reaches the trace or the log;
+ * [onDeltaAppended] receives the running total length only.
+ */
+private class UiStreamTrace(
+    private val trace: TurnTraceRecorder,
+    private val clock: MonotonicClock,
+    private val onRenderedText: (String) -> Unit,
+) : TurnStreamTrace {
+    private val rendered = StringBuilder()
+
+    override fun onDelta(
+        index: Int,
+        characterCount: Int,
+        text: String,
+    ) {
+        rendered.append(text)
+        // The trace records only the delta index and its length, never the text.
+        trace.llmDelta(clock.nanoTime(), characterCount)
+        onRenderedText(rendered.toString())
+    }
+
+    override fun onCompleted(event: LlmStreamEvent.Completed) {
+        trace.requestState("completed")
+        trace.requestEndReason("completed")
+        trace.requestUsage(
+            promptTokens = event.usage?.promptTokens,
+            completionTokens = event.usage?.completionTokens,
+            totalTokens = event.usage?.totalTokens,
+        )
+    }
+
+    override fun onEnded(
+        reason: String,
+        characterCount: Int,
+    ) {
+        trace.requestState("ended")
+        trace.requestEndReason(reason)
+    }
+
+    /** The assistant text rendered so far. */
+    val text: String get() = rendered.toString()
+}
 
 private fun ContextMessage.toLlmMessage(): LlmMessage =
     LlmMessage(

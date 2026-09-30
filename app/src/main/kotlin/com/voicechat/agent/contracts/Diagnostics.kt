@@ -54,6 +54,15 @@ enum class DiagnosticAttribute {
     /** Which point of a stream the event marks (first text, a later delta). */
     STREAM_STATE,
 
+    /** Reason a stream ended without completing, or the request's terminal state. */
+    REQUEST_END_REASON,
+
+    /** Token counts in one short form, for example `prompt=12,completion=34`. */
+    USAGE,
+
+    /** Assistant text characters generated for one delta. */
+    DELTA_CHARACTER_COUNT,
+
     /** Zero-based index of a streamed delta within one request. */
     DELTA_INDEX,
 

@@ -71,6 +71,20 @@ are the M06 seam for M21; the manual composer calls the same private
 `VOICE`-sourced and a `TEXT`-sourced turn through this same path and asserts both
 persist into the same conversation.
 
+## Stream consumption (M12)
+
+M12 refined the LLM contract the state holder consumes but kept this path's
+behavior. The holder no longer folds the event stream itself: it calls
+`LanguageModel.consume(request, trace)`, which owns ordering, partial text,
+usage, and the provider-reported model, then branches on the terminal event. A
+private `UiStreamTrace` forwards delta text to the dialog, records only counts
+and stable names to the M04 trace, and the terminal event maps to the persisted
+turn state exactly as before (`COMPLETED`, `CANCELLED`/`INTERRUPTED`,
+`FAILED`/`FAILED`). One behavior was added: a stream that ends **without** a
+terminal event — an adapter that cannot say whether the text was whole — is
+persisted as `FAILED` with `LLM_MALFORMED_RESPONSE` rather than being treated as
+a completed reply. See [llm-contract.md](./llm-contract.md).
+
 ## Correction without rewriting
 
 The composer is editable and is persisted exactly as submitted (outer
@@ -122,6 +136,10 @@ credentials):
   send, correction, streaming render, conversation switching, deletion (list and
   dialog), process-restored history across a state-holder restart, accessible
   loading, the unconfigured-model error state, and composer enablement.
+- `ConversationViewModelTest` additionally covers the M12 stream-consumer
+  behavior: a terminal-less stream persists as a failure, a failed partial keeps
+  its delivered prefix and typed reason, and usage/end-reason reach the trace
+  without content.
 
 ## Test dependencies added
 
