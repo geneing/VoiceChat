@@ -742,3 +742,88 @@ for every run:
 Device-level latency, cancellation-acknowledgement timing, and live provider
 behavior remain unmeasured and are tracked in R-0131 and R-0138. **Do not mark
 any of these passed unless the command was actually run.**
+
+## M16 — DeepSeek adapter
+
+M16 is a **JVM-first** milestone. The DeepSeek adapter is pure Kotlin behind the
+M12 contract and reuses the M14 shared transport; every protocol case is a
+recorded SSE fixture or a scripted engine with **no socket, clock, DNS, or real
+credential**. There is no M16-specific instrumented test, so no row is added to
+the automated on-device table above; the existing instrumented tests were
+compiled only. See [docs/deepseek-adapter.md](./docs/deepseek-adapter.md).
+
+The verified DeepSeek facts (endpoint, auth, models, streaming shape, thinking
+controls, usage, error codes) and their sources are recorded with the
+**2026-09-29** access date in that document.
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device, no network): DeepSeek fixture replay for
+# the normal stream, empty response, malformed frame, truncated response, rate
+# limit, auth failure, insufficient balance, server error, network loss,
+# cancellation, and the reasoning-channel exclusion.
+.\gradlew.bat :app:testDebugUnitTest
+
+# Compile the instrumented tests WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+```
+
+What the JVM suite proves instead (details in the linked document):
+
+- the request goes to the documented `POST /chat/completions` (base
+  `https://api.deepseek.com`) with `Authorization: Bearer <credential>` and
+  `"stream": true`, and the selected model is sent verbatim; DeepSeek's Chat
+  Completions API documents no `store`-style field, so none is fabricated;
+- `choices[].delta.content` frames become deltas, `choices[].delta.reasoning_content`
+  is a **separate channel** never concatenated into assistant text (R-0066), and
+  the finish-reason chunk carries `usage`/`model`;
+- `reasoning == null` omits thinking, `NONE` sends `thinking.type = disabled`, and
+  a real level sends `thinking.type = enabled` plus `reasoning_effort`;
+- `finish_reason = length` (truncated), `content_filter`,
+  `insufficient_system_resource`, and `aborted` are typed failures, not
+  completions; a stream with no finish reason and no `[DONE]` is
+  `LLM_MALFORMED_RESPONSE` (R-0067);
+- 401/403 → `LLM_AUTHENTICATION_FAILED`, 429 → `LLM_RATE_LIMITED`, 408/504 →
+  `LLM_TIMEOUT`, other 4xx (including DeepSeek's documented 402) →
+  `LLM_INVALID_REQUEST`, 5xx → `LLM_UNAVAILABLE`, a dropped connection →
+  `LLM_NETWORK_FAILED`, and a streamed `error` body is mapped from its stable
+  `code`/`type` only (R-0124 tracks the 402 gap);
+- a mid-stream network loss and a mid-stream cancellation keep the partial text
+  as partial and never report completion;
+- the credential check (`GET /models`) maps 401/403 to an authentication
+  rejection and keeps a transient failure typed;
+- a missing credential is `LLM_NOT_CONFIGURED` and no request is sent;
+- the adapter declares the re-verified provider capability (streaming, usage,
+  and the accepted reasoning union), and an unsupported level is refused before
+  any request is built;
+- HTTP/JSON library types stay inside the transport (`RemoteSourcePurityTest`);
+  no credential, prompt, or assistant text appears in the developer log.
+
+### Opt-in real-provider smoke test (marked NOT run)
+
+`providers.deepseek.DeepSeekSmokeTest` is the one M16 test that can touch the
+real service. It is **skipped** (JUnit `Assume`), and so never runs in routine
+CI, unless **both** `VOICECHAT_DEEPSEEK_SMOKE=1` and `DEEPSEEK_API_KEY` are set:
+
+```powershell
+$env:VOICECHAT_DEEPSEEK_SMOKE = "1"
+$env:DEEPSEEK_API_KEY = "<your key>"                  # externally supplied only
+$env:VOICECHAT_DEEPSEEK_SMOKE_MODEL = "deepseek-flash" # optional
+.\gradlew.bat :app:testDebugUnitTest --tests "*DeepSeekSmokeTest"
+```
+
+It **was not run** for this milestone. This is tracked as R-0121. What to record
+for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit, and the
+  selected model and reasoning level.
+- Network/region conditions and the observed time to first text and total
+  completion time.
+- The completion outcome and any typed failure reason — **never** the prompt or
+  the response text, and **never** the API key. The smoke test itself asserts on
+  completion/counts only and prints no content.
+
+Device-level latency, cancellation-acknowledgement timing, and live DeepSeek
+behavior remain unmeasured and are tracked in R-0121. **Do not mark any of these
+passed unless the command was actually run.**

@@ -205,12 +205,27 @@ class ProviderCapabilityRegistry(
                     ),
                 models =
                     ProviderModelAccess(
-                        // DeepSeek reports per-model effort.supported_levels from
-                        // `/models`, so the provider union claims nothing on its own.
+                        // Re-verified at M16 (2026-09-29): the Chat Completions
+                        // `reasoning_effort` reference lists `none`/`low`/`high`/`max`
+                        // and documents `minimal` (-> low) and `medium`/`xhigh` (-> high)
+                        // as accepted; `none` disables thinking. Every level this app
+                        // exposes is accepted, so the provider union claims them. The
+                        // per-model `effort.supported_levels` refinement from `/models`
+                        // stays an M13/M22 concern (see docs/deepseek-adapter.md, R-0123).
                         discovery = ModelDiscovery.ENDPOINT,
-                        reasoningLevels = emptySet(),
-                        usageReporting = false,
-                        unverified = setOf(UnverifiedCapability.REASONING),
+                        reasoningLevels =
+                            setOf(
+                                ReasoningLevel.NONE,
+                                ReasoningLevel.MINIMAL,
+                                ReasoningLevel.LOW,
+                                ReasoningLevel.MEDIUM,
+                                ReasoningLevel.HIGH,
+                                ReasoningLevel.XHIGH,
+                                ReasoningLevel.MAX,
+                            ),
+                        // Chat Completions reports usage in the last streamed chunk and
+                        // on the non-streaming response.
+                        usageReporting = true,
                     ),
             )
 

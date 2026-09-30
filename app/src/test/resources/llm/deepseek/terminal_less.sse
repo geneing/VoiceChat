@@ -1,0 +1,4 @@
+data: {"id":"chatcmpl-test-0005","object":"chat.completion.chunk","created":1759100004,"model":"deepseek-flash","system_fingerprint":"fp_test_0001","choices":[{"index":0,"delta":{"role":"assistant","content":"partial answer"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-test-0005","object":"chat.completion.chunk","created":1759100004,"model":"deepseek-flash","system_fingerprint":"fp_test_0001","choices":[{"index":0,"delta":{"content":" keeps going"},"logprobs":null,"finish_reason":null}]}
+
