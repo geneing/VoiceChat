@@ -17,6 +17,7 @@ import com.voicechat.agent.ui.ConversationDefaults
 import com.voicechat.agent.ui.VoiceAgentRoot
 import com.voicechat.agent.ui.settingsViewModelFactory
 import com.voicechat.agent.ui.theme.VoiceAgentTheme
+import com.voicechat.agent.voice.VoiceSessionAssembly
 
 /**
  * Single activity entry point.
@@ -60,6 +61,14 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 val settingsFlow = remember { settingsStore.observe() }
+                val voiceFactory =
+                    remember {
+                        VoiceSessionAssembly.platformFactory(
+                            context = applicationContext,
+                            repository = repository,
+                            fallbackLanguageModel = languageModel,
+                        )
+                    }
                 VoiceAgentRoot(
                     repository = repository,
                     languageModel = languageModel,
@@ -67,6 +76,7 @@ class MainActivity : ComponentActivity() {
                     settingsFlow = settingsFlow,
                     providerRegistry = registry,
                     providerFactory = providerFactory,
+                    voiceSessionFactory = voiceFactory,
                 )
             }
         }

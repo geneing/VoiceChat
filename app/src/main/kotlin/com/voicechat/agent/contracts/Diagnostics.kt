@@ -82,6 +82,16 @@ enum class DiagnosticAttribute {
     /** Set when an event is part of a barge-in transition. */
     BARGE_IN,
 
+    /**
+     * Latency from a barge-in speech onset to the immediate playback stop, in
+     * milliseconds. Recorded so the M24 responsive-interruption requirement has a
+     * measured number instead of an assumption (R-0046).
+     */
+    BARGE_IN_STOP_MILLIS,
+
+    /** Latency from a barge-in onset to the next capture/recognition start, in milliseconds. */
+    BARGE_IN_CAPTURE_RESUMED_MILLIS,
+
     /*
      * Microphone-capture attributes (M07). These carry only identifiers,
      * normalized levels, and counts — never sample values or raw audio — so an

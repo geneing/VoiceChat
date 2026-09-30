@@ -53,4 +53,14 @@
     <string name="disclosure_tool_execution">This server runs tools (files, browser, MCP) on its own host, not as a plain proxy.</string>
     <string name="disclosure_retention">Retention/training: %1$s</string>
     <string name="disclosure_not_configured">No provider or model is selected. Choose one in Settings before sending.</string>
+
+    <!-- Voice loop (M24). The status line reflects the live session state; the
+         toggle starts/stops hands-free capture. Never shows transcript or audio. -->
+    <string name="voice_ready">Voice ready</string>
+    <string name="voice_listening">Listening\u2026</string>
+    <string name="voice_working">Thinking\u2026</string>
+    <string name="voice_speaking">Speaking\u2026</string>
+    <string name="voice_failed">Voice unavailable</string>
+    <string name="start_voice">Speak</string>
+    <string name="stop_voice">Stop</string>
 </resources>

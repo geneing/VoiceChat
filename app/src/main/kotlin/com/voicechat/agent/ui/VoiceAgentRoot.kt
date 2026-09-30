@@ -8,12 +8,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.voicechat.agent.audio.MicrophonePermissionStatus
+import com.voicechat.agent.audio.rememberMicrophonePermissionController
 import com.voicechat.agent.contracts.ConversationRepository
 import com.voicechat.agent.contracts.LanguageModel
 import com.voicechat.agent.domain.ProviderModelSelection
 import com.voicechat.agent.providers.ProviderCapabilityRegistry
 import com.voicechat.agent.providers.ProviderLanguageModelFactory
 import com.voicechat.agent.settings.VoiceSettings
+import com.voicechat.agent.voice.VoiceSessionFactory
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -39,6 +42,7 @@ fun VoiceAgentRoot(
     settingsFlow: Flow<VoiceSettings>? = null,
     providerRegistry: ProviderCapabilityRegistry? = null,
     providerFactory: ProviderLanguageModelFactory? = null,
+    voiceSessionFactory: VoiceSessionFactory? = null,
 ) {
     val viewModel: ConversationViewModel =
         viewModel(
@@ -50,12 +54,29 @@ fun VoiceAgentRoot(
                     settingsFlow = settingsFlow,
                     providerRegistry = providerRegistry,
                     providerFactory = providerFactory,
+                    voiceSessionFactory = voiceSessionFactory,
                 ),
         )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val micPermission = rememberMicrophonePermissionController()
+
+    // Voice is offered only when the app attached a factory. Tapping requests the
+    // microphone permission at the point of use, then starts the loop.
+    val onVoiceToggle: (() -> Unit)? =
+        if (voiceSessionFactory == null) {
+            null
+        } else {
+            {
+                when {
+                    state.dialog?.isVoiceActive == true -> viewModel.onStopVoice()
+                    micPermission.status == MicrophonePermissionStatus.GRANTED -> viewModel.onStartVoice()
+                    else -> micPermission.request()
+                }
+            }
+        }
 
     if (settingsFactory == null) {
-        ConversationApp(state = state, actions = viewModel, modifier = modifier)
+        ConversationApp(state = state, actions = viewModel, modifier = modifier, onVoiceToggle = onVoiceToggle)
         return
     }
 
@@ -76,6 +97,7 @@ fun VoiceAgentRoot(
             actions = viewModel,
             modifier = modifier,
             onOpenSettings = { showSettings = true },
+            onVoiceToggle = onVoiceToggle,
         )
     }
 }

@@ -1,0 +1,558 @@
+package com.voicechat.agent.voice
+
+import com.voicechat.agent.contracts.AudioInput
+import com.voicechat.agent.contracts.DiagnosticAttribute
+import com.voicechat.agent.contracts.DiagnosticEvent
+import com.voicechat.agent.contracts.DiagnosticOutcome
+import com.voicechat.agent.contracts.DiagnosticStage
+import com.voicechat.agent.contracts.DiagnosticsSink
+import com.voicechat.agent.contracts.NoOpDiagnosticsSink
+import com.voicechat.agent.contracts.SpeechActivity
+import com.voicechat.agent.contracts.SpeechToText
+import com.voicechat.agent.contracts.SttEvent
+import com.voicechat.agent.contracts.TextToSpeech
+import com.voicechat.agent.diagnostics.MonotonicClock
+import com.voicechat.agent.diagnostics.SystemMonotonicClock
+import com.voicechat.agent.domain.AudioFrame
+import com.voicechat.agent.domain.Conversation
+import com.voicechat.agent.domain.ErrorCode
+import com.voicechat.agent.domain.Transcript
+import com.voicechat.agent.domain.TurnId
+import com.voicechat.agent.domain.UserTurn
+import com.voicechat.agent.domain.UserTurnSource
+import com.voicechat.agent.domain.VoiceAgentError
+import com.voicechat.agent.domain.VoiceAgentException
+import com.voicechat.agent.log.AppLog
+import com.voicechat.agent.orchestration.TurnObserver
+import com.voicechat.agent.orchestration.TurnOrchestrator
+import com.voicechat.agent.orchestration.TurnRequest
+import com.voicechat.agent.orchestration.TurnResult
+import com.voicechat.agent.vad.EndpointReason
+import com.voicechat.agent.vad.TurnDetectionEvent
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedSendChannelException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
+import java.util.UUID
+
+/**
+ * The M24 voice session coordinator: the pure-Kotlin core that wires capture →
+ * VAD/onset → STT → turn completion → [TurnOrchestrator] → TTS with responsive
+ * barge-in.
+ *
+ * **Two independent decisions.** The fast onset path (M09 activity) starts a new
+ * logical turn and stops assistant playback; the bounded endpoint policy decides
+ * when a turn is finished. The coordinator never runs a semantic model on the
+ * onset path, so a barge-in does not wait for end-of-turn inference.
+ *
+ * **Barge-in does not wait for cancellation.** On a speech onset while a
+ * generation is active, the coordinator immediately calls
+ * [TurnOrchestrator.interrupt] and stops audible playback, then starts a new
+ * capture/recognition turn *without* joining the interrupted work. The
+ * interrupted turn settles asynchronously and is persisted with only the
+ * delivered prefix. Onset-to-stop and onset-to-capture-resumed are recorded as
+ * [BargeInTiming] and as privacy-safe diagnostics.
+ *
+ * **Turn IDs drop stale events.** Interim STT revisions are delivered only for
+ * the active listening turn, and live assistant text only for the active
+ * generation turn, so a late event from a superseded turn can never update the
+ * dialog. Inside the turn, the M21 [com.voicechat.agent.orchestration.TurnStateMachine]
+ * applies the same rule to provider and TTS events.
+ *
+ * **Truthful history.** The coordinator adopts only the orchestrator's persisted
+ * [TurnResult.conversation]; an interrupted reply is stored with the delivered
+ * prefix, never the unheard suffix. A barge-in that turns out to be noise commits
+ * no turn and leaves the interrupted reply interrupted
+ * ([VoiceInterruptionRecovery.NO_USABLE_SPEECH]).
+ *
+ * The class is `android.*`-free and JVM-testable; platform capture, STT, and TTS
+ * enter only through the M02 contracts.
+ */
+class VoiceSessionCoordinator(
+    private val audioInput: AudioInput,
+    private val speechToText: SpeechToText,
+    private val textToSpeech: TextToSpeech?,
+    private val turnDetector: VoiceTurnDetector,
+    private val orchestratorFactory: () -> TurnOrchestrator,
+    private val providerSource: VoiceTurnProviderSource,
+    private val listener: VoiceSessionListener = VoiceSessionListener.NONE,
+    private val diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
+    private val clock: MonotonicClock = SystemMonotonicClock,
+    private val turnIdFactory: () -> TurnId = { TurnId("voice-${UUID.randomUUID()}") },
+    private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
+) : VoiceSessionController {
+    private val _state = MutableStateFlow(VoiceSessionState.IDLE)
+
+    /** Observable session state, for the dialog. */
+    override val state: StateFlow<VoiceSessionState> = _state.asStateFlow()
+
+    private var conversation: Conversation? = null
+
+    @Volatile
+    private var sessionScope: CoroutineScope? = null
+
+    @Volatile
+    private var captureJob: Job? = null
+
+    @Volatile
+    private var detectInput: Channel<AudioFrame>? = null
+
+    @Volatile
+    private var activeListening: ListeningTurn? = null
+
+    @Volatile
+    private var detectorJob: Job? = null
+
+    private var generationJob: Job? = null
+    private var generationTurnId: TurnId? = null
+    private var activeOrchestrator: TurnOrchestrator? = null
+
+    @Volatile
+    private var stopped = false
+
+    private val bargeInRecords = mutableListOf<MutableBargeIn>()
+
+    /** Barge-in timings recorded so far, oldest first. */
+    val bargeIns: List<BargeInTiming> get() = synchronized(bargeInRecords) { bargeInRecords.map { it.snapshot() } }
+
+    override suspend fun run(conversation: Conversation) {
+        this.conversation = conversation
+        stopped = false
+        coroutineScope {
+            val scope = this
+            sessionScope = scope
+            setState(VoiceSessionState.LISTENING)
+            val input = Channel<AudioFrame>(capacity = DETECT_BUFFER)
+            detectInput = input
+            captureJob =
+                scope.launch(dispatcher) {
+                    pumpCapture(scope, input)
+                }
+            val detector =
+                scope.launch(dispatcher) {
+                    turnDetector.detect(input.receiveAsFlow()).collect { handleDetection(it) }
+                }
+            detectorJob = detector
+            try {
+                detector.join()
+            } finally {
+                detector.cancel()
+                detectorJob = null
+                captureJob?.cancel()
+                captureJob = null
+                detectInput = null
+                activeListening?.let { turn ->
+                    turn.input.close()
+                    turn.job?.cancel()
+                }
+                activeListening = null
+                generationJob?.cancel()
+                generationJob = null
+                activeOrchestrator = null
+                generationTurnId = null
+                sessionScope = null
+                setState(if (stopped) VoiceSessionState.STOPPED else VoiceSessionState.IDLE)
+            }
+        }
+    }
+
+    override fun stop() {
+        stopped = true
+        detectorJob?.cancel()
+        detectInput?.close()
+        captureJob?.cancel()
+        activeListening?.let { it.input.close() }
+        activeOrchestrator?.interrupt(onsetAtNanos = null)
+        generationJob?.cancel()
+    }
+
+    // region capture
+
+    private suspend fun pumpCapture(
+        scope: CoroutineScope,
+        input: Channel<AudioFrame>,
+    ) {
+        try {
+            audioInput.frames().collect { frame ->
+                input.send(frame)
+                activeListening?.let { turn ->
+                    try {
+                        turn.input.send(frame)
+                    } catch (ignored: ClosedSendChannelException) {
+                        // The turn ended while this frame was in flight; drop it.
+                    }
+                }
+            }
+        } finally {
+            input.close()
+            activeListening?.let { it.input.close() }
+        }
+    }
+
+    // endregion
+
+    // region detection
+
+    private suspend fun handleDetection(event: TurnDetectionEvent) {
+        when (event) {
+            is TurnDetectionEvent.Failed -> {
+                fail(event.error)
+            }
+
+            is TurnDetectionEvent.Held -> {
+                Unit
+            }
+
+            is TurnDetectionEvent.Activity -> {
+                when (event.activity) {
+                    SpeechActivity.SPEECH_STARTED, SpeechActivity.SPEECH_RESUMED -> onSpeechActive()
+                    SpeechActivity.CANDIDATE_PAUSE -> Unit
+                }
+            }
+
+            is TurnDetectionEvent.Endpointed -> {
+                onEndpointed(event)
+            }
+        }
+    }
+
+    private fun onSpeechActive() {
+        val bargeIn = if (isGenerating()) bargeIn() else null
+        if (activeListening == null) {
+            beginListening()
+        }
+        // Capture/recognition for the new utterance is now running. Stamping and
+        // notifying here (not inside bargeIn) means the reported timing proves the
+        // loop restarted capture without waiting for the cancellation to settle.
+        bargeIn?.let { record ->
+            if (record.captureResumedAtNanos == null) record.captureResumedAtNanos = clock.nanoTime()
+            listener.onBargeIn(record.snapshot())
+        }
+    }
+
+    private suspend fun onEndpointed(event: TurnDetectionEvent.Endpointed) {
+        val turn = activeListening
+        if (turn == null) {
+            if (event.reason == EndpointReason.EMPTY_NO_SPEECH) listener.onNoSpeech()
+            return
+        }
+        activeListening = null
+        turn.input.close()
+        turn.job?.join()
+        finishTurn(turn)
+    }
+
+    private fun isGenerating(): Boolean = generationJob?.isActive == true
+
+    // endregion
+
+    // region listening turn
+
+    private fun beginListening() {
+        val scope = sessionScope ?: return
+        val turnId = turnIdFactory()
+        val input = Channel<AudioFrame>(capacity = STT_BUFFER)
+        val turn = ListeningTurn(turnId, input)
+        turn.job =
+            scope.launch(dispatcher) {
+                try {
+                    speechToText.transcribe(input.receiveAsFlow()).collect { event -> onSttEvent(turn, event) }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Throwable) {
+                    turn.failure = failure.toVoiceAgentError()
+                } finally {
+                    input.close()
+                }
+            }
+        activeListening = turn
+        listener.onListeningStarted(turnId)
+        setState(VoiceSessionState.LISTENING)
+        AppLog.d { "voice: listening turn start" }
+    }
+
+    private fun onSttEvent(
+        turn: ListeningTurn,
+        event: SttEvent,
+    ) {
+        when (event) {
+            is SttEvent.Result -> {
+                if (event.transcript.isFinal) {
+                    turn.final = event.transcript
+                } else {
+                    // Interim revisions must be strictly newer; a stale guess is
+                    // dropped, never applied (mirrors the M21 revision rule).
+                    val previous = turn.provisional
+                    if (previous != null && event.transcript.revision.value <= previous.revision.value) return
+                    turn.provisional = event.transcript
+                    // Only the active turn's interim text reaches the dialog; a late
+                    // revision from a superseded turn is dropped, never applied.
+                    if (activeListening === turn) {
+                        listener.onProvisionalTranscript(turn.turnId, event.transcript.text)
+                    }
+                }
+            }
+
+            is SttEvent.Failed -> {
+                turn.failure = event.error
+            }
+        }
+    }
+
+    private suspend fun finishTurn(turn: ListeningTurn) {
+        val failure = turn.failure
+        val final = turn.final
+        when {
+            failure != null -> {
+                AppLog.w { "voice: listening turn failed code=${failure.code}" }
+                fail(failure)
+            }
+
+            final != null && final.text.isNotBlank() -> {
+                commitTurn(turn.turnId, final)
+            }
+
+            else -> {
+                rejectTurn(turn)
+            }
+        }
+    }
+
+    private fun rejectTurn(turn: ListeningTurn) {
+        if (pendingBargeIn() != null) {
+            // The onset that stopped playback did not become usable speech: a
+            // false/noise interruption. No turn is committed and the interrupted
+            // reply stays interrupted with only its delivered prefix.
+            resolveBargeIn(VoiceInterruptionRecovery.NO_USABLE_SPEECH)
+            listener.onInterruptionRecovered(VoiceInterruptionRecovery.NO_USABLE_SPEECH)
+        }
+        AppLog.d { "voice: turn rejected (no usable speech)" }
+        listener.onNoSpeech()
+        setState(if (activeListening != null) VoiceSessionState.LISTENING else VoiceSessionState.IDLE)
+    }
+
+    // endregion
+
+    // region generation
+
+    private suspend fun commitTurn(
+        turnId: TurnId,
+        transcript: Transcript,
+    ) {
+        val scope = sessionScope ?: return
+        val base = conversation ?: return
+        val provider = providerSource.providerFor(base)
+        resolveBargeIn(VoiceInterruptionRecovery.COMMITTED)
+        listener.onInterruptionRecovered(VoiceInterruptionRecovery.COMMITTED)
+        listener.onUtteranceCommitted(turnId, transcript)
+        setState(VoiceSessionState.WORKING)
+        val previous = generationJob
+        generationJob =
+            scope.launch(dispatcher) {
+                var orchestrator: TurnOrchestrator? = null
+                try {
+                    // Serialize persistence: the new turn's context must include the
+                    // interrupted turn's stored truth, and two saves must not race.
+                    previous?.join()
+                    val convo = conversation ?: return@launch
+                    val request =
+                        TurnRequest(
+                            conversation = convo,
+                            userTurn = UserTurn(id = turnId, transcript = transcript, source = UserTurnSource.VOICE),
+                            selection = provider.selection,
+                            reasoning = provider.reasoning,
+                        )
+                    orchestrator = orchestratorFactory()
+                    activeOrchestrator = orchestrator
+                    generationTurnId = turnId
+                    orchestrator.run(
+                        request = request,
+                        observer = coordinatorObserver(turnId),
+                        languageModel = provider.languageModel,
+                    )
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Throwable) {
+                    fail(failure.toVoiceAgentError())
+                } finally {
+                    if (activeOrchestrator === orchestrator) activeOrchestrator = null
+                    if (generationTurnId == turnId) generationTurnId = null
+                }
+            }
+    }
+
+    private fun coordinatorObserver(turnId: TurnId): TurnObserver =
+        object : TurnObserver {
+            override fun onUserTurnCommitted(conversation: Conversation) {
+                this@VoiceSessionCoordinator.conversation = conversation
+                listener.onConversationChanged(conversation)
+            }
+
+            override fun onLiveAssistantText(text: String) {
+                if (generationTurnId != turnId) return
+                listener.onAssistantText(turnId, text)
+                if (textToSpeech != null && _state.value == VoiceSessionState.WORKING) {
+                    setState(VoiceSessionState.SPEAKING)
+                }
+            }
+
+            override fun onTurnFinished(result: TurnResult) {
+                this@VoiceSessionCoordinator.conversation = result.conversation
+                if (generationTurnId == turnId) generationTurnId = null
+                settleBargeIn(turnId)
+                listener.onTurnFinished(result)
+                // A turn that settles after a newer generation started must not
+                // clobber the newer turn's session state (stale-state rule).
+                if (generationTurnId == null || generationTurnId == turnId) {
+                    setState(if (activeListening != null) VoiceSessionState.LISTENING else VoiceSessionState.IDLE)
+                }
+            }
+        }
+
+    // endregion
+
+    // region barge-in
+
+    private fun bargeIn(): MutableBargeIn? {
+        val orchestrator = activeOrchestrator
+        val onset = clock.nanoTime()
+        orchestrator?.interrupt(onset)
+        val stopIssued = clock.nanoTime()
+        val interruptedTurnId = generationTurnId ?: return null
+        val record =
+            MutableBargeIn(
+                interruptedTurnId = interruptedTurnId,
+                onsetAtNanos = onset,
+                stopIssuedAtNanos = stopIssued,
+            )
+        synchronized(bargeInRecords) { bargeInRecords += record }
+        recordDiagnostic(stage = DiagnosticStage.TURN, outcome = DiagnosticOutcome.CANCELLED, record = record)
+        AppLog.d { "voice: barge-in onset->stop=${record.onsetToStopNanos()}ns" }
+        // Stop audible playback at once, from another coroutine, and do not wait.
+        sessionScope?.launch(dispatcher) {
+            try {
+                textToSpeech?.stop()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (ignored: Throwable) {
+                AppLog.w(ignored) { "voice: stopping playback after barge-in failed" }
+            }
+        }
+        return record
+    }
+
+    private fun resolveBargeIn(recovery: VoiceInterruptionRecovery) {
+        val record = pendingBargeIn() ?: return
+        if (record.recovery == null) {
+            record.recovery = recovery
+            recordDiagnostic(stage = DiagnosticStage.TURN, outcome = DiagnosticOutcome.PROGRESS, record = record)
+        }
+    }
+
+    private fun settleBargeIn(turnId: TurnId) {
+        val record =
+            synchronized(bargeInRecords) {
+                bargeInRecords.lastOrNull { it.interruptedTurnId == turnId && it.settledAtNanos == null }
+            } ?: return
+        record.settledAtNanos = clock.nanoTime()
+        recordDiagnostic(stage = DiagnosticStage.TURN, outcome = DiagnosticOutcome.COMPLETED, record = record)
+    }
+
+    private fun pendingBargeIn(): MutableBargeIn? = synchronized(bargeInRecords) { bargeInRecords.lastOrNull { it.recovery == null } }
+
+    private fun recordDiagnostic(
+        stage: DiagnosticStage,
+        outcome: DiagnosticOutcome,
+        record: MutableBargeIn,
+    ) {
+        val attributes =
+            buildMap {
+                put(DiagnosticAttribute.BARGE_IN, "true")
+                put(DiagnosticAttribute.BARGE_IN_STOP_MILLIS, millis(record.onsetToStopNanos()).toString())
+                record.captureResumedAtNanos?.let {
+                    put(DiagnosticAttribute.BARGE_IN_CAPTURE_RESUMED_MILLIS, millis(it - record.onsetAtNanos).toString())
+                }
+            }
+        diagnostics.record(
+            DiagnosticEvent(
+                stage = stage,
+                outcome = outcome,
+                monotonicTimeNanos = clock.nanoTime(),
+                turnId = record.interruptedTurnId,
+                attributes = attributes,
+            ),
+        )
+    }
+
+    // endregion
+
+    private fun setState(state: VoiceSessionState) {
+        // Once the user (or capture end) stopped the session, STOPPED is terminal:
+        // a turn that settles asynchronously after stop must not clobber it back to
+        // IDLE/LISTENING. The interrupted turn is still persisted truthfully.
+        if (stopped && state != VoiceSessionState.STOPPED) return
+        _state.value = state
+        listener.onSessionState(state)
+    }
+
+    private fun fail(error: VoiceAgentError) {
+        AppLog.w { "voice: session error code=${error.code}" }
+        listener.onError(error)
+        setState(VoiceSessionState.FAILED)
+    }
+
+    private fun millis(nanos: Long): Long = nanos / NANOS_PER_MILLI
+
+    private class ListeningTurn(
+        val turnId: TurnId,
+        val input: Channel<AudioFrame>,
+    ) {
+        var job: Job? = null
+        var provisional: Transcript? = null
+        var final: Transcript? = null
+        var failure: VoiceAgentError? = null
+    }
+
+    private class MutableBargeIn(
+        val interruptedTurnId: TurnId,
+        val onsetAtNanos: Long,
+        val stopIssuedAtNanos: Long,
+        var captureResumedAtNanos: Long? = null,
+        var settledAtNanos: Long? = null,
+        var recovery: VoiceInterruptionRecovery? = null,
+    ) {
+        fun onsetToStopNanos(): Long = stopIssuedAtNanos - onsetAtNanos
+
+        fun snapshot(): BargeInTiming =
+            BargeInTiming(
+                interruptedTurnId = interruptedTurnId,
+                onsetAtNanos = onsetAtNanos,
+                stopIssuedAtNanos = stopIssuedAtNanos,
+                captureResumedAtNanos = captureResumedAtNanos,
+                settledAtNanos = settledAtNanos,
+                recovery = recovery,
+            )
+    }
+
+    private companion object {
+        /** Frames the detector pipeline may hold; keeps capture non-blocking while a turn finalizes. */
+        const val DETECT_BUFFER = 256
+
+        /** Frames one listening turn may queue for the recognizer. */
+        const val STT_BUFFER = 128
+
+        const val NANOS_PER_MILLI = 1_000_000L
+    }
+}
+
+private fun Throwable.toVoiceAgentError(): VoiceAgentError =
+    (this as? VoiceAgentException)?.error ?: VoiceAgentError(ErrorCode.UNKNOWN, retryable = false)

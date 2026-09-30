@@ -56,6 +56,7 @@ import com.voicechat.agent.domain.TurnPhase
 import com.voicechat.agent.domain.UserTurn
 import com.voicechat.agent.providers.ProviderDisclosure
 import com.voicechat.agent.ui.theme.VoiceAgentTheme
+import com.voicechat.agent.voice.VoiceSessionState
 
 /**
  * Test tags for the conversation surface.
@@ -81,6 +82,7 @@ object ConversationTestTags {
     const val REMOTE_TRANSFER_NOTICE = "conversation-remote-transfer"
     const val RETENTION_NOTICE = "conversation-retention"
     const val TOOL_EXECUTION_NOTICE = "conversation-tool-execution"
+    const val VOICE_TOGGLE = "voice-toggle"
 
     /** Row for [id] in the conversation list. */
     fun conversationRow(id: String): String = "conversation-row-$id"
@@ -96,6 +98,7 @@ fun ConversationApp(
     actions: ConversationActions,
     modifier: Modifier = Modifier,
     onOpenSettings: (() -> Unit)? = null,
+    onVoiceToggle: (() -> Unit)? = null,
 ) {
     when (state.screen) {
         ConversationScreen.LIST -> {
@@ -112,6 +115,7 @@ fun ConversationApp(
                 dialog = requireNotNull(state.dialog),
                 actions = actions,
                 modifier = modifier,
+                onVoiceToggle = onVoiceToggle,
             )
         }
     }
@@ -235,6 +239,7 @@ fun ConversationDialogScreen(
     dialog: ConversationDialogState,
     actions: ConversationActions,
     modifier: Modifier = Modifier,
+    onVoiceToggle: (() -> Unit)? = null,
 ) {
     val listState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
@@ -280,7 +285,7 @@ fun ConversationDialogScreen(
                 },
             )
         },
-        bottomBar = { Composer(dialog = dialog, actions = actions, focusRequester = focusRequester) },
+        bottomBar = { Composer(dialog = dialog, actions = actions, focusRequester = focusRequester, onVoiceToggle = onVoiceToggle) },
     ) { innerPadding ->
         Column(
             modifier =
@@ -327,6 +332,7 @@ private fun Composer(
     dialog: ConversationDialogState,
     actions: ConversationActions,
     focusRequester: FocusRequester,
+    onVoiceToggle: (() -> Unit)? = null,
 ) {
     Surface(tonalElevation = 3.dp) {
         Column(
@@ -336,6 +342,9 @@ private fun Composer(
                     .imePadding()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
+            if (onVoiceToggle != null && dialog.voiceAvailable) {
+                VoiceRow(dialog = dialog, onVoiceToggle = onVoiceToggle)
+            }
             if (dialog.isGenerating) {
                 val generatingLabel = stringResource(R.string.generating)
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -382,6 +391,38 @@ private fun Composer(
         }
     }
 }
+
+/**
+ * Voice control row (M24): shows the live voice-session state and starts/stops
+ * the loop. It is rendered only when the app attached a voice session factory, so
+ * the text-only path is unchanged.
+ */
+@Composable
+private fun VoiceRow(
+    dialog: ConversationDialogState,
+    onVoiceToggle: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = stringResource(dialog.voiceState.voiceStatusRes()),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        TextButton(onClick = onVoiceToggle, modifier = Modifier.testTag(ConversationTestTags.VOICE_TOGGLE)) {
+            Text(stringResource(if (dialog.isVoiceActive) R.string.stop_voice else R.string.start_voice))
+        }
+    }
+}
+
+private fun VoiceSessionState.voiceStatusRes(): Int =
+    when (this) {
+        VoiceSessionState.LISTENING -> R.string.voice_listening
+        VoiceSessionState.WORKING -> R.string.voice_working
+        VoiceSessionState.SPEAKING -> R.string.voice_speaking
+        VoiceSessionState.FAILED -> R.string.voice_failed
+        VoiceSessionState.IDLE, VoiceSessionState.STOPPED -> R.string.voice_ready
+    }
 
 @Composable
 private fun BubbleRow(bubble: Bubble) {

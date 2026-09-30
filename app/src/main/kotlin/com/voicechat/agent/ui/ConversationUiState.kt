@@ -6,6 +6,7 @@ import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.Turn
 import com.voicechat.agent.domain.TurnPhase
 import com.voicechat.agent.providers.ProviderDisclosure
+import com.voicechat.agent.voice.VoiceSessionState
 
 /**
  * Immutable UI state for the conversation surface (M06).
@@ -90,9 +91,19 @@ data class ConversationDialogState(
      * selected, which the dialog renders as the honest not-configured hint.
      */
     val provider: ProviderDisclosure = ProviderDisclosure.NONE,
+    /**
+     * Session state of the M24 voice loop. [VoiceSessionState.IDLE] when no voice
+     * session is running, so the dialog renders the manual text path unchanged.
+     */
+    val voiceState: VoiceSessionState = VoiceSessionState.IDLE,
+    /** True when a voice session can be started (the app attached a voice factory). */
+    val voiceAvailable: Boolean = false,
 ) {
     /** True while an LLM request is streaming. */
     val isGenerating: Boolean get() = phase == TurnPhase.GENERATING
+
+    /** True while the voice loop is listening, working, or speaking. */
+    val isVoiceActive: Boolean get() = voiceState != VoiceSessionState.IDLE && voiceState != VoiceSessionState.STOPPED
 
     /** True when the last request was cancelled or failed and can be re-run. */
     val canRetry: Boolean get() = phase == TurnPhase.CANCELLED || phase == TurnPhase.FAILED

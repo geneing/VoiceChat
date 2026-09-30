@@ -35,6 +35,14 @@ import com.voicechat.agent.providers.ProviderCapabilityRegistry
 import com.voicechat.agent.providers.ProviderDisclosure
 import com.voicechat.agent.providers.ProviderLanguageModelFactory
 import com.voicechat.agent.settings.VoiceSettings
+import com.voicechat.agent.voice.BargeInTiming
+import com.voicechat.agent.voice.VoiceInterruptionRecovery
+import com.voicechat.agent.voice.VoiceSessionController
+import com.voicechat.agent.voice.VoiceSessionFactory
+import com.voicechat.agent.voice.VoiceSessionListener
+import com.voicechat.agent.voice.VoiceSessionState
+import com.voicechat.agent.voice.VoiceTurnProvider
+import com.voicechat.agent.voice.VoiceTurnProviderSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -113,7 +121,9 @@ class ConversationViewModel(
     private val providerRegistry: ProviderCapabilityRegistry? = null,
     private val providerFactory: ProviderLanguageModelFactory? = null,
 ) : ViewModel(),
-    ConversationActions {
+    ConversationActions,
+    VoiceSessionListener,
+    VoiceTurnProviderSource {
     private val orchestrator =
         TurnOrchestrator(
             repository = repository,
@@ -191,6 +201,254 @@ class ConversationViewModel(
     /** Set while the holder is being cleared, so teardown does not reconcile a turn. */
     private var closed: Boolean = false
 
+    // region M24 voice session
+
+    /** Builds a fresh voice session when the app attached a platform factory (null = voice off). */
+    private var voiceFactory: VoiceSessionFactory? = null
+
+    /** The active voice session controller, if any. */
+    private var voiceController: VoiceSessionController? = null
+
+    /** The job running the active voice session. */
+    private var voiceJob: Job? = null
+
+    /**
+     * Attaches the app-boundary [VoiceSessionFactory].
+     *
+     * Until this is called the dialog shows no voice control and behaves exactly
+     * as the M06/M23 text path — so the voice loop is additive and never changes
+     * existing behavior. The [ConversationViewModel] is both the session's UI
+     * [VoiceSessionListener] and its [VoiceTurnProviderSource].
+     */
+    fun attachVoiceSession(factory: VoiceSessionFactory) {
+        voiceFactory = factory
+        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(voiceAvailable = true)) }
+    }
+
+    /** True when a voice session can be started. */
+    val voiceAvailable: Boolean get() = voiceFactory != null
+
+    /** Starts a voice session over the open conversation (or a fresh one). */
+    fun onStartVoice() {
+        val factory = voiceFactory ?: return
+        if (voiceJob?.isActive == true || generationJob?.isActive == true) return
+        refreshDisclosure()
+        val now = wallClock()
+        val base =
+            currentConversation?.copy()
+                ?: Conversation(
+                    id = idFactory.newConversationId(),
+                    createdAtEpochMillis = now,
+                    updatedAtEpochMillis = now,
+                )
+        AppLog.d { "ui: voice session start" }
+        _uiState.update { state ->
+            state.copy(
+                dialog =
+                    (state.dialog ?: ConversationDialogState(provider = currentDisclosure)).copy(
+                        conversationId = base.id,
+                        provisionalUserText = null,
+                        liveAssistantText = "",
+                        phase = TurnPhase.LISTENING,
+                        notice = null,
+                        provider = currentDisclosure,
+                        voiceAvailable = true,
+                        voiceState = VoiceSessionState.LISTENING,
+                    ),
+            )
+        }
+        val controller = factory.create(this, this)
+        voiceController = controller
+        voiceJob =
+            coroutineScope().launch(dispatcher) {
+                try {
+                    controller.run(base)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Throwable) {
+                    AppLog.w(failure) { "ui: voice session failed" }
+                    _uiState.update { state ->
+                        state.copy(dialog = state.dialog?.copy(notice = failure.toNotice()))
+                    }
+                } finally {
+                    voiceController = null
+                    _uiState.update { state ->
+                        state.copy(
+                            dialog =
+                                state.dialog?.copy(
+                                    voiceState = VoiceSessionState.IDLE,
+                                    provisionalUserText = null,
+                                ),
+                        )
+                    }
+                }
+            }
+    }
+
+    /** Stops the active voice session and returns the dialog to the idle state. */
+    fun onStopVoice() {
+        AppLog.d { "ui: voice session stop" }
+        discardVoiceSession()
+        _uiState.update { state ->
+            state.copy(
+                dialog =
+                    state.dialog?.copy(
+                        voiceState = VoiceSessionState.IDLE,
+                        provisionalUserText = null,
+                        phase = if (state.dialog?.isGenerating == true) state.dialog.phase else TurnPhase.IDLE,
+                    ),
+            )
+        }
+    }
+
+    private fun discardVoiceSession() {
+        voiceController?.stop()
+        voiceController = null
+        voiceJob?.cancel()
+        voiceJob = null
+    }
+
+    /** Resolves the adapter/identity for the next voice turn from the persisted selection. */
+    override fun providerFor(conversation: Conversation): VoiceTurnProvider {
+        val active = activeProvider(conversation.id)
+        return VoiceTurnProvider(
+            selection = active.selection,
+            reasoning = active.reasoning,
+            languageModel = active.languageModel,
+        )
+    }
+
+    // endregion
+
+    // region VoiceSessionListener (voice loop -> dialog)
+
+    override fun onSessionState(state: VoiceSessionState) {
+        _uiState.update { current ->
+            current.copy(
+                dialog =
+                    current.dialog?.copy(
+                        voiceState = state,
+                        phase = state.toTurnPhase(current.dialog?.phase ?: TurnPhase.IDLE),
+                    ),
+            )
+        }
+    }
+
+    override fun onListeningStarted(turnId: TurnId) {
+        _uiState.update { state ->
+            state.copy(
+                dialog =
+                    state.dialog?.copy(
+                        provisionalUserText = null,
+                        liveAssistantText = null,
+                    ),
+            )
+        }
+    }
+
+    override fun onProvisionalTranscript(
+        turnId: TurnId,
+        text: String,
+    ) {
+        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(provisionalUserText = text)) }
+    }
+
+    override fun onUtteranceCommitted(
+        turnId: TurnId,
+        transcript: Transcript,
+    ) {
+        _uiState.update { state ->
+            state.copy(dialog = state.dialog?.copy(provisionalUserText = null, phase = TurnPhase.GENERATING))
+        }
+    }
+
+    override fun onAssistantText(
+        turnId: TurnId,
+        text: String,
+    ) {
+        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(liveAssistantText = text)) }
+    }
+
+    override fun onConversationChanged(conversation: Conversation) {
+        currentConversation = conversation
+        _uiState.update { state ->
+            state.copy(
+                dialog =
+                    state.dialog?.copy(
+                        conversationId = conversation.id,
+                        title = conversation.title,
+                        turns = conversation.turns,
+                    ),
+            )
+        }
+    }
+
+    override fun onTurnFinished(result: TurnResult) {
+        currentConversation = result.conversation
+        val record = result.record
+        val error = record?.failure
+        val outcome = record?.outcome
+        val notice =
+            when {
+                result.persistenceFailure != null -> {
+                    ConversationNotice.Failure(ErrorCode.PERSISTENCE_FAILED, retryable = true)
+                }
+
+                outcome is TurnOutcome.ProviderError && error != null -> {
+                    error.toNotice()
+                }
+
+                outcome is TurnOutcome.TtsFailure && error != null -> {
+                    error.toNotice()
+                }
+
+                else -> {
+                    null
+                }
+            }
+        _uiState.update { state ->
+            state.copy(
+                dialog =
+                    state.dialog?.copy(
+                        turns = result.conversation.turns,
+                        liveAssistantText = null,
+                        phase = record?.phase ?: TurnPhase.IDLE,
+                        notice = notice,
+                    ),
+            )
+        }
+    }
+
+    override fun onBargeIn(timing: BargeInTiming) {
+        AppLog.d { "ui: voice barge-in stop=${timing.onsetToStopNanos}ns" }
+        // The interrupted reply settles asynchronously and is persisted with only
+        // its delivered prefix; the dialog is not told a false completed turn.
+        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(notice = ConversationNotice.RequestCancelled)) }
+    }
+
+    override fun onInterruptionRecovered(recovery: VoiceInterruptionRecovery) {
+        if (recovery == VoiceInterruptionRecovery.NO_USABLE_SPEECH) {
+            AppLog.d { "ui: barge-in recovery: noise/no-speech" }
+            // A false/noise interruption commits no turn; the dialog stays usable.
+            _uiState.update { state -> state.copy(dialog = state.dialog?.copy(notice = null)) }
+        }
+    }
+
+    override fun onError(error: VoiceAgentError) {
+        AppLog.w { "ui: voice session error code=${error.code}" }
+        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(notice = error.toNotice())) }
+    }
+
+    private fun VoiceSessionState.toTurnPhase(current: TurnPhase): TurnPhase =
+        when (this) {
+            VoiceSessionState.LISTENING -> TurnPhase.LISTENING
+            VoiceSessionState.WORKING, VoiceSessionState.SPEAKING -> TurnPhase.GENERATING
+            VoiceSessionState.FAILED -> TurnPhase.FAILED
+            VoiceSessionState.IDLE, VoiceSessionState.STOPPED -> if (current == TurnPhase.SPEAKING) current else TurnPhase.IDLE
+        }
+
+    // endregion
+
     private fun coroutineScope(): CoroutineScope = externalScope ?: viewModelScope
 
     // region Provider resolution (M23)
@@ -237,12 +495,13 @@ class ConversationViewModel(
 
     override fun onNewConversation() {
         discardActiveGeneration()
+        discardVoiceSession()
         AppLog.d { "ui: new conversation" }
         currentConversation = null
         refreshDisclosure()
         _uiState.update {
             it.copy(
-                dialog = ConversationDialogState(provider = currentDisclosure),
+                dialog = ConversationDialogState(provider = currentDisclosure, voiceAvailable = voiceFactory != null),
                 pendingDeletion = null,
             )
         }
@@ -250,6 +509,7 @@ class ConversationViewModel(
 
     override fun onOpenConversation(id: ConversationId) {
         discardActiveGeneration()
+        discardVoiceSession()
         AppLog.d { "ui: open conversation" }
         currentConversation = null
         refreshDisclosure()
@@ -260,6 +520,7 @@ class ConversationViewModel(
                         conversationId = id,
                         isLoading = true,
                         provider = currentDisclosure,
+                        voiceAvailable = voiceFactory != null,
                     ),
                 pendingDeletion = null,
             )
@@ -286,12 +547,21 @@ class ConversationViewModel(
                 saveQuietly(reconciled)
             }
             currentConversation = reconciled
-            _uiState.update { state -> state.copy(dialog = reconciled.toDialogState(currentDisclosure)) }
+            _uiState.update { state ->
+                state.copy(
+                    dialog =
+                        reconciled.toDialogState(currentDisclosure).copy(
+                            voiceAvailable =
+                                voiceFactory != null,
+                        ),
+                )
+            }
         }
     }
 
     override fun onBackToList() {
         discardActiveGeneration()
+        discardVoiceSession()
         _uiState.update { it.copy(dialog = null, pendingDeletion = null) }
     }
 
@@ -367,6 +637,7 @@ class ConversationViewModel(
         _uiState.update { it.copy(pendingDeletion = null) }
         if (currentConversation?.id == pending.id) {
             discardActiveGeneration()
+            discardVoiceSession()
             currentConversation = null
         }
         coroutineScope().launch(dispatcher) {
@@ -646,6 +917,7 @@ class ConversationViewModel(
         settingsJob?.cancel()
         generationJob?.cancel()
         generationJob = null
+        discardVoiceSession()
     }
 
     override fun onCleared() {
@@ -677,6 +949,12 @@ fun conversationViewModelFactory(
     settingsFlow: Flow<VoiceSettings>? = null,
     providerRegistry: ProviderCapabilityRegistry? = null,
     providerFactory: ProviderLanguageModelFactory? = null,
+    /**
+     * The M24 app-boundary voice factory. When supplied, the ViewModel attaches it
+     * and the dialog gains a voice control; when null the app stays text-only and
+     * every M06/M21/M23 behavior is unchanged.
+     */
+    voiceSessionFactory: VoiceSessionFactory? = null,
 ): ViewModelProvider.Factory =
     viewModelFactory {
         initializer {
@@ -690,7 +968,9 @@ fun conversationViewModelFactory(
                 settingsFlow = settingsFlow,
                 providerRegistry = providerRegistry,
                 providerFactory = providerFactory,
-            )
+            ).also { viewModel ->
+                voiceSessionFactory?.let(viewModel::attachVoiceSession)
+            }
         }
     }
 

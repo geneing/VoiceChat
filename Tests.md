@@ -78,6 +78,7 @@ they do not fake availability, and none requires a human speaker.
 | `ui.ConversationAppInstrumentedTest` | The app launches on device and renders the conversation list (Room + Compose smoke). |
 | `credentials.AndroidKeystoreCredentialStoreInstrumentedTest` | The real AndroidKeyStore-backed store stores/replaces/removes a credential against the device KeyStore; a second store instance reads the persisted value (restart proxy); the app-private preferences file holds only ciphertext, never the plaintext secret. |
 | `orchestration.TurnOrchestrationInstrumentedTest` | Runs the real M21 `TurnOrchestrator`/`TurnStateMachine` on device with an inline fake provider and an in-memory repository: one text turn completes and persists a truthful assistant turn. No network, credential, microphone, or real TTS; a structural smoke check, not a provider/voice measurement. |
+| `voice.VoiceSessionInstrumentedTest` | Runs the real M24 `VoiceSessionCoordinator` on device with inline fakes (audio, endpoint, STT, provider) and an in-memory repository: one voice turn commits and persists a truthful assistant turn. No network, credential, microphone, or real STT/TTS; a structural smoke check, not a voice-quality measurement. |
 | `settings.PreferencesSettingsStoreInstrumentedTest` | The real DataStore (Preferences)-backed settings store persists a validated selection to the app-private file and a second store instance reads it (restart proxy); the file holds no credential value. |
 
 ## M07 — Microphone capture
@@ -1136,3 +1137,96 @@ Device-level behavior (real streaming framing, cancellation acknowledgement,
 and the Keystore round-trip under the app) remains unmeasured and is tracked in
 R-0138, R-0161, and the M17 section. **Do not mark any of these passed unless
 the run was actually performed.**
+
+## M24 — Voice loop and responsive barge-in
+
+M24 is a **JVM-first** milestone. The voice loop is a pure-Kotlin coordinator
+(`com.voicechat.agent.voice`) wired over the M02 contracts, so the acceptance
+behavior is proven by `:app:testDebugUnitTest` with deterministic fakes and the
+M03 replay fixtures — no device, network, credential, microphone, or real
+STT/TTS. The only platform file is `VoiceSessionAssembly.kt`, enforced by
+`VoiceSourcePurityTest`. See [docs/voice-loop.md](./docs/voice-loop.md).
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device): voice turns, interruptions at multiple
+# LLM/TTS points, stale-event dropping, delivered-only history, false/noise
+# recovery, short acknowledgements, stop ending the session, recorded timing.
+.\gradlew.bat :app:testDebugUnitTest
+
+# Lint / format / assemble
+.\gradlew.bat :app:assembleDebug :app:lintDebug spotlessCheck
+
+# Compile the instrumented sources WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+```
+
+What the JVM suite proves (details in the linked document):
+
+- **Live text.** The committed voice turn shows interim revisions provisionally,
+  streams assistant text into the dialog, and persists only the final transcript.
+- **Interruptions at multiple LLM/TTS points.** A barge-in during LLM streaming,
+  during TTS playback, and before any assistant text each stop playback, cancel
+  generation, and start the next capture **without waiting** for the
+  cancellation to settle (`captureResumedAtNanos` is recorded before
+  `settledAtNanos`).
+- **No stale events.** Interim revisions must be strictly newer; a late interim
+  after the endpoint is dropped; live assistant text is tagged with, and only
+  accepted for, the active generation turn; a settling turn cannot clobber a
+  newer turn's state.
+- **Delivered-only history.** An interrupted reply is stored with only the
+  audible prefix and `INTERRUPTED`; a turn that generated nothing stores no
+  phantom assistant turn; a completed next turn is stored after the interrupted
+  one.
+- **Explicit recovery.** A false/noise interruption commits no turn and leaves
+  the interrupted reply interrupted (`NO_USABLE_SPEECH`); a short acknowledgement
+  or true interruption commits as a new turn (`COMMITTED`).
+- **Recorded timing.** `onsetToStopNanos`, `onsetToCaptureResumedNanos`, and
+  `onsetToSettledNanos` are captured per barge-in, and `BARGE_IN_STOP_MILLIS` /
+  `BARGE_IN_CAPTURE_RESUMED_MILLIS` reach the M04 diagnostics sink.
+- **Stop.** `stop()` ends the session as `STOPPED` and cancels in-flight work
+  while still persisting what was truthfully delivered.
+
+`voice.VoiceSessionInstrumentedTest` **was not run** for this milestone; per the
+device-testing policy it is compiled only, and it is a structural smoke check
+with inline fakes, not a voice-quality or timing measurement.
+
+### Pixel 10 checks (marked NOT run)
+
+**Device testing is deferred for M24; none of the following was run.** The
+JVM suite proves the logic and the recorded timings, not real echo/noise
+behavior or audible latency. Onset-to-stop latency, echo/noise false-interrupt
+behavior, first-word interruptions, double-talk, and route changes must be
+measured on the device; do not copy thresholds, gain/RMS values, or a fixed
+playback grace period from another project (R-0045).
+
+What to record for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit.
+- Active input and output route kinds (built-in speaker/mic, wired headset,
+  Bluetooth) and the `VadConfig` in effect at start.
+- Per barge-in: the onset-to-stop time (`BARGE_IN_STOP_MILLIS`), the
+  onset-to-capture-resumed time (`BARGE_IN_CAPTURE_RESUMED_MILLIS`), and the
+  onset-to-settled time; whether the reply was persisted with only its delivered
+  prefix, and the recovery (`COMMITTED`/`NO_USABLE_SPEECH`).
+- The spoken/played phrase, the observed `SPEECH_STARTED`/`SPEECH_RESUMED`/
+  `ENDPOINTED` events, and whether the assistant's unheard text was excluded from
+  history.
+
+| Check | How | Record |
+| --- | --- | --- |
+| End-to-end voice turn | Speak a short phrase on the built-in speaker/mic path. | Live interim text, streamed assistant text, on-device TTS playback, and a persisted user+assistant turn; no silent provider/model fallback. |
+| First-word interruption | Start a long reply, then speak as soon as the first word is audible. | Playback stops on the fast onset (no fixed grace period); the new utterance is captured immediately; onset-to-stop time recorded. |
+| Echo / built-in speaker | Play the assistant aloud through the built-in speaker and stay silent. | No false interruption from speaker echo; if the VAD flags it, the recovery is `NO_USABLE_SPEECH` and the reply is not falsely completed. Measure, do not tune by copying threshold values. |
+| Road / wind noise | Repeat in a car (road/wind noise) with speech and with silence. | False-interrupt count and recovery per condition; no long fixed grace period hides the trigger. |
+| Music | Play loud music, with and without speech. | The energy/ZCR detector may report activity for music; record the false-interrupt rate and whether a duration/echo layer is needed (R-0062). |
+| Double-talk | Speak continuously while the assistant is speaking. | Playback stops, generation cancels, the new utterance becomes its own turn, and history keeps only what was delivered. |
+| Route change | Plug/unplug a wired headset and connect/disconnect Bluetooth during capture and during playback. | The route kind changes; capture/playback continue or fail with a typed error; no crash. |
+| Stop / cancel timing | Press stop mid-reply, and barge in once. | `STOPPED` state; in-flight provider/TTS cancelled; onset-to-stop and onset-to-settle timings recorded; delivered-only history persisted. |
+| AEC investigation | Compare built-in-speaker vs headset false-interrupt rates. | Decide whether echo cancellation is needed from measured evidence; no AEC is added and no GVP thresholds are copied. |
+
+Unrun device items are tracked as R-0046, R-0050, R-0060, R-0063, R-0080,
+R-0081, R-0082, and R-0083; **do not mark any row passed unless it was run on the
+device.**
+
