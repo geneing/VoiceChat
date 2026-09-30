@@ -92,6 +92,21 @@ enum class DiagnosticAttribute {
 
     /** Count of frames discarded because the consumer could not keep up. */
     AUDIO_DROPPED_FRAMES,
+
+    /*
+     * Turn-detection attributes (M09). Like the capture attributes these carry
+     * only events, stable reason codes, normalized levels, and timing — never
+     * sample values, transcripts, or other raw audio content.
+     */
+
+    /** Speech-activity or turn event name (`SPEECH_STARTED`, `CANDIDATE_PAUSE`, `HELD`, …). */
+    VAD_EVENT,
+
+    /** Stable reason code for a threshold crossing, hold, or endpoint decision. */
+    VAD_REASON,
+
+    /** Offset from capture start, in milliseconds, at which the event occurred. */
+    VAD_OFFSET_MILLIS,
 }
 
 /**
