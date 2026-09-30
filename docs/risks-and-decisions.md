@@ -7,7 +7,7 @@ limitations. It is not a decision record. Resolved choices live in
 that made them; this file records what is still not settled and who is expected
 to settle it.
 
-It currently covers M00-M08. Later milestone agents **append** items here as
+It currently covers M00-M09. Later milestone agents **append** items here as
 they find them and **close** items they resolve.
 
 ## Convention
@@ -38,6 +38,7 @@ genuinely unknown, write "unknown" rather than guessing.
 - [Device validation and performance](#device-validation-and-performance) — R-0043-R-0047
 - [Privacy and security](#privacy-and-security) — R-0048-R-0049
 - [Capture and STT follow-ups (M07-M08)](#capture-and-stt-follow-ups-m07-m08) — R-0050-R-0056
+- [VAD, onset, and endpointing (M09)](#vad-onset-and-endpointing-m09) — R-0057-R-0060
 
 ## Speech: on-device STT, TTS, VAD, and turn completion
 
@@ -47,7 +48,7 @@ genuinely unknown, write "unknown" rather than guessing.
 | R-0002 | open | speech | Advanced STT mode requires Pixel 10/11 specifically; Basic needs API 31+. Availability is device/config dependent and not yet tested here. | decisions.md §2.1 | M08 | Pixel 10 run recording engine/mode and proof of on-device processing; explicit unavailable path if status is not `AVAILABLE`. |
 | R-0003 | open | speech | STT is not supported on devices with an unlocked bootloader; AICore binding/preparation can fail. | decisions.md §2.1 | unspecified | Failures surfaced through `checkStatus()` as an explicit unavailable reason, not a crash. |
 | R-0004 | open | speech | No on-device TTS voice is guaranteed; voices are device- and user-configurable and a network voice must never be used silently. | decisions.md §2.2 | M11 | Runtime `getVoices()` restricted to `isNetworkConnectionRequired() == false`; explicit "no on-device voice" state. |
-| R-0005 | open | speech | No VAD/onset path or model is selected; ONNX scope is Smart Turn only, so an ONNX VAD (for example Silero) is out of scope; no TFLite VAD is allow-listed. | decisions.md §2.3 | M09 | Measured onset plus a bounded maximum-silence endpoint that works without Smart Turn; scope change needed for an ONNX VAD. |
+| R-0005 | resolved (M09) | speech | No VAD/onset path or model was selected; ONNX scope is Smart Turn only, so an ONNX VAD (for example Silero) is out of scope; no TFLite VAD is allow-listed. | decisions.md §2.3 | — | M09 implements a measured-audio VAD (normalized frame RMS plus zero-crossing rate) behind `VoiceActivityDetector` and a validated, route-aware bounded maximum-silence endpoint behind `BoundedTurnEndpointPolicy`. No model, runtime, dependency, or permission was added, and an ONNX VAD remains out of scope (see docs/vad-endpointing.md). |
 | R-0006 | open | speech | Smart Turn v3.2 accuracy/latency is unmeasured on Pixel 10 and the feature is opt-in (default off) until M25 evidence. | decisions.md §3.3 | M10 (integration), M25 (default decision) | On-device load time, inference time, memory, false-commit/false-hold tradeoffs meeting agreed acceptance; stays default-off until then. |
 | R-0007 | open | speech | TFLite/LiteRT STT and TTS models are deferred; the evaluation backlog entries are unverified for identity, license, and contract. | decisions.md §3.2, §5 | M20 | Recorded task, source, license, runtime, operators/delegates, ABI, tensor contract, and integrity plus device tests before allow-list. |
 | R-0008 | open | speech | The pinned Smart Turn artifact is a third-party re-export (not the Pipecat publisher) and its download/install lifecycle is not implemented. | decisions.md §3.3, §5 | M10 | Re-verify revision, size, and SHA-256 at integration; app-private download with integrity check, atomic install, cancellation, and removal; prefer an upstream embedded-front-end artifact if it appears. |
@@ -138,9 +139,18 @@ genuinely unknown, write "unknown" rather than guessing.
 | ID | Status | Area | Item and open question | Source | Resolves in | Evidence to close |
 | --- | --- | --- | --- | --- | --- | --- |
 | R-0050 | open | capture | Audio-focus policy is provisional: capture takes transient `USAGE_ASSISTANT` focus and records focus loss but does not stop on it, because TTS/barge-in do not exist yet. | audio-capture.md | M11, M24 | Focus policy finalized against real TTS playback and barge-in, with route/focus tests. |
-| R-0051 | open | capture | Capture session events carry no trace/turn ID (a session can span turns), so orchestrator correlation is deferred. | audio-capture.md | M21 | M21 associates capture events with the correct turn and trace ID. |
-| R-0052 | open | capture | The bounded capture buffer drops frames when a consumer lags; drops are counted and surfaced, but the sustained-backpressure policy (drop vs block vs error) is unvalidated in a live pipeline. | audio-capture.md | M09, M21 | Backpressure behavior measured in the live STT/VAD loop; no silent loss beyond the counted drops. |
+| R-0051 | open | capture | Capture session events carry no trace/turn ID (a session can span turns), so orchestrator correlation is deferred. | audio-capture.md | M21 | M09 added optional trace/turn IDs to TURN_DETECTION events, but capture events remain uncorrelated until M21 associates both with the active turn. |
+| R-0052 | open | capture | The bounded capture buffer drops frames when a consumer lags; drops are counted and surfaced, but the sustained-backpressure policy (drop vs block vs error) is unvalidated in a live pipeline. | audio-capture.md | M21 | M09's detector/policy consume the capture flow as a non-blocking transform, but the combined live STT/VAD loop is not assembled until M21, so sustained-backpressure behavior and the impact of counted drops stay unmeasured. |
 | R-0053 | open | speech | The M08 ML Kit adapter compiles and is unit-tested, but runtime status gating, `fromPfd` streaming, and final-segment merging are unverified on hardware. | stt.md | M08 (manual run), M26 | Pixel 10 manual run records `checkStatus()`/provisioning and proves on-device transcription. |
 | R-0054 | open | speech | Final-segment merge assumes `curText += response.text`; if the engine returns cumulative text per final, the merge would duplicate text. A debug probe observed **only one** `FinalTextResponse` per session (so multi-segment merge is unverified) and **cumulative partials** (already handled by replacement). | stt.md | M08 (manual run) | Verified against real `FinalTextResponse` behavior; merge adjusted if cumulative; only one final has been observed so far. |
 | R-0055 | open | speech | The engine reports no confidence, so low-confidence handling is a `null` pass-through with no threshold policy. | stt.md | M09, M21 | Defined behavior for absent/low confidence that still surfaces usable text. |
 | R-0056 | open | speech | `fromPfd` requires audio at a real-time rate (about 32 KB/s) and does not support file-backed descriptors that read at full speed, so the adapter is capture-coupled and not feed-forward, and replay must keep using the M03 adapter. The response flow also does not complete on capture EOF; only `stopRecognition()` completes it, so the adapter stops on input end and bounds the wait for the terminal completion (logic-only, not device verified). | stt.md, audio-replay-harness.md, ML Kit speech-recognition docs | M24 | Live loop uses real-time capture or an explicitly paced feeder; any feed-forward requirement is documented and tested. |
+
+## VAD, onset, and endpointing (M09)
+
+| ID | Status | Area | Item and open question | Source | Resolves in | Evidence to close |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-0057 | open | speech | The measured-audio VAD thresholds (onset/hangover RMS, zero-crossing rate, onset/pause frames) and the 2000 ms maximum-silence cap are provisional, and the route-aware Bluetooth/wired values are placeholders, not Pixel 10 measurements. | docs/vad-endpointing.md, decisions.md §2.3 | M25 | Recorded per-route onset latency and false endpoint/hold rates from labeled replay and Pixel 10 runs; replace the placeholders with measured values. |
+| R-0058 | open | speech | The energy/ZCR detector cannot distinguish loud music or continuous non-speech noise from speech, so it reports activity for them. | docs/vad-endpointing.md, voice-quality-and-latency.md | M24, M25 | Barge-in decisions layer duration and echo evidence; measured false-interrupt behavior for music/noise/echo without a long fixed grace period. |
+| R-0059 | open | speech | The pure VAD/endpoint path is replay-tested but not yet wired into the live audio loop; end-to-end onset/endpoint latency, CPU, and memory are unmeasured. | docs/vad-endpointing.md | M21, M25 | M21 wires the detector to capture and STT; device runs record end-to-end onset latency, endpoint delay, and resource use. |
+| R-0060 | open | speech | `TurnCompletionDetector.evaluate(window: AudioFrame)` receives one concatenated recent-audio frame (default 8 s) from M09; Smart Turn v3.2's exact input/rate/shape is not yet confirmed against that contract. | docs/vad-endpointing.md, decisions.md §3.3 | M10 | M10 confirms the pinned artifact's input contract and refines the semantic window or the contract if they differ. |
