@@ -269,6 +269,7 @@ class RecordingVoiceSessionListener : VoiceSessionListener {
     val bargeIns: MutableList<BargeInTiming> = mutableListOf()
     val recoveries: MutableList<VoiceInterruptionRecovery> = mutableListOf()
     val errors: MutableList<VoiceAgentError> = mutableListOf()
+    val textToSpeechUnavailable: MutableList<VoiceAgentError> = mutableListOf()
 
     /** Number of logical turns that started listening. */
     var listeningCount: Int = 0
@@ -329,5 +330,9 @@ class RecordingVoiceSessionListener : VoiceSessionListener {
 
     override fun onError(error: VoiceAgentError) {
         errors += error
+    }
+
+    override fun onTextToSpeechUnavailable(error: VoiceAgentError) {
+        textToSpeechUnavailable += error
     }
 }

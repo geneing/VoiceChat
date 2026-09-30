@@ -5,6 +5,8 @@ import com.voicechat.agent.contracts.SttEvent
 import com.voicechat.agent.domain.AudioFrame
 import com.voicechat.agent.domain.EngineId
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onCompletion
@@ -43,4 +45,32 @@ class FakeSpeechToText(
     override suspend fun close() {
         closed = true
     }
+}
+
+/**
+ * A [SpeechToText] whose recognition never completes, even after its input
+ * closes — the stalled-engine case the coordinator's completion timeout exists
+ * for (R-0082, M26). [cancelled] completes when the consumer cancels collection,
+ * proving the coordinator bounds the wait instead of hanging.
+ */
+class StallingSpeechToText(
+    override val engineId: EngineId = EngineId("stalling-stt"),
+) : SpeechToText {
+    /** Completes once a session has started. */
+    val started: CompletableDeferred<Unit> = CompletableDeferred()
+
+    /** Completes when the stalled collection is cancelled. */
+    val cancelled: CompletableDeferred<Unit> = CompletableDeferred()
+
+    override fun transcribe(audio: Flow<AudioFrame>): Flow<SttEvent> =
+        flow {
+            started.complete(Unit)
+            try {
+                awaitCancellation()
+            } finally {
+                cancelled.complete(Unit)
+            }
+        }
+
+    override suspend fun close() = Unit
 }

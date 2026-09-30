@@ -2,9 +2,12 @@ package com.voicechat.agent.remote
 
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.VoiceAgentException
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,6 +17,7 @@ import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The shared transport's contract: HTTP status and transport failures become the
@@ -140,5 +144,39 @@ class RemoteTransportTest {
             RemoteTransport(engine).close()
 
             assertTrue(engine.closed.get())
+        }
+
+    @Test
+    fun atMostTheConfiguredNumberOfStreamsReachTheEngineAtOnce() =
+        runTest {
+            val inFlight = AtomicInteger(0)
+            val maxObserved = AtomicInteger(0)
+            val started = AtomicInteger(0)
+            val engine =
+                FakeHttpStreamingEngine {
+                    flow {
+                        val concurrent = inFlight.incrementAndGet()
+                        maxObserved.updateAndGet { maxOf(it, concurrent) }
+                        started.incrementAndGet()
+                        try {
+                            emit(HttpStreamEvent.Head(status = 200))
+                            awaitCancellation()
+                        } finally {
+                            inFlight.decrementAndGet()
+                        }
+                    }
+                }
+            val transport = RemoteTransport(engine, maxConcurrentRequests = 2)
+
+            val jobs =
+                List(4) {
+                    launch { transport.streamSse(request).collect { } }
+                }
+            runCurrent()
+
+            assertEquals("only two calls may reach the engine", 2, started.get())
+            assertEquals("the engine must never see more than the cap", 2, maxObserved.get())
+
+            jobs.forEach { it.cancel() }
         }
 }

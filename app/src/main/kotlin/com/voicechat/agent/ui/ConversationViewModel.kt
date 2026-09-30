@@ -445,6 +445,11 @@ class ConversationViewModel(
         _uiState.update { state -> state.copy(dialog = state.dialog?.copy(notice = error.toNotice())) }
     }
 
+    override fun onTextToSpeechUnavailable(error: VoiceAgentError) {
+        AppLog.w { "ui: voice session is text-only code=${error.code}" }
+        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(notice = error.toNotice())) }
+    }
+
     private fun VoiceSessionState.toTurnPhase(current: TurnPhase): TurnPhase =
         when (this) {
             VoiceSessionState.LISTENING -> TurnPhase.LISTENING

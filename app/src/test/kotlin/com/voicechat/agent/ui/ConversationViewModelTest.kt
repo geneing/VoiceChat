@@ -83,6 +83,23 @@ class ConversationViewModelTest {
     }
 
     @Test
+    fun aTextOnlyVoiceSessionSurfacesTheTypedTtsUnavailableNotice() =
+        runTest {
+            val viewModel = newViewModel(InMemoryConversationRepository(), FakeLanguageModel())
+            viewModel.onNewConversation()
+
+            viewModel.onTextToSpeechUnavailable(
+                VoiceAgentError(ErrorCode.TTS_NO_ON_DEVICE_VOICE, "no embedded voice"),
+            )
+
+            assertEquals(
+                ConversationNotice.Failure(ErrorCode.TTS_NO_ON_DEVICE_VOICE, retryable = false),
+                viewModel.uiState.value.dialog!!
+                    .notice,
+            )
+        }
+
+    @Test
     fun sendingTextPersistsAndRendersTheAssistantReply() =
         runTest {
             val repository = InMemoryConversationRepository()

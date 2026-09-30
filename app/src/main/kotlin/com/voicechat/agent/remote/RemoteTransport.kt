@@ -6,6 +6,8 @@ import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.io.ByteArrayOutputStream
 
 /** One HTTP header. Header values are treated as sensitive: never logged. */
@@ -132,7 +134,21 @@ object RemoteStatusMapper {
  */
 class RemoteTransport(
     private val engine: HttpStreamingEngine,
+    /**
+     * Maximum provider calls in flight at once (M26, R-0094). Each blocking
+     * engine call otherwise consumes an IO thread; a bounded semaphore makes
+     * rapid cancellation, recreation, or provider errors queue instead of
+     * growing unbounded. Extra callers suspend until a permit frees — the
+     * backpressure is applied to the caller's coroutine, not to a thread.
+     */
+    maxConcurrentRequests: Int = DEFAULT_MAX_CONCURRENT_REQUESTS,
 ) {
+    init {
+        require(maxConcurrentRequests > 0) { "maxConcurrentRequests must be positive, was $maxConcurrentRequests" }
+    }
+
+    private val permits = Semaphore(maxConcurrentRequests)
+
     /**
      * Executes [request] and decodes a Server-Sent Events stream.
      *
@@ -142,6 +158,17 @@ class RemoteTransport(
      * propagates as `CancellationException`.
      */
     fun streamSse(request: RemoteHttpRequest): Flow<SseFrame> =
+        flow {
+            permits.withPermit {
+                rawSse(request).collect { emit(it) }
+            }
+        }
+
+    /**
+     * Executes [request] and decodes a Server-Sent Events stream without the
+     * concurrency bound; [streamSse] calls this while holding one permit.
+     */
+    private fun rawSse(request: RemoteHttpRequest): Flow<SseFrame> =
         flow {
             var status: Int? = null
             val bodyChunks =
@@ -179,6 +206,11 @@ class RemoteTransport(
     suspend fun fetch(
         request: RemoteHttpRequest,
         maxBytes: Int = DEFAULT_MAX_RESPONSE_BYTES,
+    ): RemoteHttpResponse = permits.withPermit { fetchPermitted(request, maxBytes) }
+
+    private suspend fun fetchPermitted(
+        request: RemoteHttpRequest,
+        maxBytes: Int,
     ): RemoteHttpResponse {
         var status: Int? = null
         var headers: Map<String, List<String>> = emptyMap()
@@ -220,6 +252,14 @@ class RemoteTransport(
     companion object {
         /** Default cap for one buffered [fetch] body. */
         const val DEFAULT_MAX_RESPONSE_BYTES: Int = 1024 * 1024
+
+        /**
+         * Default in-flight provider-call limit. Four is enough for a single
+         * user's conversation plus settings probes; a larger burst queues rather
+         * than exhausting the IO pool. The value is a deliberate policy, not a
+         * measured optimum (R-0094).
+         */
+        const val DEFAULT_MAX_CONCURRENT_REQUESTS: Int = 4
 
         private val SUCCESS_RANGE = 200..299
     }
