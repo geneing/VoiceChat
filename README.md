@@ -95,6 +95,11 @@ remote.
   selection, and delivery/interruption accounting (M11).
 - [LLM streaming contract](./docs/llm-contract.md) — provider-independent
   request/event/error model and the deterministic fake (M12).
+- [Credentials and provider registry](./docs/credentials.md) — Keystore-backed
+  credential storage, endpoint/TLS validation, and the provider capability
+  registry (M13).
+- [Turn orchestration](./docs/orchestration.md) — the pure-Kotlin turn state
+  machine, cancellation, and delivered-only persistence (M21).
 - [Logging](./docs/logging.md) — release-safe developer logging and redaction.
 - [On-device test plan](./Tests.md) — what to run on the phone and what to
   record, per milestone.
@@ -140,22 +145,26 @@ adds the Compose conversation list/dialog UI with a manual text path, M07 adds
 microphone capture with point-of-use permission and lifecycle handling, M08
 adds the on-device ML Kit GenAI speech-to-text adapter with runtime availability
 gating, M09 adds measured-audio VAD/onset with bounded VAD-only endpointing,
-M11 adds on-device platform TTS restricted to embedded voices, and M12 adds the
-provider-independent LLM streaming contract with a deterministic fake. `:app` is
-the only Gradle module. The `domain`, `contracts`, `log`, `diagnostics`, `replay`,
-and `vad` packages (and the `tts` engine seam) are pure Kotlin (no `android.*`
-imports, enforced by unit tests); `audio`, `stt`, and `tts` hold the Android /
-ML Kit / platform adapters. The 353-test JVM suite covers domain invariants,
-contract ordering and cancellation, the deterministic fakes, fixture replay
-determinism, trace correlation/redaction/timing, repository CRUD/migration and
-context bounds (Robolectric), the conversation UI, capture/STT/TTS adapters,
-VAD/endpointing, and the LLM contract. On-device tests live under
-`app/src/androidTest` and are catalogued in [Tests.md](./Tests.md) but are not run
-yet. A real LLM provider is intentionally not wired in yet: the UI renders an
-explicit "LLM not configured" error instead of a fake reply. The app declares the
-`RECORD_AUDIO` permission (requested at the point of use); Smart Turn (M10),
-provider/model runtimes, and the real LLM adapters (M13+) are not implemented
-yet.
+M11 adds on-device platform TTS restricted to embedded voices, M12 adds the
+provider-independent LLM streaming contract with a deterministic fake, M13 adds
+Keystore-backed credential storage with the provider capability registry, and
+M21 adds the pure-Kotlin turn orchestration state machine with cancellation and
+delivered-only persistence. `:app` is the only Gradle module. The `domain`,
+`contracts`, `log`, `diagnostics`, `orchestration`, `replay`, and `vad`
+packages (and the `tts` engine seam and credential/providers logic) are pure
+Kotlin (no `android.*` imports, enforced by unit tests); `audio`, `stt`, `tts`,
+and the AndroidKeyStore credential implementation hold the platform / ML Kit /
+system adapters. The 440-test JVM suite covers domain invariants, contract
+ordering and cancellation, the deterministic fakes, fixture replay determinism,
+trace correlation/redaction/timing, repository CRUD/migration and context
+bounds (Robolectric), the conversation UI, capture/STT/TTS/VAD adapters,
+LLM-contract semantics, credential store/registry behavior, and turn
+orchestration. On-device tests live under `app/src/androidTest` and are
+catalogued in [Tests.md](./Tests.md) but are not run yet. A real LLM provider is
+intentionally not wired in yet: the UI renders an explicit "LLM not configured"
+error instead of a fake reply. The app declares the `RECORD_AUDIO` permission
+(requested at the point of use); Smart Turn (M10), the real LLM adapters
+(M14-M19), and local model runtimes (M20) are not implemented yet.
 
 The scaffold requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17
 source/target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0,

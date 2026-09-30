@@ -15,13 +15,16 @@ tracing (M04), durable Room-backed conversation persistence with a bounded
 context builder (M05), a Compose conversation UI with a manual text path (M06),
 microphone capture (M07), on-device ML Kit GenAI speech-to-text (M08),
 measured-audio VAD/onset and bounded endpointing (M09), on-device platform TTS
-(M11), and a provider-independent LLM streaming contract with a deterministic
-fake (M12). Smart Turn (M10), model/runtime providers, and the real LLM
-providers (M13+) are still not implemented. Treat the product documents as
-requirements and direction, not as proof that a feature, dependency, model, or
-device capability already exists. Update this file when the project structure
-and verified commands change. Unresolved risks, open decisions, and known
-limitations are tracked in [docs/risks-and-decisions.md](./docs/risks-and-decisions.md).
+(M11), a provider-independent LLM streaming contract with a deterministic fake
+(M12), Keystore-backed credential storage with a provider capability registry
+(M13), and pure-Kotlin turn orchestration with cancellation (M21). Smart Turn
+(M10), the real LLM provider adapters and local model runtimes (M14-M20), and
+settings/capability UI (M22+) are still not implemented. Treat the product
+documents as requirements and direction, not as proof that a feature,
+dependency, model, or device capability already exists. Update this file when the
+project structure and verified commands change. Unresolved risks, open
+decisions, and known limitations are tracked in
+[docs/risks-and-decisions.md](./docs/risks-and-decisions.md).
 
 ## Product and platform constraints
 
@@ -161,9 +164,12 @@ app/                        the only application module
     domain/                 pure-Kotlin conversation/domain models (M02)
     contracts/              replaceable platform/provider interfaces (M02)
     audio/                  microphone capture + lifecycle (M07)
+    credentials/            Keystore-backed credential storage (M13)
     diagnostics/            privacy-safe turn tracing and timing (M04)
     log/                    release-safe developer logging (off in release)
+    orchestration/          turn state machine + orchestrator (M21)
     persistence/            Room conversation storage (M05)
+    providers/              provider capability registry (M13)
     replay/                 deterministic PCM replay + fixtures (M03)
     stt/                    ML Kit GenAI speech-to-text adapter (M08)
     tts/                    on-device platform TTS adapter (M11)
@@ -174,9 +180,12 @@ app/                        the only application module
   src/test/kotlin/com/voicechat/agent/
     domain/, contracts/     JVM domain and contract tests
     audio/, stt/, tts/      JVM capture, STT, and TTS adapter tests
+    credentials/, providers/  JVM credential and capability-registry tests
     diagnostics/, log/      JVM tracing and logging tests
+    orchestration/          JVM turn state-machine and orchestrator tests
     persistence/, ui/       JVM persistence (Robolectric) and UI tests
     replay/, vad/           JVM replay and VAD tests
+    security/               JVM repository secret scan
     fake/                   deterministic contract fakes
   src/test/resources/replay/                 frozen replay fixture bytes
   src/androidTest/                           on-device tests (see Tests.md)
