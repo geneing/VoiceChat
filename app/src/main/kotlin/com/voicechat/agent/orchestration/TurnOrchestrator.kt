@@ -130,6 +130,7 @@ class TurnOrchestrator(
     suspend fun run(
         request: TurnRequest,
         observer: TurnObserver = TurnObserver.NONE,
+        languageModel: LanguageModel = this.languageModel,
     ): TurnResult {
         val turnId = request.userTurn.id
         val machine = TurnStateMachine(speechEnabled = textToSpeech != null)
@@ -156,7 +157,7 @@ class TurnOrchestrator(
 
         val conversation =
             try {
-                execute(request, withUser, machine, trace, observer)
+                execute(request, withUser, machine, trace, observer, languageModel)
             } catch (cancellation: CancellationException) {
                 withContext(NonCancellable) {
                     stopSpeech()
@@ -190,6 +191,7 @@ class TurnOrchestrator(
         machine: TurnStateMachine,
         trace: TurnTraceRecorder,
         observer: TurnObserver,
+        languageModel: LanguageModel,
     ): Conversation {
         val chunker = TtsTextChunker()
         val ttsJobs = mutableListOf<Job>()

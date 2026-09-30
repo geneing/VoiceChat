@@ -33,15 +33,20 @@ Implemented:
 
 Not implemented (owned elsewhere):
 
-- Real provider adapters and the live `/models` catalog (M14–M19). The settings
-  model list is therefore empty in the shipped build; nothing is fabricated.
+- The **live** `/models` catalog and per-model reasoning capability (M14–M19).
+  The M23 slice feeds the picker a **documented static** list (OpenCode Go's
+  dated model table), so a Go model is selectable and validated; other providers
+  still show no models, and nothing is fabricated (R-0102, R-0160).
 - The OpenRouter browser redirect and token exchange. The app refuses honestly
   (`AuthorizationRejection.NOT_IMPLEMENTED`) rather than faking a pairing; the
   session/security invariants are already enforced and tested.
 - Smart Turn itself (M10); the toggle is always disabled with a reason.
-- Consuming the persisted selection in the conversation turn path (M23). The
-  settings screen persists it; `ConversationViewModel` still runs the default
-  `NotConfiguredLanguageModel`.
+
+The persisted selection **is** now consumed by the conversation turn path (M23):
+`ConversationViewModel` resolves the adapter and identity from the latest
+settings at send time (`ProviderTurnResolver`, `RegisteredProviderLanguageModelFactory`),
+and the dialog shows the destination/transfer/retention disclosure before a send.
+See [text-first-slice.md](./text-first-slice.md).
 
 ## Dependency
 
@@ -193,7 +198,6 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
   engine construction) is unmeasured on Pixel 10 (R-0100).
 - The OpenRouter browser redirect/token exchange is not implemented; the flow
   refuses honestly (R-0101).
-- The live `/models` catalog is not wired, so no model is selectable in the
-  shipped build (R-0102).
-- The persisted selection is not yet consumed by the turn path (R-0103).
+- The live `/models` catalog is not wired, so only the documented OpenCode Go
+  models are selectable in the shipped build (R-0102, R-0160).
 - DataStore settings backup/transfer behavior is unverified on device (R-0104).

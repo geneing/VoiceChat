@@ -278,9 +278,10 @@ for tests that need none of the above.
 
 ## Limitations
 
-- No provider is wired; the app runs `NotConfiguredLanguageModel`, which declares
-  no capabilities and fails every request with `LLM_NOT_CONFIGURED`. M13–M19
-  provide credentials and adapters; M23 completes the text-first vertical slice.
+- A real adapter is wired into the turn path since M23 (`RegisteredProviderLanguageModelFactory`
+  + `ProviderTurnResolver`); `NotConfiguredLanguageModel` remains only when
+  nothing is selected and declares no capabilities. See
+  [text-first-slice.md](./text-first-slice.md).
 - `LlmCapabilities` is per-adapter. The per-model catalog (which reasoning levels
   a specific model exposes) arrives with M13/M22; `LlmRequestValidator` only
   enforces what an adapter has already declared.

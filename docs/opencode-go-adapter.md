@@ -152,8 +152,10 @@ The opt-in smoke test is documented and marked **not run** in
 - **Model list drift.** The family map is dated; new/renamed models need
   re-verification (R-0130), and `GET /models` ids the page does not place are
   refused (R-0137).
-- **Per-conversation session id.** A single per-adapter id is sent; wiring the
-  real conversation id is M23 (R-0132).
+- **Per-conversation session id.** Resolved at M23: `RegisteredProviderLanguageModelFactory`
+  derives `x-opencode-session` from the conversation id (`voicechat-<conversationId>`),
+  so the routing/prompt-caching hint is conversation-scoped (R-0132). The id is
+  app-local and carries no user content.
 - **Messages `max_tokens`.** A fixed 4096 default is required by the protocol but
   is not a Go-verified figure (R-0133).
 - **Terms for a non-coding voice client.** Open (R-0020).
@@ -167,8 +169,12 @@ The opt-in smoke test is documented and marked **not run** in
 - Only completion (chat/responses/messages) is wired; no tool, vision, or
   files API is used. `deepseek-v4-flash-vision-exp` is placed on Chat Completions
   but vision input is out of scope.
-- The app still runs `NotConfiguredLanguageModel` in the UI; wiring this adapter
-  into the turn path is M23 (R-0097).
+- The app now runs this adapter in the turn path (M23): the persisted selection
+  and the M13 credential drive the request, and the dialog discloses the
+  destination/transfer/retention before sending. See
+  [text-first-slice.md](./text-first-slice.md). The live `/models` surface is
+  still unwired; the picker uses the documented static model list (R-0102,
+  R-0160).
 
 ## Sources (accessed 2026-09-29)
 

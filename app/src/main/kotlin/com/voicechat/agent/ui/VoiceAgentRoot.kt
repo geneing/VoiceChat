@@ -11,6 +11,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.voicechat.agent.contracts.ConversationRepository
 import com.voicechat.agent.contracts.LanguageModel
 import com.voicechat.agent.domain.ProviderModelSelection
+import com.voicechat.agent.providers.ProviderCapabilityRegistry
+import com.voicechat.agent.providers.ProviderLanguageModelFactory
+import com.voicechat.agent.settings.VoiceSettings
+import kotlinx.coroutines.flow.Flow
 
 /**
  * Stateful root of the Compose tree.
@@ -32,6 +36,9 @@ fun VoiceAgentRoot(
     selection: ProviderModelSelection = ConversationDefaults.selection,
     modifier: Modifier = Modifier,
     settingsFactory: androidx.lifecycle.ViewModelProvider.Factory? = null,
+    settingsFlow: Flow<VoiceSettings>? = null,
+    providerRegistry: ProviderCapabilityRegistry? = null,
+    providerFactory: ProviderLanguageModelFactory? = null,
 ) {
     val viewModel: ConversationViewModel =
         viewModel(
@@ -40,6 +47,9 @@ fun VoiceAgentRoot(
                     repository = repository,
                     languageModel = languageModel,
                     selection = selection,
+                    settingsFlow = settingsFlow,
+                    providerRegistry = providerRegistry,
+                    providerFactory = providerFactory,
                 ),
         )
     val state by viewModel.uiState.collectAsStateWithLifecycle()

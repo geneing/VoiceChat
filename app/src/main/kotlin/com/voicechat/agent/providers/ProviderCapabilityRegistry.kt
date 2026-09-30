@@ -86,6 +86,9 @@ class ProviderCapabilityRegistry(
                             ),
                         usageReporting = true,
                     ),
+                dataRetentionNote =
+                    "Responses are requested with store=false; OpenAI's API data-retention " +
+                        "policy still applies (up to 30 days).",
             )
 
         private fun openRouter(): ProviderCapabilities =
@@ -120,6 +123,9 @@ class ProviderCapabilityRegistry(
                             ),
                         usageReporting = true,
                     ),
+                dataRetentionNote =
+                    "Routed providers may store or train on prompts; OpenRouter's " +
+                        "data-collection policy defaults to allow.",
             )
 
         private fun openCodeGo(): ProviderCapabilities =
@@ -154,6 +160,9 @@ class ProviderCapabilityRegistry(
                         usageReporting = false,
                         unverified = setOf(UnverifiedCapability.REASONING, UnverifiedCapability.USAGE),
                     ),
+                dataRetentionNote =
+                    "Per-model retention/training: Grok/GPT keep data 30 days, most models 0 days, " +
+                        "and Muse Spark Contributor models train Meta models on prompts/completions.",
             )
 
         private fun openCodeZen(): ProviderCapabilities =
@@ -191,6 +200,9 @@ class ProviderCapabilityRegistry(
                         usageReporting = false,
                         unverified = setOf(UnverifiedCapability.REASONING, UnverifiedCapability.USAGE),
                     ),
+                dataRetentionNote =
+                    "Per-model retention/training: free models may use data to improve the model, " +
+                        "OpenAI/Anthropic keep data 30 days, and Muse Spark 1.3 Contributor trains on prompts/completions.",
             )
 
         private fun deepSeek(): ProviderCapabilities =

@@ -31,11 +31,16 @@ import com.voicechat.agent.orchestration.TurnOrchestrator
 import com.voicechat.agent.orchestration.TurnOutcome
 import com.voicechat.agent.orchestration.TurnRequest
 import com.voicechat.agent.orchestration.TurnResult
+import com.voicechat.agent.providers.ProviderCapabilityRegistry
+import com.voicechat.agent.providers.ProviderDisclosure
+import com.voicechat.agent.providers.ProviderLanguageModelFactory
+import com.voicechat.agent.settings.VoiceSettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -97,6 +102,16 @@ class ConversationViewModel(
     contextBuilder: ModelContextBuilder = ModelContextBuilder(),
     private val textToSpeech: TextToSpeech? = null,
     scope: CoroutineScope? = null,
+    /**
+     * When supplied with [providerRegistry] and [providerFactory], the turn path
+     * resolves the active provider/model and adapter from the persisted M22
+     * selection at send time (M23, R-0103) instead of using the fixed
+     * [languageModel]/[selection] above. `null` keeps the fixed behavior the M06
+     * tests rely on.
+     */
+    private val settingsFlow: Flow<VoiceSettings>? = null,
+    private val providerRegistry: ProviderCapabilityRegistry? = null,
+    private val providerFactory: ProviderLanguageModelFactory? = null,
 ) : ViewModel(),
     ConversationActions {
     private val orchestrator =
@@ -131,6 +146,39 @@ class ConversationViewModel(
                 }
         }
 
+    // region M23 provider resolution
+
+    /** True when the persisted selection drives the turn path. */
+    private val providerResolutionEnabled: Boolean =
+        settingsFlow != null && providerRegistry != null && providerFactory != null
+
+    /** The latest validated settings; only used when [providerResolutionEnabled]. */
+    private var latestSettings: VoiceSettings = VoiceSettings.EMPTY
+
+    /** What the open dialog discloses about the selected provider; kept current. */
+    private var currentDisclosure: ProviderDisclosure = ProviderDisclosure.NONE
+
+    /**
+     * Re-derives the disclosure for the open dialog whenever the persisted
+     * settings change, so a selection made in Settings is visible in the dialog
+     * before the next send without restarting the conversation.
+     */
+    private val settingsJob: Job? =
+        if (providerResolutionEnabled) {
+            coroutineScope().launch(dispatcher) {
+                settingsFlow!!
+                    .catch { failure -> AppLog.w(failure) { "ui: settings observation failed" } }
+                    .collect { stored ->
+                        latestSettings = stored
+                        applyDisclosure(ProviderDisclosure.from(stored, providerRegistry!!))
+                    }
+            }
+        } else {
+            null
+        }
+
+    // endregion
+
     /** The last loaded or saved conversation; the source of truth for the open dialog. */
     private var currentConversation: Conversation? = null
 
@@ -145,15 +193,56 @@ class ConversationViewModel(
 
     private fun coroutineScope(): CoroutineScope = externalScope ?: viewModelScope
 
+    // region Provider resolution (M23)
+
+    /** Stores [disclosure] and shows it on the open dialog, if any. */
+    private fun applyDisclosure(disclosure: ProviderDisclosure) {
+        currentDisclosure = disclosure
+        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(provider = disclosure)) }
+    }
+
+    /** Recomputes the disclosure synchronously from the latest observed settings. */
+    private fun refreshDisclosure() {
+        if (!providerResolutionEnabled) return
+        applyDisclosure(ProviderDisclosure.from(latestSettings, providerRegistry!!))
+    }
+
+    /**
+     * Resolves the identity and adapter for a turn in [conversationId].
+     *
+     * With no settings source this returns the fixed constructor
+     * `languageModel`/`selection`, preserving the pre-M23 behavior that the M06
+     * tests exercise.
+     */
+    private fun activeProvider(conversationId: ConversationId): ActiveProviderTurn =
+        if (providerResolutionEnabled) {
+            ProviderTurnResolver.resolve(
+                settings = latestSettings,
+                conversationId = conversationId,
+                registry = providerRegistry!!,
+                factory = providerFactory!!,
+            )
+        } else {
+            ActiveProviderTurn(
+                selection = selection,
+                reasoning = reasoning,
+                languageModel = languageModel,
+                configured = true,
+            )
+        }
+
+    // endregion
+
     // region ConversationActions
 
     override fun onNewConversation() {
         discardActiveGeneration()
         AppLog.d { "ui: new conversation" }
         currentConversation = null
+        refreshDisclosure()
         _uiState.update {
             it.copy(
-                dialog = ConversationDialogState(),
+                dialog = ConversationDialogState(provider = currentDisclosure),
                 pendingDeletion = null,
             )
         }
@@ -163,12 +252,14 @@ class ConversationViewModel(
         discardActiveGeneration()
         AppLog.d { "ui: open conversation" }
         currentConversation = null
+        refreshDisclosure()
         _uiState.update { state ->
             state.copy(
                 dialog =
                     ConversationDialogState(
                         conversationId = id,
                         isLoading = true,
+                        provider = currentDisclosure,
                     ),
                 pendingDeletion = null,
             )
@@ -195,7 +286,7 @@ class ConversationViewModel(
                 saveQuietly(reconciled)
             }
             currentConversation = reconciled
-            _uiState.update { state -> state.copy(dialog = reconciled.toDialogState()) }
+            _uiState.update { state -> state.copy(dialog = reconciled.toDialogState(currentDisclosure)) }
         }
     }
 
@@ -235,6 +326,7 @@ class ConversationViewModel(
         if (lastUserIndex < 0) return
         val lastUser = conversation.turns[lastUserIndex] as UserTurn
         AppLog.d { "ui: retry" }
+        refreshDisclosure()
         val marker = beginGeneration()
         _uiState.update { state ->
             state.copy(
@@ -243,6 +335,7 @@ class ConversationViewModel(
                         phase = TurnPhase.GENERATING,
                         liveAssistantText = "",
                         notice = null,
+                        provider = currentDisclosure,
                     ),
             )
         }
@@ -344,6 +437,7 @@ class ConversationViewModel(
         if (committed.isEmpty()) return
         if (generationJob?.isActive == true) return
         AppLog.d { "ui: submit turn source=$source chars=${committed.length}" }
+        refreshDisclosure()
         val marker = beginGeneration()
         _uiState.update { state ->
             state.copy(
@@ -354,6 +448,7 @@ class ConversationViewModel(
                         liveAssistantText = "",
                         phase = TurnPhase.GENERATING,
                         notice = null,
+                        provider = currentDisclosure,
                     ),
             )
         }
@@ -414,14 +509,19 @@ class ConversationViewModel(
                     applyTurnResult(marker, result, originalText)
                 }
             }
+        val active = activeProvider(conversation.id)
+        if (providerResolutionEnabled && !active.configured) {
+            AppLog.w { "ui: no provider/model configured; the turn will report LLM_NOT_CONFIGURED" }
+        }
         orchestrator.run(
             TurnRequest(
                 conversation = conversation,
                 userTurn = userTurn,
-                selection = selection,
-                reasoning = reasoning,
+                selection = active.selection,
+                reasoning = active.reasoning,
             ),
             observer,
+            languageModel = active.languageModel,
         )
     }
 
@@ -543,6 +643,7 @@ class ConversationViewModel(
         closed = true
         activeGeneration = null
         listJob.cancel()
+        settingsJob?.cancel()
         generationJob?.cancel()
         generationJob = null
     }
@@ -573,6 +674,9 @@ fun conversationViewModelFactory(
     reasoning: ReasoningLevel? = null,
     diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
     textToSpeech: TextToSpeech? = null,
+    settingsFlow: Flow<VoiceSettings>? = null,
+    providerRegistry: ProviderCapabilityRegistry? = null,
+    providerFactory: ProviderLanguageModelFactory? = null,
 ): ViewModelProvider.Factory =
     viewModelFactory {
         initializer {
@@ -583,15 +687,19 @@ fun conversationViewModelFactory(
                 reasoning = reasoning,
                 diagnostics = diagnostics,
                 textToSpeech = textToSpeech,
+                settingsFlow = settingsFlow,
+                providerRegistry = providerRegistry,
+                providerFactory = providerFactory,
             )
         }
     }
 
-private fun Conversation.toDialogState(): ConversationDialogState =
+private fun Conversation.toDialogState(provider: ProviderDisclosure): ConversationDialogState =
     ConversationDialogState(
         conversationId = id,
         title = title,
         turns = turns,
+        provider = provider,
         phase =
             when (val last = turns.lastOrNull()) {
                 null -> {

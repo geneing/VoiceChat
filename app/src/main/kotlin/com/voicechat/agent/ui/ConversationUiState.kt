@@ -5,6 +5,7 @@ import com.voicechat.agent.domain.ConversationSummary
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.Turn
 import com.voicechat.agent.domain.TurnPhase
+import com.voicechat.agent.providers.ProviderDisclosure
 
 /**
  * Immutable UI state for the conversation surface (M06).
@@ -81,6 +82,14 @@ data class ConversationDialogState(
     val composerText: String = "",
     val isLoading: Boolean = false,
     val notice: ConversationNotice? = null,
+    /**
+     * Where this conversation's next request will go, from the persisted M22
+     * selection (M23). Shown before/at send so the destination, the remote
+     * text/context transfer, and the provider's retention note are disclosed
+     * (R-0097, R-0139). [ProviderDisclosure.NONE] until a provider/model is
+     * selected, which the dialog renders as the honest not-configured hint.
+     */
+    val provider: ProviderDisclosure = ProviderDisclosure.NONE,
 ) {
     /** True while an LLM request is streaming. */
     val isGenerating: Boolean get() = phase == TurnPhase.GENERATING

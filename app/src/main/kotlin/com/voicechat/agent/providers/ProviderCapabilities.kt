@@ -74,6 +74,14 @@ data class ProviderCapabilities(
     val models: ProviderModelAccess,
     /** True for an agent runtime that executes tools on the server host (Hermes). */
     val toolExecutionOnServer: Boolean = false,
+    /**
+     * A short, verified summary of the provider's prompt/response retention and
+     * training behavior, shown before text leaves the device (M23). It is
+     * `null` where the provider's behavior has **not** been verified, so the app
+     * never invents a retention or no-training claim. Per-*model* exceptions
+     * (OpenCode Go/Zen) are summarized here because the registry is provider-level.
+     */
+    val dataRetentionNote: String? = null,
 ) {
     init {
         require(displayName.isNotBlank()) { "a provider needs a display name" }

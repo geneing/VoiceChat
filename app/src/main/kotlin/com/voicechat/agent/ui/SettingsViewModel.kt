@@ -405,6 +405,7 @@ class SettingsViewModel(
                 destinationDisclosure = disclosure,
                 remoteTransfer = provider != null,
                 toolExecutionOnServer = provider?.toolExecutionOnServer == true,
+                retentionNotice = provider?.dataRetentionNote,
                 destinationDraft = destinationDraft,
                 destinationError = destinationError,
                 needsConfiguredDestination = provider?.transport?.configurable == true,

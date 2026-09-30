@@ -42,4 +42,15 @@
     <string name="notice_llm_network">The network request failed.</string>
     <string name="notice_persistence_failed">Could not save the conversation.</string>
     <string name="notice_generic_error">Something went wrong.</string>
+
+    <!-- Provider destination and remote-transfer disclosure (M22/M23). Shared by
+         the settings screen and the conversation dialog so the wording is one
+         source of truth. -->
+    <string name="disclosure_provider_model">Provider: %1$s \u00b7 Model: %2$s</string>
+    <string name="disclosure_requests_go_to">Requests go to %1$s.</string>
+    <string name="disclosure_no_destination">No validated destination yet; enter a server address before sending text.</string>
+    <string name="disclosure_remote_transfer">Transcript text (and the bounded conversation context you send) leave the device to this service. Your full stored conversation is not sent \u2014 only the selected context is.</string>
+    <string name="disclosure_tool_execution">This server runs tools (files, browser, MCP) on its own host, not as a plain proxy.</string>
+    <string name="disclosure_retention">Retention/training: %1$s</string>
+    <string name="disclosure_not_configured">No provider or model is selected. Choose one in Settings before sending.</string>
 </resources>

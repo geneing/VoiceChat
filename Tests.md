@@ -1019,3 +1019,120 @@ for every run:
 Device-level latency, cancellation-acknowledgement timing, and live Hermes
 behavior remain unmeasured and are tracked in R-0150, R-0156, and R-0159.
 **Do not mark any of these passed unless the command was actually run.**
+
+## M23 — Text-first end-to-end provider vertical slice
+
+M23 is a **JVM-first** milestone. The vertical slice is proven by
+`:app:testDebugUnitTest` with the **real** M17 OpenCode Go adapter over recorded
+SSE fixtures, the real M05 context builder and repository, and the M13
+credential-store seam. There is no device, network, socket, DNS, microphone, or
+real credential in the automated path, so it runs credential-free in CI. See
+[text-first-slice.md](./docs/text-first-slice.md).
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device, no network): full lifecycle, cancel,
+# retry, typed failure, selection-driven adapter, bounded context, trace privacy.
+.\gradlew.bat :app:testDebugUnitTest
+
+# Lint / format / assemble
+.\gradlew.bat :app:assembleDebug :app:lintDebug spotlessCheck
+
+# Compile the instrumented sources WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+```
+
+What the JVM suite proves (details in the linked document):
+
+- **Full lifecycle.** `ui.TextFirstSliceTest` sends a turn through the real
+  state holder, the real registry factory, and the real OpenCode Go adapter over
+  the recorded `chat_normal.sse` fixture: the deltas render, the assistant turn
+  is persisted as `COMPLETED`, and reopening restores the same content.
+- **Streamed deltas are visible before completion**, with a deterministic
+  delayed fake so intermediate `liveAssistantText` is asserted.
+- **Cancellation** mid-stream persists an interrupted (never completed) turn
+  with only the delivered prefix.
+- **Retry** after a failure replaces the failed reply without duplicating the
+  user turn.
+- **A typed provider failure** (`chat_error.sse` -> `LLM_RATE_LIMITED`) is shown
+  and never persisted as a success; nothing was generated, so no phantom
+  assistant turn is stored.
+- **The persisted selection drives the adapter (R-0103).** Changing the M22
+  model from `glm-5.3-flash` to `gpt-5.6-luna` in the same dialog resolves the
+  other protocol family: the second request goes to `/responses`, the factory
+  receives the new selection, and the trace names the new model.
+- **The honest not-configured state** is kept when no provider/model is
+  selected: `LLM_NOT_CONFIGURED`, and the provider factory is never consulted.
+- **Bounded context.** A 30-turn stored history produces a request within the
+  M05 `ModelContextBuilder` bounds (20 messages / 4000 chars), with the newest
+  turn present and the oldest not resent.
+- **Privacy-safe trace.** The whole turn is one trace whose attributes never
+  contain the prompt or the reply.
+- **Disclosure (R-0097, R-0139).** `ui.TextFirstSliceUiTest` (Robolectric)
+  asserts the dialog shows the provider and model, the remote-transfer notice,
+  and the registry's retention/training note before send, and the honest hint
+  when nothing is selected.
+
+### Opt-in real-provider smoke test (marked NOT run)
+
+`ui.TextFirstSliceSmokeTest` is the one M23 test that can touch the real
+OpenCode Go service, through the **same** registry-driven factory and selection
+resolver the app uses. It is **skipped** (JUnit `Assume`), and so never runs in
+routine CI, unless **both** `VOICECHAT_TEXT_SLICE_SMOKE=1` and
+`OPENCODE_API_KEY` are set:
+
+```powershell
+$env:VOICECHAT_TEXT_SLICE_SMOKE = "1"
+$env:OPENCODE_API_KEY = "<your key>"                          # externally supplied only
+$env:VOICECHAT_TEXT_SLICE_SMOKE_MODEL = "glm-5.3-flash"       # optional; try gpt-5.6-luna, qwen3.8-flash
+.\gradlew.bat :app:testDebugUnitTest --tests "*TextFirstSliceSmokeTest"
+```
+
+It **was not run** for this milestone. What to record for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit, and the
+  selected model and family.
+- Network/region conditions and the observed time to first text and total
+  completion time.
+- The completion outcome and any typed failure reason — **never** the prompt or
+  the response text, and **never** the API key. The smoke test asserts on
+  completion/delta counts only and prints no content.
+
+### Opt-in Pixel 10 smoke run (marked NOT run)
+
+The device run exercises the real AndroidKeystore credential store and a real
+network request through the app. It requires a user-configured,
+provider-supported connection. **Device testing is deferred for M23; this run
+was not performed.** Suggested procedure:
+
+1. Build and install the debug APK: `.\gradlew.bat :app:installDebug`.
+2. Open **Settings**; choose the **OpenCode Go** provider; choose a documented
+   model (for example `glm-5.3-flash`); store your API key (it is written only
+   to the AndroidKeystore-backed store).
+3. Confirm the settings surface shows the destination
+   (`https://opencode.ai/zen/go/v1`) and the retention/training note before any
+   send.
+4. Open a new conversation and type a short message. Confirm the disclosure
+   banner names the provider/model and the remote-transfer notice, the reply
+   streams in, and the finished conversation is still present after
+   `adb shell am force-stop com.voicechat.agent` and relaunch.
+5. Cancel mid-stream once and confirm the turn is stored as cancelled with only
+   the delivered prefix; retry once and confirm the failed reply is replaced
+   without duplicating the user turn.
+
+What to record for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit, provider
+  and model, and the network/region conditions.
+- Time to first streamed text and total completion time; the cancel and retry
+  outcomes; the persisted conversation shape (turn count and generation state).
+- That the settings selection and a stored credential actually drove the turn
+  (the destination and model in the disclosure matched the request), and that
+  no silent provider/model fallback occurred.
+- The outcome only — **never** the prompt, the response text, or the API key.
+
+Device-level behavior (real streaming framing, cancellation acknowledgement,
+and the Keystore round-trip under the app) remains unmeasured and is tracked in
+R-0138, R-0161, and the M17 section. **Do not mark any of these passed unless
+the run was actually performed.**

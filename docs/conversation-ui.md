@@ -21,15 +21,17 @@ ConversationApp (stateless Compose)
   <- VoiceAgentRoot (collects state with the owner lifecycle)
       <- ConversationViewModel (state holder; StateFlow<ConversationUiState>)
           <- ConversationRepository  (M02 contract, Room-backed in the app)
-          <- LanguageModel           (M02 contract; unconfigured placeholder today)
+          <- LanguageModel           (M02 contract; resolved per turn from the M22 selection since M23)
           <- DiagnosticsSink          (M04 tracing seam)
 ```
 
 `MainActivity` builds the app-private repository with
-`ConversationPersistence.create(context)`. No provider exists yet, so the app
-runs `NotConfiguredLanguageModel`, which fails every request with
-`LLM_NOT_CONFIGURED`. The dialog shows that as an explicit, recoverable error —
-there is no fake reply and no silent fallback.
+`ConversationPersistence.create(context)`. Since M23 the turn path resolves a
+real adapter from the persisted selection through the registry-driven
+`RegisteredProviderLanguageModelFactory`; the app runs `NotConfiguredLanguageModel`
+only when no provider/model is selected, which fails with `LLM_NOT_CONFIGURED`
+as an explicit, recoverable error — there is no fake reply and no silent
+fallback. See [text-first-slice.md](./text-first-slice.md).
 
 ## Screens
 
@@ -153,8 +155,11 @@ are recorded in `gradle/libs.versions.toml`.
 
 ## Limitations and next steps
 
-- No real provider: the default model returns `LLM_NOT_CONFIGURED`. M13–M19 wire
-  credentials and adapters; M23 completes the text-first vertical slice.
+- The turn path resolves a real adapter from the persisted M22 selection (M23);
+  the honest `LLM_NOT_CONFIGURED` state remains only when nothing is selected.
+  The live `/models` catalog is still unwired, so only the documented OpenCode Go
+  models are selectable (R-0102, R-0160). See
+  [text-first-slice.md](./text-first-slice.md).
 - The state holder no longer owns the generation pipeline: M21 moved stream
   consumption, late-event rejection, delivery accounting, and persistence into
   `orchestration.TurnOrchestrator`/`TurnStateMachine`, and this holder only maps

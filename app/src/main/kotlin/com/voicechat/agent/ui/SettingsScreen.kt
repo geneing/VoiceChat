@@ -33,12 +33,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.error
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.voicechat.agent.R
 import com.voicechat.agent.contracts.ModelAvailability
 import com.voicechat.agent.domain.ConnectionState
 import com.voicechat.agent.domain.ReasoningLevel
@@ -70,6 +72,7 @@ object SettingsTestTags {
     const val DESTINATION_DISCLOSURE = "settings-destination-disclosure"
     const val REMOTE_TRANSFER_NOTICE = "settings-remote-transfer"
     const val TOOL_EXECUTION_NOTICE = "settings-tool-execution"
+    const val RETENTION_NOTICE = "settings-retention-notice"
     const val DESTINATION_FIELD = "settings-destination-field"
     const val DESTINATION_ERROR = "settings-destination-error"
     const val CONNECTION_STATE = "settings-connection-state"
@@ -377,23 +380,28 @@ private fun RemoteTransferDisclosure(state: com.voicechat.agent.settings.LlmSett
     Text(
         text =
             state.destinationDisclosure
-                ?.let { "Requests go to $it." }
-                ?: "No validated destination yet; enter a server address before sending text.",
+                ?.let { stringResource(R.string.disclosure_requests_go_to, it) }
+                ?: stringResource(R.string.disclosure_no_destination),
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.testTag(SettingsTestTags.DESTINATION_DISCLOSURE),
     )
     if (state.remoteTransfer) {
         Text(
-            text =
-                "Transcript text (and the bounded conversation context you send) leave the device to this " +
-                    "service. Your full stored conversation is not sent — only the selected context is.",
+            text = stringResource(R.string.disclosure_remote_transfer),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.testTag(SettingsTestTags.REMOTE_TRANSFER_NOTICE),
         )
     }
+    state.retentionNotice?.let { note ->
+        Text(
+            text = stringResource(R.string.disclosure_retention, note),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.testTag(SettingsTestTags.RETENTION_NOTICE),
+        )
+    }
     if (state.toolExecutionOnServer) {
         Text(
-            text = "This server runs tools (files, browser, MCP) on its own host, not as a plain proxy.",
+            text = stringResource(R.string.disclosure_tool_execution),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.testTag(SettingsTestTags.TOOL_EXECUTION_NOTICE),
         )
