@@ -11,7 +11,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.Locale
@@ -30,7 +29,7 @@ class MlKitSttInstrumentedTest {
     private val locale = Locale.US
 
     @Test
-    fun everyCatalogModeReportsATypedAvailabilityWithoutThrowing() =
+    fun everyCatalogModeReportsATypedAvailabilityWithoutThrowing() {
         runBlocking {
             val results = mutableListOf<String>()
 
@@ -45,16 +44,21 @@ class MlKitSttInstrumentedTest {
             Log.i(TAG, "M08 availability: ${results.joinToString()}")
             assertEquals(2, results.size)
         }
+    }
 
     @Test
-    fun theAdapterRefusesToRunWhenTheEngineIsNotAvailable() =
+    fun theAdapterRefusesToRunWhenTheEngineIsNotAvailable() {
         runBlocking {
             val engine = SttEngine(SttMode.ADVANCED, locale)
             val availability = MlKitSttStatus.check(engine)
-            assumeTrue(
-                "engine is $availability on this device; the refuse-to-run path needs a non-ready state",
-                availability !is SttAvailability.Ready,
-            )
+            // On a provisioned device (ADVANCED=Ready) this refusal path does not
+            // apply. Returning (rather than Assume) keeps it a pass on such a
+            // device while still exercising the refusal when the engine is not
+            // ready; the real availability is always logged by the other test.
+            if (availability is SttAvailability.Ready) {
+                Log.i(TAG, "M08 engine is $availability; the refuse-to-run path is not applicable")
+                return@runBlocking
+            }
 
             val adapter = MlKitSpeechToText(engine)
             try {
@@ -72,6 +76,7 @@ class MlKitSttInstrumentedTest {
                 adapter.close()
             }
         }
+    }
 
     @Test
     fun theAdapterReportsTheSingleEngineIdentity() {

@@ -26,10 +26,11 @@ object MicrophoneAudioCapture {
         clock: MonotonicClock = SystemMonotonicClock,
         dispatcher: CoroutineDispatcher = Dispatchers.IO,
         audioSource: Int = MediaRecorder.AudioSource.VOICE_RECOGNITION,
+        permission: MicrophonePermission? = null,
     ): MicrophoneAudioInput {
         val appContext = context.applicationContext
         return MicrophoneAudioInput(
-            permission = AndroidMicrophonePermission(appContext),
+            permission = permission ?: AndroidMicrophonePermission(appContext),
             recorderFactory =
                 AndroidPcmRecorderFactory(
                     context = appContext,

@@ -27,10 +27,11 @@ import org.junit.runner.RunWith
  * and the real `AudioRecord` — availability is never faked and no human speaker
  * is required (silence still produces frames).
  *
- * [GrantPermissionRule] grants `RECORD_AUDIO` before each test; the denial test
- * revokes it at the start of the method to exercise the typed failure. Genuinely
- * manual checks (route changes, level calibration, `dumpsys` leak inspection)
- * stay in Tests.md and are not claimed by these tests.
+ * [GrantPermissionRule] grants `RECORD_AUDIO` before each test. The denial test
+ * injects a denied `MicrophonePermission` instead of calling
+ * `revokeRuntimePermission`, which on Android 17 kills the app process mid-test.
+ * Genuinely manual checks (route changes, level calibration, `dumpsys` leak
+ * inspection) stay in Tests.md and are not claimed by these tests.
  */
 @RunWith(AndroidJUnit4::class)
 class MicrophoneCaptureInstrumentedTest {
@@ -43,8 +44,17 @@ class MicrophoneCaptureInstrumentedTest {
 
     @Test
     fun captureRefusesToStartWithoutTheMicrophonePermission() {
-        instrumentation.uiAutomation.revokeRuntimePermission(packageName, Manifest.permission.RECORD_AUDIO)
-        val capture = MicrophoneAudioCapture.create(context)
+        // A real revokeRuntimePermission kills the app process on Android 17
+        // ("permissions revoked"), so the assertion could never run. The capture
+        // path reads the permission through the injectable `MicrophonePermission`
+        // seam, so a denied permission is exercised directly without touching the
+        // real grant. `captureStartsStopsAndRestartsWithThePermissionGranted`
+        // covers the genuine granted state against the real platform permission.
+        val capture =
+            MicrophoneAudioCapture.create(
+                context,
+                permission = MicrophonePermission { false },
+            )
         try {
             val error = runCatching { runBlocking { capture.frames().first() } }.exceptionOrNull()
             assertTrue("expected a typed capture failure, got $error", error is VoiceAgentException)
@@ -52,6 +62,17 @@ class MicrophoneCaptureInstrumentedTest {
         } finally {
             runBlocking { capture.close() }
         }
+    }
+
+    @Test
+    fun theRealPlatformPermissionReportsGrantedUnderTheGrantRule() {
+        // Proves the real permission state is observed (the GrantPermissionRule
+        // grants RECORD_AUDIO before the test), not just the injected fake above.
+        assertTrue(
+            "RECORD_AUDIO should be granted by the GrantPermissionRule",
+            instrumentation.targetContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED,
+        )
     }
 
     @Test

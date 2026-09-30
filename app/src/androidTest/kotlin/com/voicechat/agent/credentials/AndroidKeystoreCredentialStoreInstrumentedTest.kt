@@ -30,7 +30,7 @@ class AndroidKeystoreCredentialStoreInstrumentedTest {
     private val secret = "sk-live-DO-NOT-LEAK-0123456789"
 
     @Test
-    fun storeStatusLoadReplaceAndRemoveUseTheRealKeystore() =
+    fun storeStatusLoadReplaceAndRemoveUseTheRealKeystore() {
         runBlocking {
             val store = AndroidKeystoreCredentialStore.create(context)
             store.remove(providerId)
@@ -53,9 +53,10 @@ class AndroidKeystoreCredentialStoreInstrumentedTest {
             assertNull(store.load(providerId))
             Log.i(TAG, "M13 store/replace/remove against the real AndroidKeyStore completed")
         }
+    }
 
     @Test
-    fun aStoredCredentialSurvivesANewStoreInstance() =
+    fun aStoredCredentialSurvivesANewStoreInstance() {
         runBlocking {
             AndroidKeystoreCredentialStore
                 .create(context)
@@ -77,9 +78,10 @@ class AndroidKeystoreCredentialStoreInstrumentedTest {
 
             restarted.remove(providerId)
         }
+    }
 
     @Test
-    fun thePreferencesFileNeverHoldsThePlaintextSecret() =
+    fun thePreferencesFileNeverHoldsThePlaintextSecret() {
         runBlocking {
             AndroidKeystoreCredentialStore
                 .create(context)
@@ -98,6 +100,7 @@ class AndroidKeystoreCredentialStoreInstrumentedTest {
 
             AndroidKeystoreCredentialStore.create(context).remove(providerId)
         }
+    }
 
     private companion object {
         const val TAG = "M13CredentialsInstrumented"

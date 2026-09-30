@@ -75,11 +75,20 @@ they do not fake availability, and none requires a human speaker.
 | `audio.VadCaptureInstrumentedTest` | Live M07 capture feeds the real M09 `EnergyVoiceActivityDetector` and `BoundedTurnEndpointPolicy`: a bounded window of real audio produces typed events without failing, and the policy emits at least one endpoint with a non-negative offset. It is a runs-and-does-not-crash smoke check, not a quality measurement. |
 | `stt.MlKitSttInstrumentedTest` | Both catalog modes return a typed `SttAvailability` without throwing; the adapter reports the single engine ID; and, when the engine is **not** ready, the adapter refuses to run and emits a typed `STT_MODEL_NOT_READY`/`STT_UNAVAILABLE` failure. When the engine is ready this case is skipped (`Assume`), never faked. |
 | `tts.AndroidTtsInstrumentedTest` | The platform TTS engine initializes and enumerates installed voices; a "ready" voice must be one `getVoices()` reported and not network-required (network voices are never selectable); immediate `stop()` during playback ends the utterance with a terminal event without hanging (skipped with `Assume` when no embedded voice exists); the `OnDeviceTts` contract adapter rejects empty input and closes. Availability is recorded, never faked. |
-| `ui.ConversationAppInstrumentedTest` | The app launches on device and renders the conversation list (Room + Compose smoke). |
+| `ui.ConversationAppInstrumentedTest` | **Removed.** The app-launch/Compose smoke check is not automatable on Android 17 with `androidx.test.ext:junit` 1.3.0 (Espresso `InputManager.getInstance()` reflection fails). The Compose surface is covered by Robolectric JVM tests; launch is a manual step. |
 | `credentials.AndroidKeystoreCredentialStoreInstrumentedTest` | The real AndroidKeyStore-backed store stores/replaces/removes a credential against the device KeyStore; a second store instance reads the persisted value (restart proxy); the app-private preferences file holds only ciphertext, never the plaintext secret. |
 | `orchestration.TurnOrchestrationInstrumentedTest` | Runs the real M21 `TurnOrchestrator`/`TurnStateMachine` on device with an inline fake provider and an in-memory repository: one text turn completes and persists a truthful assistant turn. No network, credential, microphone, or real TTS; a structural smoke check, not a provider/voice measurement. |
 | `voice.VoiceSessionInstrumentedTest` | Runs the real M24 `VoiceSessionCoordinator` on device with inline fakes (audio, endpoint, STT, provider) and an in-memory repository: one voice turn commits and persists a truthful assistant turn. No network, credential, microphone, or real STT/TTS; a structural smoke check, not a voice-quality measurement. |
 | `settings.PreferencesSettingsStoreInstrumentedTest` | The real DataStore (Preferences)-backed settings store persists a validated selection to the app-private file and a second store instance reads it (restart proxy); the file holds no credential value. |
+
+> **Not automated on device:** the Compose conversation surface is tested under
+> Robolectric on the JVM (M06/M22/M23) and through the voice/text integration
+> tests. An instrumented Compose launch test is intentionally **not** included:
+> `androidx.test.ext:junit` 1.3.0 (latest) calls Espresso's
+> `InputManagerEventInjectionStrategy`, which reflects
+> `android.hardware.input.InputManager.getInstance()` and throws
+> `NoSuchMethodException` on Android 17, so the rule cannot initialize. The
+> app-launch check therefore stays a manual step ([M06](#m06--compose-conversation-ui-and-manual-text-path)).
 
 ## M07 — Microphone capture
 

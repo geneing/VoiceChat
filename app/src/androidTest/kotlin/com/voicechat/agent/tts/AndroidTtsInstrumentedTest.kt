@@ -33,7 +33,7 @@ class AndroidTtsInstrumentedTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
-    fun thePlatformEngineEnumeratesOnlyEmbeddedVoices() =
+    fun thePlatformEngineEnumeratesOnlyEmbeddedVoices() {
         runBlocking {
             val engine = AndroidTtsEngine(context, Locale.US)
             try {
@@ -71,9 +71,10 @@ class AndroidTtsInstrumentedTest {
                 engine.close()
             }
         }
+    }
 
     @Test
-    fun immediateStopEndsSpeechWithoutHanging() =
+    fun immediateStopEndsSpeechWithoutHanging() {
         runBlocking {
             val engine = AndroidTtsEngine(context, Locale.US)
             try {
@@ -106,9 +107,10 @@ class AndroidTtsInstrumentedTest {
                 engine.close()
             }
         }
+    }
 
     @Test
-    fun theContractAdapterRejectsEmptyInputAndCloses() =
+    fun theContractAdapterRejectsEmptyInputAndCloses() {
         runBlocking {
             val tts = OnDeviceTts.create(context, Locale.US)
             try {
@@ -118,6 +120,7 @@ class AndroidTtsInstrumentedTest {
                 tts.close()
             }
         }
+    }
 
     private companion object {
         const val TAG = "AndroidTtsInstrumented"
