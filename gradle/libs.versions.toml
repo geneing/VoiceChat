@@ -14,6 +14,12 @@ ksp = "2.3.11"
 # room-runtime in 2.7.0, so no separate KTX artifact is declared.
 room = "2.8.5"
 
+# Settings persistence — DataStore (Preferences) chosen in docs/decisions.md §1
+# ("Persistence": typed key/value settings). 1.2.1 is the pinned stable release
+# on Google Maven (checked 2026-09-29); no alpha/beta is used. Settings never
+# hold secrets; credentials stay in the M13 Keystore-backed CredentialStore.
+datastore = "1.2.1"
+
 # AndroidX / Compose — see docs/decisions.md §1.
 activityCompose = "1.13.0"
 composeBom = "2026.09.00"
@@ -63,6 +69,8 @@ androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4
 androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+# DataStore (Preferences) for typed, non-secret user settings (M22).
+androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 # ML Kit GenAI Speech Recognition: the single on-device STT engine (M08).
 mlkit-genai-speech-recognition = { module = "com.google.mlkit:genai-speech-recognition", version.ref = "mlkitGenaiSpeech" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }

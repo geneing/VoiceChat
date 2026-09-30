@@ -75,6 +75,7 @@ object ConversationTestTags {
     const val DISMISS_NOTICE = "dismiss-notice"
     const val TRANSCRIPT = "transcript"
     const val LOADING = "loading"
+    const val OPEN_SETTINGS = "open-settings"
 
     /** Row for [id] in the conversation list. */
     fun conversationRow(id: String): String = "conversation-row-$id"
@@ -89,12 +90,14 @@ fun ConversationApp(
     state: ConversationUiState,
     actions: ConversationActions,
     modifier: Modifier = Modifier,
+    onOpenSettings: (() -> Unit)? = null,
 ) {
     when (state.screen) {
         ConversationScreen.LIST -> {
             ConversationListScreen(
                 list = state.list,
                 actions = actions,
+                onOpenSettings = onOpenSettings,
                 modifier = modifier,
             )
         }
@@ -124,10 +127,25 @@ fun ConversationListScreen(
     list: ConversationListState,
     actions: ConversationActions,
     modifier: Modifier = Modifier,
+    onOpenSettings: (() -> Unit)? = null,
 ) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        topBar = { TopAppBar(title = { Text(stringResource(R.string.conversations_title)) }) },
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.conversations_title)) },
+                actions = {
+                    if (onOpenSettings != null) {
+                        TextButton(
+                            onClick = onOpenSettings,
+                            modifier = Modifier.testTag(ConversationTestTags.OPEN_SETTINGS),
+                        ) {
+                            Text(stringResource(R.string.settings))
+                        }
+                    }
+                },
+            )
+        },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = actions::onNewConversation,

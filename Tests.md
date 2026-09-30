@@ -78,6 +78,7 @@ they do not fake availability, and none requires a human speaker.
 | `ui.ConversationAppInstrumentedTest` | The app launches on device and renders the conversation list (Room + Compose smoke). |
 | `credentials.AndroidKeystoreCredentialStoreInstrumentedTest` | The real AndroidKeyStore-backed store stores/replaces/removes a credential against the device KeyStore; a second store instance reads the persisted value (restart proxy); the app-private preferences file holds only ciphertext, never the plaintext secret. |
 | `orchestration.TurnOrchestrationInstrumentedTest` | Runs the real M21 `TurnOrchestrator`/`TurnStateMachine` on device with an inline fake provider and an in-memory repository: one text turn completes and persists a truthful assistant turn. No network, credential, microphone, or real TTS; a structural smoke check, not a provider/voice measurement. |
+| `settings.PreferencesSettingsStoreInstrumentedTest` | The real DataStore (Preferences)-backed settings store persists a validated selection to the app-private file and a second store instance reads it (restart proxy); the file holds no credential value. |
 
 ## M07 — Microphone capture
 
@@ -432,3 +433,77 @@ structural smoke check with a fake provider, not a voice-quality measurement.
 The live capture -> VAD -> STT -> orchestration loop, TTS chunk overlap, and
 barge-in onset timing remain **manual/device** work for M24/M25 (R-0080–R-0083);
 do not claim them from the JVM suite.
+
+## M22 — Settings and capability-aware selection
+
+M22 is a **JVM-first** milestone: the settings model, option building, validation,
+authorization lifecycle, and store logic are pure Kotlin
+(`SettingsSourcePurityTest`), so the acceptance behavior is proven by
+`:app:testDebugUnitTest` with deterministic fakes and no device, network, real
+credential, microphone, or real TTS. The Compose settings surface is tested under
+Robolectric. Only the real AndroidKeyStore + DataStore persistence is
+device-bound. See [docs/settings.md](./docs/settings.md).
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device)
+.\gradlew.bat :app:testDebugUnitTest
+
+# Lint / format / assemble
+.\gradlew.bat :app:assembleDebug :app:lintDebug spotlessCheck
+
+# Compile the instrumented test WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+```
+
+What the JVM suite proves instead:
+
+- **Unsupported options hidden.** The auth-method list is exactly the provider's
+  documented methods (the `AuthMethod` enum has no QR value); reasoning levels
+  come from the provider∩model reconciliation, so an unsupported level is absent;
+  network-required TTS voices are excluded.
+- **Unavailable entries disabled with a reason.** An unprovisioned STT mode, a
+  downloadable/unavailable model, and a Smart Turn model that is not installed
+  render disabled with a safe explanation.
+- **Unavailable models.** A model not offered/not ready is shown disabled (and a
+  stored selection for it is cleared).
+- **Credential replacement/removal.** Save/replace/remove go through the M13
+  `CredentialStore`; the redacted `CredentialStatus` updates and the secret never
+  appears in the UI state.
+- **Invalid selections.** A stored provider/model/auth/reasoning/STT/TTS/Smart
+  Turn value the registry or runtime no longer supports is dropped, reported, and
+  re-saved.
+- **Persistence.** DataStore round-trips every validated selection and survives a
+  restart proxy; clearing a selection removes it.
+- **Destination and remote-transfer disclosure.** The validated destination and
+  the "text/context leave the device; the full conversation is not sent" notice
+  are exposed before sending; a configurable (Hermes) destination is validated
+  (TLS for non-local hosts) before it is stored.
+- **Provider authorization / QR.** The OpenRouter PKCE session is short-lived and
+  single-use, and an arbitrary destination or a credential-bearing URL is
+  refused; QR is unsupported by every provider and a credential/arbitrary QR is
+  rejected.
+
+### On-device run (deferred; compile-only for this milestone)
+
+`settings.PreferencesSettingsStoreInstrumentedTest` exercises the real DataStore
+preferences file. It was **compiled but not run** on a device for M22 (device
+testing is deferred).
+
+What to record for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit.
+- That a validated selection persists and a second store instance reads it, and
+  that the `voicechat-settings` preferences file holds no credential value.
+- Manually, the runtime capability snapshot on the **settings screen**: the STT
+  mode states from `checkStatus()`, the installed embedded TTS voices, and that
+  no unsupported option is shown. This is the R-0100 measurement; never claim it
+  from the JVM suite.
+
+Unrun device items are tracked as R-0100 and R-0104; **do not mark any row
+passed unless it was run on the device.**
+
+The live `/models` catalog (so the model list is populated) and the OpenRouter
+browser/token exchange are M14–M19 work (R-0101, R-0102); the persisted selection
+is consumed by the turn path in M23 (R-0103).

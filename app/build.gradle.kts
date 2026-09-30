@@ -92,6 +92,11 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     ksp(libs.androidx.room.compiler)
 
+    // Typed user settings storage (M22). DataStore (Preferences) is the M00
+    // decision (docs/decisions.md §1); it holds capability-aware selections,
+    // never a credential (those live in the M13 CredentialStore).
+    implementation(libs.androidx.datastore.preferences)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
     // Provides the debuggable ComponentActivity that Compose test rules launch on
     // the JVM (M06); the test manifest is merged into the debug variant.

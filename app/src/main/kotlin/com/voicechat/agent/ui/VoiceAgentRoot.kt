@@ -2,6 +2,9 @@ package com.voicechat.agent.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -15,8 +18,12 @@ import com.voicechat.agent.domain.ProviderModelSelection
  * It binds the lifecycle-aware [ConversationViewModel] to the stateless
  * [ConversationApp]: dependencies enter as the M02 contracts, the ViewModel holds
  * the state, and the UI collects it with the owner lifecycle. Nothing here
- * depends on Room, a speech SDK, or a specific LLM provider, so M21 can replace
- * the state holder without touching the screens.
+ * depends on Room, a speech SDK, or a specific LLM provider.
+ *
+ * When a [settingsFactory] is supplied the root also hosts the M22
+ * [SettingsScreen], reachable from the conversation list. The factory is built at
+ * the app boundary from the settings store, the provider capability registry, and
+ * the credential store, so no platform type leaks into the screens.
  */
 @Composable
 fun VoiceAgentRoot(
@@ -24,6 +31,7 @@ fun VoiceAgentRoot(
     languageModel: LanguageModel,
     selection: ProviderModelSelection = ConversationDefaults.selection,
     modifier: Modifier = Modifier,
+    settingsFactory: androidx.lifecycle.ViewModelProvider.Factory? = null,
 ) {
     val viewModel: ConversationViewModel =
         viewModel(
@@ -35,5 +43,29 @@ fun VoiceAgentRoot(
                 ),
         )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    ConversationApp(state = state, actions = viewModel, modifier = modifier)
+
+    if (settingsFactory == null) {
+        ConversationApp(state = state, actions = viewModel, modifier = modifier)
+        return
+    }
+
+    val settingsViewModel: SettingsViewModel = viewModel(factory = settingsFactory)
+    val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
+    var showSettings by remember { mutableStateOf(false) }
+
+    if (showSettings) {
+        SettingsScreen(
+            state = settingsState,
+            actions = settingsViewModel,
+            onBack = { showSettings = false },
+            modifier = modifier,
+        )
+    } else {
+        ConversationApp(
+            state = state,
+            actions = viewModel,
+            modifier = modifier,
+            onOpenSettings = { showSettings = true },
+        )
+    }
 }
