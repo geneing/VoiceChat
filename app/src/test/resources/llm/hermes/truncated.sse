@@ -1,0 +1,5 @@
+data: {"id":"chatcmpl-hermes-5","object":"chat.completion.chunk","created":1710000000,"model":"hermes-agent","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-hermes-5","object":"chat.completion.chunk","created":1710000000,"model":"hermes-agent","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}
+
+data: [DONE]

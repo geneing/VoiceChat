@@ -252,15 +252,25 @@ class ProviderCapabilityRegistry(
                         baseUrl = null,
                         configurable = true,
                         expectedHost = null,
+                        // Re-verified at M19 (2026-09-29): the API server documents
+                        // SSE streaming for POST /v1/chat/completions, so streaming is
+                        // no longer unverified (see docs/hermes-adapter.md). Reasoning
+                        // stays unverified: the effort vocabulary is not enumerated.
                         streaming = true,
-                        unverified = setOf(UnverifiedCapability.STREAMING, UnverifiedCapability.REASONING),
+                        unverified = setOf(UnverifiedCapability.REASONING),
                     ),
                 models =
                     ProviderModelAccess(
+                        // `GET /v1/models` advertises the stable agent alias; richer
+                        // picker metadata lives on the Hermes-native `/api/model/options`.
                         discovery = ModelDiscovery.ENDPOINT,
+                        // The model_options.reasoning effort vocabulary is not
+                        // documented, so no level is claimed and USAGE is unverified
+                        // for the streamed path (only the non-streaming example shows
+                        // a usage object).
                         reasoningLevels = emptySet(),
                         usageReporting = false,
-                        unverified = setOf(UnverifiedCapability.REASONING),
+                        unverified = setOf(UnverifiedCapability.REASONING, UnverifiedCapability.USAGE),
                     ),
                 // Hermes is an agent runtime: tools run on the server host.
                 toolExecutionOnServer = true,

@@ -1,0 +1,1 @@
+{"object":"hermes.api_server.capabilities","platform":"hermes-agent","model":"hermes-agent","auth":{"type":"bearer","required":true},"features":{"chat_completions":true,"responses_api":true,"run_submission":true,"run_status":true,"run_events_sse":true,"run_stop":true,"reasoning_streaming":true}}

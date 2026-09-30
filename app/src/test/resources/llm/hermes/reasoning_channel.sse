@@ -1,0 +1,7 @@
+data: {"id":"chatcmpl-hermes-6","object":"chat.completion.chunk","created":1710000000,"model":"hermes-agent","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"thinking about it"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-hermes-6","object":"chat.completion.chunk","created":1710000000,"model":"hermes-agent","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-hermes-6","object":"chat.completion.chunk","created":1710000000,"model":"hermes-agent","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":6,"total_tokens":16,"completion_tokens_details":{"reasoning_tokens":5}}}
+
+data: [DONE]

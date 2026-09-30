@@ -1,0 +1,14 @@
+: keepalive
+
+data: {"id":"chatcmpl-hermes-1","object":"chat.completion.chunk","created":1710000000,"model":"hermes-agent","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+event: hermes.tool.progress
+data: {"tool":"terminal","status":"running","preview":"ls"}
+
+data: {"id":"chatcmpl-hermes-1","object":"chat.completion.chunk","created":1710000000,"model":"hermes-agent","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-hermes-1","object":"chat.completion.chunk","created":1710000000,"model":"hermes-agent","choices":[{"index":0,"delta":{"content":", world"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-hermes-1","object":"chat.completion.chunk","created":1710000000,"model":"hermes-agent","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19}}
+
+data: [DONE]

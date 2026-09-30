@@ -916,3 +916,106 @@ for every run:
 Device-level latency, cancellation-acknowledgement timing, and live DeepSeek
 behavior remain unmeasured and are tracked in R-0121. **Do not mark any of these
 passed unless the command was actually run.**
+
+## M19 — Hermes Agent API Server adapter
+
+M19 is a **JVM-first** milestone. The Hermes adapter is pure Kotlin behind the M12
+contract and reuses the M14 remote transport; every protocol case is a recorded
+SSE fixture, a scripted engine, or the in-process loopback mock server, with **no
+external network, no device, and no real credential**. There is no M19-specific
+instrumented test, so no row is added to the automated on-device table above; the
+existing instrumented tests were compiled only. See
+[docs/hermes-adapter.md](./docs/hermes-adapter.md).
+
+Hermes is a **user/admin-deployed** server with **no default endpoint**: the
+adapter requires an explicit destination, requires TLS for non-local hosts (M13
+rules), shows the destination before text is sent, and treats the server as an
+agent runtime that executes tools on its own host. The verified facts (endpoints,
+bearer auth, streaming shape, reasoning channel, model discovery) and their
+**2026-09-29** access date are recorded in that document.
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device, no external network): fixture replay for
+# the normal stream, empty response, malformed frame, truncated/terminal-less
+# stream, auth/rate-limit/server errors, network loss, cancellation, reasoning
+# exclusion, destinations, and the protocol/discovery mapping.
+.\gradlew.bat :app:testDebugUnitTest --tests "*Hermes*"
+
+# The loopback mock-server tests drive the real OkHttp engine against an
+# in-process Hermes mock (JDK HttpServer, no new dependency): normal stream,
+# bearer auth failure, server error, redirect not followed, cancellation.
+.\gradlew.bat :app:testDebugUnitTest --tests "*HermesMockServerTest"
+
+# Compile the instrumented tests WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+```
+
+What the JVM suite proves instead (details in the linked document):
+
+- the request goes to the **configured** `{base}/chat/completions` with
+  `Authorization: Bearer <credential>`, `Accept: text/event-stream`, and
+  `"stream": true`, and the selected model alias is sent verbatim;
+- the destination is disclosed (`ServerDestination.disclosure()`) before any
+  request, and the config model carries the server-tools notice;
+- valid loopback `http` and remote `https` are accepted; a remote `http`, a
+  non-http(s) scheme, an embedded `user:pass@host`, an empty address, and any
+  QR-sourced value are refused with a typed code (TLS for non-local hosts);
+- `choices[].delta.content` frames become deltas, the custom
+  `hermes.tool.progress` **named event** is ignored (never assistant text), and
+  `choices[].delta.reasoning_content` is a separate channel never concatenated
+  into assistant text (R-0066);
+- `data: [DONE]` (or a `finish_reason` fallback) completes; a `finish_reason` of
+  `length` is a truncated failure; a stream with neither is
+  `LLM_MALFORMED_RESPONSE` (R-0067);
+- 401/403 → `LLM_AUTHENTICATION_FAILED`, 429 → `LLM_RATE_LIMITED`, other 4xx →
+  `LLM_INVALID_REQUEST`, 5xx → `LLM_UNAVAILABLE`, a dropped connection →
+  `LLM_NETWORK_FAILED`, and a streamed `error` body is mapped from its stable
+  `type`/`code` only;
+- a **302 is never followed** (the OkHttp engine disables redirects); the mock
+  records that the redirect target is never requested (R-0074);
+- a mid-stream cancellation emits no terminal event and the engine observes the
+  cancellation (both with the scripted engine and over the loopback socket);
+- a missing credential is `LLM_NOT_CONFIGURED` and no request is sent; an
+  unsupported reasoning level is refused before any request is built, and
+  `ReasoningLevel.NONE` sends the documented `model_options.reasoning.enabled =
+  false` opt-out;
+- the credential check (`GET /v1/models`) maps 401/403 to an authentication
+  rejection and keeps a transient failure typed;
+- the registry row declares streaming verified and keeps reasoning/usage marked
+  unverified; no credential, prompt, or assistant text appears in the developer
+  log.
+
+### Opt-in real-server smoke test (marked NOT run)
+
+`providers.hermes.HermesSmokeTest` is the one M19 test that can touch a real
+Hermes Agent API Server. Because Hermes has no default endpoint, the **address
+must be supplied externally**. It is **skipped** (JUnit `Assume`), and so never
+runs in routine CI, unless **all** of `VOICECHAT_HERMES_SMOKE=1`,
+`HERMES_BASE_URL`, and `HERMES_API_KEY` are set:
+
+```powershell
+$env:VOICECHAT_HERMES_SMOKE = "1"
+$env:HERMES_BASE_URL = "https://hermes.example.com/v1"   # or http://127.0.0.1:8642/v1 for a local loopback server
+$env:HERMES_API_KEY = "<your API_SERVER_KEY>"            # externally supplied only
+$env:VOICECHAT_HERMES_SMOKE_MODEL = "hermes-agent"       # optional
+.\gradlew.bat :app:testDebugUnitTest --tests "*HermesSmokeTest"
+```
+
+It **was not run** for this milestone. This is tracked as R-0150. What to record
+for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit, the
+  Hermes server version/profile, and the selected model.
+- Network conditions and the observed time to first text and total completion
+  time.
+- The completion outcome and any typed failure reason — **never** the prompt or
+  the response text, and **never** the API key. The smoke test itself asserts on
+  completion/counts only and prints no content.
+- Whether the live SSE framing (including the `hermes.tool.progress` event and
+  the terminal frame) matches the mapping (R-0159).
+
+Device-level latency, cancellation-acknowledgement timing, and live Hermes
+behavior remain unmeasured and are tracked in R-0150, R-0156, and R-0159.
+**Do not mark any of these passed unless the command was actually run.**
