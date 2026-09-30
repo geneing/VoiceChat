@@ -1,0 +1,1 @@
+data: {"id":"gen-payment-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","error":{"code":402,"message":"Insufficient credits","metadata":{"error_type":"payment_required"}},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}

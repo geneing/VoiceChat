@@ -1,0 +1,1 @@
+data: {"id":"gen-ratelimit-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","error":{"code":429,"message":"Rate limit exceeded","metadata":{"error_type":"rate_limit_exceeded","provider_code":"rate_limited"}},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}

@@ -579,3 +579,85 @@ R-0096 (credential check). What to record for every run:
 Device-level latency, cancellation-acknowledgement timing, and live provider
 behavior remain unmeasured and are tracked in R-0069, R-0091, and R-0096. **Do
 not mark any of these passed unless the command was actually run.**
+
+## M15 — OpenRouter adapter
+
+M15 is a **JVM-first** milestone, like M14. The OpenRouter adapter is pure Kotlin
+behind the M12 contract and reuses the M14 shared transport; every protocol case
+is a recorded SSE fixture or a scripted engine with **no socket, clock, DNS, or
+real credential**. There is no M15-specific instrumented test, so no row is added
+to the automated on-device table above; the existing instrumented tests were
+compiled only. See [docs/openrouter-adapter.md](./docs/openrouter-adapter.md).
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device, no network): fixture replay for the
+# normal stream, empty response, malformed frames, rate limit, auth failure,
+# payment required, server error, mid-stream provider error, network loss,
+# cancellation mid-stream, terminal-less stream, reasoning exclusion, model
+# identity, and the /models catalog.
+.\gradlew.bat :app:testDebugUnitTest
+
+# Compile the instrumented tests WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+```
+
+What the JVM suite proves instead (details in the linked document):
+
+- the request goes to the documented `POST /api/v1/chat/completions` with
+  `Authorization: Bearer <credential>`, `"stream": true`, and
+  **`"provider": {"allow_fallbacks": false}`**, and it never sends `models[]`,
+  `route`, `:nitro`, or `:floor` (R-0017);
+- `choices[].delta.content` frames become deltas; the content-free accounting
+  chunk carries `usage`/`model`/`cost`; the `[DONE]` sentinel is the only
+  terminal event, so a usage chunk without `[DONE]` is `LLM_MALFORMED_RESPONSE`
+  (R-0067);
+- the reported serving model is surfaced on `Completed.model`; a response that
+  reports a model different from the selection is detectable, not silently
+  rewritten (R-0017/R-0023);
+- the `reasoning`/`reasoning_details` channel is excluded from assistant text
+  and `reasoning_tokens` is surfaced as usage (R-0066); `ReasoningLevel.NONE`
+  omits the reasoning object, and a level outside the declared capability is
+  refused before any request;
+- 401/403 → `LLM_AUTHENTICATION_FAILED`, 429 → `LLM_RATE_LIMITED`,
+  402 → `LLM_INVALID_REQUEST`, 408/504 → `LLM_TIMEOUT`, 5xx →
+  `LLM_UNAVAILABLE`, a dropped connection → `LLM_NETWORK_FAILED`, both as
+  streamed `error.metadata.error_type` events and as HTTP statuses;
+- a mid-stream provider error and a mid-stream cancellation keep the partial text
+  as partial and never report completion;
+- the credential check (`GET /api/v1/models`) maps 401/403 to an authentication
+  rejection and keeps a transient failure typed (R-0073);
+- `/models` parsing exposes per-model `supported_efforts` through
+  `ModelCapabilityCatalog` (R-0102);
+- no credential, prompt, or assistant text appears in the developer log.
+
+### Opt-in real-provider smoke test (marked NOT run)
+
+`providers.openrouter.OpenRouterSmokeTest` is the one M15 test that can touch the
+real service. It is **skipped** (JUnit `Assume`), and so never runs in routine
+CI, unless **both** `VOICECHAT_OPENROUTER_SMOKE=1` and `OPENROUTER_API_KEY` are
+set:
+
+```powershell
+$env:VOICECHAT_OPENROUTER_SMOKE = "1"
+$env:OPENROUTER_API_KEY = "<your key>"                       # externally supplied only
+$env:VOICECHAT_OPENROUTER_SMOKE_MODEL = "anthropic/claude-sonnet-4.5"  # optional
+.\gradlew.bat :app:testDebugUnitTest --tests "*OpenRouterSmokeTest"
+```
+
+It **was not run** for this milestone. This is tracked as R-0111 (adapter) and
+R-0112 (credential check). What to record for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit, and the
+  selected model and reasoning level.
+- Network/region conditions and the observed time to first text and total
+  completion time.
+- The completion outcome, the reported model, and any typed failure reason —
+  **never** the prompt or the response text, and **never** the API key. The smoke
+  test itself asserts on completion, model identity, and counts only and prints no
+  content.
+
+Device-level latency, cancellation-acknowledgement timing, and live provider
+behavior remain unmeasured and are tracked in R-0069, R-0091, and R-0111. **Do
+not mark any of these passed unless the command was actually run.**

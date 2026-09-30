@@ -1,0 +1,13 @@
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-test-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"gen-test-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+
+data: {"id":"gen-test-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","choices":[{"index":0,"delta":{"content":", world"},"finish_reason":null}]}
+
+data: {"id":"gen-test-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop","native_finish_reason":"end_turn"}]}
+
+data: {"id":"gen-test-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"end_turn"}],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0},"cost":0.00014}}
+
+data: [DONE]

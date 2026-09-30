@@ -1,0 +1,1 @@
+data: {"id":"gen-auth-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","error":{"code":401,"message":"Invalid credentials","metadata":{"error_type":"authentication"}},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}

@@ -1,0 +1,1 @@
+data: {"id":"gen-server-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","error":{"code":500,"message":"Internal server error","metadata":{"error_type":"server"}},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}

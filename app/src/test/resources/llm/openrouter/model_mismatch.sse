@@ -1,0 +1,7 @@
+data: {"id":"gen-mismatch-0001","object":"chat.completion.chunk","created":1700000000,"model":"openai/gpt-other","provider":"OpenAI","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"gen-mismatch-0001","object":"chat.completion.chunk","created":1700000000,"model":"openai/gpt-other","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"routed elsewhere"},"finish_reason":null}]}
+
+data: {"id":"gen-mismatch-0001","object":"chat.completion.chunk","created":1700000000,"model":"openai/gpt-other","provider":"OpenAI","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7,"cost":0.00002}}
+
+data: [DONE]

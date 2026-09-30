@@ -1,0 +1,45 @@
+{
+  "data": [
+    {
+      "id": "anthropic/claude-test-1",
+      "name": "Anthropic: Claude Test",
+      "context_length": 200000,
+      "reasoning": {
+        "mandatory": false,
+        "default_enabled": true,
+        "supported_efforts": ["high", "medium", "low", "minimal"],
+        "default_effort": "medium",
+        "supports_max_tokens": true
+      }
+    },
+    {
+      "id": "openai/gpt-test-reasoning",
+      "name": "OpenAI: GPT Test Reasoning",
+      "context_length": 400000,
+      "reasoning": {
+        "mandatory": true,
+        "default_enabled": true,
+        "supported_efforts": ["max", "xhigh", "high", "medium", "low"],
+        "default_effort": "medium"
+      }
+    },
+    {
+      "id": "openai/gpt-test-all-efforts",
+      "name": "OpenAI: GPT Test All Efforts",
+      "context_length": 128000,
+      "reasoning": {
+        "mandatory": false,
+        "supported_efforts": null
+      }
+    },
+    {
+      "id": "meta-llama/llama-test-plain",
+      "name": "Meta: Llama Test Plain",
+      "context_length": 8192
+    }
+  ],
+  "total_count": 4,
+  "links": {
+    "next": null
+  }
+}

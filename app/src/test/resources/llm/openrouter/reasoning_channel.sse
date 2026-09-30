@@ -1,0 +1,7 @@
+data: {"id":"gen-reason-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","text":"thinking about the question","signature":null,"index":0}]},"finish_reason":null}]}
+
+data: {"id":"gen-reason-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}
+
+data: {"id":"gen-reason-0001","object":"chat.completion.chunk","created":1700000000,"model":"anthropic/claude-test-1","provider":"Anthropic","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":8,"total_tokens":11,"completion_tokens_details":{"reasoning_tokens":5}}}
+
+data: [DONE]
