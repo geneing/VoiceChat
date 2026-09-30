@@ -1277,7 +1277,16 @@ inference returns a finite probability in `[0, 1]`, and (c) proves a wrong-size
 file is a typed `MODEL_CORRUPT` unavailable, never a success. When the model is
 **not** installed it returns early (not `Assume`, which Gradle reports as an
 assumption violation) and never fabricates availability. **No model is committed
-to the repository**, and the test was **compiled but not run** for M10.
+to the repository.**
+
+**Run 2026-09-30 (Pixel 10 `frankel`, Android 17, `CP3A.260905.009`, locked
+bootloader, `:app:connectedDebugAndroidTest`):** `SmartTurnInstrumentedTest`
+passed 2/2. The pinned model was **not installed** (`Smart Turn availability:
+Missing`; artifact `smart-turn-v3.2-int8`
+`b48fdbe20772bcec1fef02f4a1a355236ef6359e`), so device inference was correctly
+**not exercised** and availability resolved to `DownloadRequired`; the
+wrong-size→`MODEL_CORRUPT` check passed. Load/inference/memory/CPU numbers remain
+**unmeasured** (R-0190, M25).
 
 What to record for every run:
 
@@ -1343,15 +1352,27 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 All tasks passed. The suite is device-free, network-free, and does not load the
 native LiteRT runtime or a real model.
 
-### Device checks (scaffolded; NOT run)
+### Device checks (run 2026-09-30)
 
-`local.LocalRuntimeInstrumentedTest` **was not run** for this milestone; it is
-compiled only (`:app:assembleDebugAndroidTest`). It reports the real AICore
+`local.LocalRuntimeInstrumentedTest` was run on device (Pixel 10 `frankel`,
+Android 17, `CP3A.260905.009`, locked bootloader,
+`:app:connectedDebugAndroidTest`) and **passed 5/5**. It reports the real AICore
 availability, and (only if a local model is installed) attempts an init and
 records load time and heap delta. It uses early returns, not `Assume`, so an
 absent capability is a pass with its state logged, not an assumption failure.
 
-Do not claim any M20 device result until it is measured on a Pixel 10.
+Observed on the Pixel 10:
+
+- AICore Prompt probe → `DownloadRequired`; the availability snapshot reported
+  `Unavailable(aicore.gemini-nano, MODEL_UNAVAILABLE, "the system-managed model is
+  downloadable but not provisioned")` — correctly **not** ready.
+- Catalog status → `NoAllowListedModel` (the documented empty catalog).
+- AICore generation and LiteRT-LM init were **not applicable** (model
+  unprovisioned / no allow-listed bundle) and were not fabricated.
+
+Cold/warm startup, memory, thermal behavior, latency, and STT/TTS contention
+remain **unmeasured** (R-0215). Do not claim any M20 performance result until the
+manual rows below are run.
 
 ### Pixel 10 measurements (manual; marked NOT run)
 

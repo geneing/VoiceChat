@@ -33,7 +33,7 @@ class SmartTurnInstrumentedTest {
     private fun store() = SmartTurnModelStore(File(context.filesDir, SmartTurnModelStore.DIRECTORY_NAME))
 
     @Test
-    fun reportsAvailabilityAndInfersWhenTheModelIsInstalled() =
+    fun reportsAvailabilityAndInfersWhenTheModelIsInstalled() {
         runBlocking {
             val state = store().state()
             Log.i(TAG, "Smart Turn availability: $state")
@@ -71,9 +71,10 @@ class SmartTurnInstrumentedTest {
                 }
             }
         }
+    }
 
     @Test
-    fun aWrongSizeFileIsATypedUnavailable() =
+    fun aWrongSizeFileIsATypedUnavailable() {
         runBlocking {
             val directory = File(context.cacheDir, "smart-turn-corrupt-test")
             directory.mkdirs()
@@ -91,6 +92,7 @@ class SmartTurnInstrumentedTest {
                 directory.deleteRecursively()
             }
         }
+    }
 
     private companion object {
         const val TAG = "SmartTurnTest"
