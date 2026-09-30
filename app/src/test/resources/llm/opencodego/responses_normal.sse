@@ -1,0 +1,12 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_test_0003","model":"gpt-5.6-luna"}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"Hello"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":", world"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_test_0003","model":"gpt-5.6-luna","status":"completed","usage":{"input_tokens":10,"output_tokens":4,"total_tokens":14}}}
+
