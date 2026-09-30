@@ -64,7 +64,12 @@ class ProviderCapabilityRegistryTest {
         assertTrue(go.models.reasoningLevels.isEmpty())
         assertTrue(zen.models.reasoningLevels.isEmpty())
         assertTrue(go.models.unverified.contains(UnverifiedCapability.REASONING))
-        assertTrue(zen.models.unverified.contains(UnverifiedCapability.AUTH))
+        // M18 verified Zen's API-key bearer auth (2026-09-29), so AUTH is no
+        // longer marked unverified; usage reporting is not promised. See
+        // docs/opencode-zen-adapter.md.
+        assertFalse(zen.models.unverified.contains(UnverifiedCapability.AUTH))
+        assertTrue(zen.models.unverified.contains(UnverifiedCapability.USAGE))
+        assertTrue(zen.transport.unverified.contains(UnverifiedCapability.STREAMING))
         // The app must not claim a minimal check it has not verified.
         assertEquals(CredentialValidationSupport.NONE, go.auth.validation)
         assertEquals(CredentialValidationSupport.NONE, zen.auth.validation)

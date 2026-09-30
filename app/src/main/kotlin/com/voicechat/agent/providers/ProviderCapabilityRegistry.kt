@@ -164,9 +164,9 @@ class ProviderCapabilityRegistry(
                     ProviderAuth(
                         methods = setOf(AuthMethod.API_KEY),
                         credentialKind = CredentialKind.API_KEY,
-                        // Zen's streaming/reasoning semantics are unverified (R-0015);
-                        // `/systemone` is a decision model, never a chat model, and is
-                        // intentionally absent.
+                        // Re-verified at M18 (2026-09-29): Zen documents API-key
+                        // bearer auth, but `GET /models` answers without a key, so it
+                        // cannot validate one. No minimal check is claimed.
                         validation = CredentialValidationSupport.NONE,
                     ),
                 transport =
@@ -175,14 +175,21 @@ class ProviderCapabilityRegistry(
                         configurable = false,
                         expectedHost = "opencode.ai",
                         streaming = true,
+                        // Zen names three protocol families but does not spell out
+                        // the SSE framing, so streaming stays marked (R-0141).
                         unverified = setOf(UnverifiedCapability.STREAMING),
                     ),
                 models =
                     ProviderModelAccess(
                         discovery = ModelDiscovery.ENDPOINT,
+                        // Zen documents no reasoning control, and does not promise
+                        // usage reporting; claim neither (R-0144, R-0145). `/systemone`
+                        // is a decision model, never a chat model, and is intentionally
+                        // absent; the Google `/models/<model>` family is not implemented
+                        // (R-0142).
                         reasoningLevels = emptySet(),
                         usageReporting = false,
-                        unverified = setOf(UnverifiedCapability.REASONING, UnverifiedCapability.AUTH),
+                        unverified = setOf(UnverifiedCapability.REASONING, UnverifiedCapability.USAGE),
                     ),
             )
 

@@ -128,8 +128,10 @@ so an undocumented method cannot be shown by accident. Only OpenRouter is listed
 with `OAUTH_PKCE`, matching its documented PKCE flow; every other provider is
 API-key only. Where the M00 docs were silent the field holds the
 "claim nothing" value and the capability is listed in `unverified` (for example
-OpenCode Go/Zen reasoning and auth, Hermes reasoning), so settings never present
-an unverified option as fact.
+OpenCode Go/Zen reasoning plus Go/Zen usage, Hermes reasoning), so settings never
+present an unverified option as fact. M18 verified OpenCode Zen API-key bearer
+auth, so that capability is no longer marked unverified (see
+[opencode-zen-adapter.md](./opencode-zen-adapter.md)).
 
 `ProviderCapabilities.toLlmCapabilities()` maps the provider entry onto the M12
 [`LlmCapabilities`](./llm-contract.md) seam, so registry data and the adapter's
