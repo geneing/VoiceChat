@@ -7,9 +7,10 @@ scaffold), M02 (core domain types and replaceable contracts), M03 (deterministic
 audio replay and speech-test foundations), M04 (privacy-safe turn tracing and
 timing), M05 (conversation persistence and bounded context), M06 (Compose
 conversation UI and manual text path), M07 (microphone capture and audio
-lifecycle), and M08 (on-device ML Kit GenAI speech-to-text) are implemented, so
-no later milestone should be reported as complete until its code and validation
-exist.
+lifecycle), M08 (on-device ML Kit GenAI speech-to-text), M09 (VAD, fast onset,
+and bounded VAD-only endpointing), M11 (on-device TTS), and M12 (LLM streaming
+contract and deterministic fake) are implemented, so no later milestone should
+be reported as complete until its code and validation exist.
 
 ## Delivery rules
 

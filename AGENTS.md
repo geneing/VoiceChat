@@ -13,13 +13,15 @@ The app is scaffolded and its core domain types and replaceable contracts exist
 (M02), with deterministic audio-replay fixtures (M03), privacy-safe turn
 tracing (M04), durable Room-backed conversation persistence with a bounded
 context builder (M05), a Compose conversation UI with a manual text path (M06),
-microphone capture (M07), and on-device ML Kit GenAI speech-to-text (M08). TTS,
-VAD/end-of-turn detection, model/runtime providers, and LLM providers are still
-not implemented. Treat the product documents as requirements and direction, not
-as proof that a feature, dependency, model, or device capability already exists.
-Update this file when the project structure and verified commands change.
-Unresolved risks, open decisions, and known limitations are tracked in
-[docs/risks-and-decisions.md](./docs/risks-and-decisions.md).
+microphone capture (M07), on-device ML Kit GenAI speech-to-text (M08),
+measured-audio VAD/onset and bounded endpointing (M09), on-device platform TTS
+(M11), and a provider-independent LLM streaming contract with a deterministic
+fake (M12). Smart Turn (M10), model/runtime providers, and the real LLM
+providers (M13+) are still not implemented. Treat the product documents as
+requirements and direction, not as proof that a feature, dependency, model, or
+device capability already exists. Update this file when the project structure
+and verified commands change. Unresolved risks, open decisions, and known
+limitations are tracked in [docs/risks-and-decisions.md](./docs/risks-and-decisions.md).
 
 ## Product and platform constraints
 
@@ -160,19 +162,24 @@ app/                        the only application module
     contracts/              replaceable platform/provider interfaces (M02)
     audio/                  microphone capture + lifecycle (M07)
     diagnostics/            privacy-safe turn tracing and timing (M04)
+    log/                    release-safe developer logging (off in release)
     persistence/            Room conversation storage (M05)
     replay/                 deterministic PCM replay + fixtures (M03)
     stt/                    ML Kit GenAI speech-to-text adapter (M08)
+    tts/                    on-device platform TTS adapter (M11)
     ui/                     Compose conversation UI + ViewModel (M06)
+    vad/                    measured-audio VAD/onset + endpointing (M09)
   schemas/                  exported Room schema JSON (M05)
   src/main/res/                              strings, theme, launcher icon, rules
   src/test/kotlin/com/voicechat/agent/
     domain/, contracts/     JVM domain and contract tests
-    audio/, stt/            JVM capture and STT adapter tests
-    diagnostics/, replay/   JVM tracing and replay tests
+    audio/, stt/, tts/      JVM capture, STT, and TTS adapter tests
+    diagnostics/, log/      JVM tracing and logging tests
     persistence/, ui/       JVM persistence (Robolectric) and UI tests
+    replay/, vad/           JVM replay and VAD tests
     fake/                   deterministic contract fakes
   src/test/resources/replay/                 frozen replay fixture bytes
+  src/androidTest/                           on-device tests (see Tests.md)
 .github/workflows/ci.yml    CI running the same fast checks
 test_data/                  speech sound files usable to simulate STT
                             input in tests

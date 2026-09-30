@@ -89,6 +89,15 @@ remote.
   route/focus handling, and capture diagnostics (M07).
 - [Speech-to-text](./docs/stt.md) — ML Kit GenAI STT adapter, availability
   gating, and the manual Pixel 10 validation run (M08).
+- [VAD and endpointing](./docs/vad-endpointing.md) — measured-audio onset,
+  pause/resume, and the bounded VAD-only silence cap (M09).
+- [Text-to-speech](./docs/tts.md) — on-device platform TTS, embedded-only voice
+  selection, and delivery/interruption accounting (M11).
+- [LLM streaming contract](./docs/llm-contract.md) — provider-independent
+  request/event/error model and the deterministic fake (M12).
+- [Logging](./docs/logging.md) — release-safe developer logging and redaction.
+- [On-device test plan](./Tests.md) — what to run on the phone and what to
+  record, per milestone.
 - [Android device notes](./docs/android-device-notes.md) — Pixel 10 findings
   from GVP and Smart Turn v3.2 integration lessons from speech-android to
   validate for this app rather than copy blindly.
@@ -128,19 +137,25 @@ adds deterministic audio-replay fixtures for speech-path tests (M03) plus
 privacy-safe per-turn tracing and timing (M04). Milestone M05 adds durable
 Room-backed conversation persistence with a bounded model-context builder, M06
 adds the Compose conversation list/dialog UI with a manual text path, M07 adds
-microphone capture with point-of-use permission and lifecycle handling, and M08
+microphone capture with point-of-use permission and lifecycle handling, M08
 adds the on-device ML Kit GenAI speech-to-text adapter with runtime availability
-gating. `:app` is the only Gradle module. The `domain`, `contracts`, and
-`diagnostics` packages (and the `replay` layer) are pure Kotlin (no `android.*`
-imports, enforced by a unit test); `audio` and `stt` hold the Android / ML Kit
-adapters. The 239-test JVM suite covers domain invariants, contract event
-ordering and cancellation, the deterministic fakes, fixture replay determinism,
-trace correlation/redaction/timing, repository CRUD/migration and context bounds
-(Robolectric), the conversation UI, and the capture/STT adapters. A real LLM
-provider is intentionally not wired in yet: the UI renders an explicit
-"LLM not configured" error instead of a fake reply. The app now declares the
-`RECORD_AUDIO` permission (requested at the point of use); TTS, VAD/end-of-turn
-detection, and provider/model runtimes are not implemented yet.
+gating, M09 adds measured-audio VAD/onset with bounded VAD-only endpointing,
+M11 adds on-device platform TTS restricted to embedded voices, and M12 adds the
+provider-independent LLM streaming contract with a deterministic fake. `:app` is
+the only Gradle module. The `domain`, `contracts`, `log`, `diagnostics`, `replay`,
+and `vad` packages (and the `tts` engine seam) are pure Kotlin (no `android.*`
+imports, enforced by unit tests); `audio`, `stt`, and `tts` hold the Android /
+ML Kit / platform adapters. The 353-test JVM suite covers domain invariants,
+contract ordering and cancellation, the deterministic fakes, fixture replay
+determinism, trace correlation/redaction/timing, repository CRUD/migration and
+context bounds (Robolectric), the conversation UI, capture/STT/TTS adapters,
+VAD/endpointing, and the LLM contract. On-device tests live under
+`app/src/androidTest` and are catalogued in [Tests.md](./Tests.md) but are not run
+yet. A real LLM provider is intentionally not wired in yet: the UI renders an
+explicit "LLM not configured" error instead of a fake reply. The app declares the
+`RECORD_AUDIO` permission (requested at the point of use); Smart Turn (M10),
+provider/model runtimes, and the real LLM adapters (M13+) are not implemented
+yet.
 
 The scaffold requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17
 source/target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0,
