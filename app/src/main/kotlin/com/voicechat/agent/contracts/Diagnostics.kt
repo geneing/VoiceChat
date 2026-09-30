@@ -60,6 +60,13 @@ enum class DiagnosticAttribute {
     /** Token counts in one short form, for example `prompt=12,completion=34`. */
     USAGE,
 
+    /**
+     * The model the provider reported serving, when it differs from the request's
+     * selection. Recorded so a silent model switch is visible instead of accepted
+     * (see R-0017, R-0023); it is an identifier, never response content.
+     */
+    REPORTED_MODEL_ID,
+
     /** Assistant text characters generated for one delta. */
     DELTA_CHARACTER_COUNT,
 

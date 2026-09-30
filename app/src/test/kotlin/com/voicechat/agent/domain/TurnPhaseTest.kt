@@ -65,4 +65,20 @@ class TurnPhaseTest {
         assertThrows(IllegalArgumentException::class.java) { TurnPhase.COMPLETED.transitionTo(TurnPhase.LISTENING) }
         assertThrows(IllegalArgumentException::class.java) { TurnPhase.SPEAKING.transitionTo(TurnPhase.SPEAKING) }
     }
+
+    @Test
+    fun manualTextCanGenerateWithoutListening() {
+        // M21 finalized this edge: manual text has no listening stage.
+        assertEquals(TurnPhase.GENERATING, TurnPhase.IDLE.transitionTo(TurnPhase.GENERATING))
+    }
+
+    @Test
+    fun generationCanCompleteOrBeInterruptedBeforeTheFirstAudibleChunk() {
+        // A text-only reply completes straight from GENERATING.
+        assertEquals(TurnPhase.COMPLETED, TurnPhase.GENERATING.transitionTo(TurnPhase.COMPLETED))
+        // A streamed reply may start speaking while generation is still in flight.
+        assertEquals(TurnPhase.SPEAKING, TurnPhase.GENERATING.transitionTo(TurnPhase.SPEAKING))
+        // Barge-in before the first chunk is audible still interrupts the turn.
+        assertEquals(TurnPhase.INTERRUPTED, TurnPhase.GENERATING.transitionTo(TurnPhase.INTERRUPTED))
+    }
 }

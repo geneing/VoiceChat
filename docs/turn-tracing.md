@@ -181,9 +181,13 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 ## Follow-up (owned by later milestones)
 
 - M21 calls the recorder from real turn orchestration and owns the request-state
-  vocabulary.
-- M07/M11 call `playbackStarted` / `playbackStopped` from the real capture and
-  TTS adapters.
+  vocabulary: `orchestration.TurnOrchestrator` drives `requestSelected`,
+  `markStreamStarted`, `requestState`, `requestEndReason`, `requestUsage`,
+  `llmDelta`, `playbackStarted`, and `playbackDelivered`, with the
+  `orchestration.LlmRequestState` vocabulary. See
+  [orchestration.md](./orchestration.md) and R-0028.
+- M24 wires `playbackStopped`/`bargeIn` onset->stop timing from the live
+  interruption path (R-0029).
 - A developer-visible in-app viewer screen is deferred; M04 ships the local
   export/viewer core only.
 - Drop/eviction counts should be surfaced in developer diagnostics once a UI

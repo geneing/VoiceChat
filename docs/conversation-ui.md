@@ -155,8 +155,9 @@ are recorded in `gradle/libs.versions.toml`.
 
 - No real provider: the default model returns `LLM_NOT_CONFIGURED`. M13–M19 wire
   credentials and adapters; M23 completes the text-first vertical slice.
+- The state holder no longer owns the generation pipeline: M21 moved stream
+  consumption, late-event rejection, delivery accounting, and persistence into
+  `orchestration.TurnOrchestrator`/`TurnStateMachine`, and this holder only maps
+  the terminal result to UI state. See [orchestration.md](./orchestration.md).
 - No voice: STT/TTS and barge-in arrive in M07–M11 and M21–M24. The provisional
   transcript seam and the single turn path are in place for them.
-- The state holder is intentionally not the M21 turn state machine; it serializes
-  one request at a time and leaves out-of-order late-event handling and TTS
-  delivery accounting to M21.
