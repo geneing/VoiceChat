@@ -100,6 +100,12 @@ remote.
   registry (M13).
 - [Turn orchestration](./docs/orchestration.md) — the pure-Kotlin turn state
   machine, cancellation, and delivered-only persistence (M21).
+- [LLM remote transport](./docs/llm-transport.md) — the shared HTTP/JSON/SSE
+  transport, error mapping, and fixture replay harness (M14).
+- [OpenAI adapter](./docs/openai-adapter.md) — the verified OpenAI endpoint,
+  streaming, reasoning, and credential integration (M14).
+- [Settings](./docs/settings.md) — capability-aware selection and DataStore
+  persistence (M22).
 - [Logging](./docs/logging.md) — release-safe developer logging and redaction.
 - [On-device test plan](./Tests.md) — what to run on the phone and what to
   record, per milestone.
@@ -147,24 +153,29 @@ adds the on-device ML Kit GenAI speech-to-text adapter with runtime availability
 gating, M09 adds measured-audio VAD/onset with bounded VAD-only endpointing,
 M11 adds on-device platform TTS restricted to embedded voices, M12 adds the
 provider-independent LLM streaming contract with a deterministic fake, M13 adds
-Keystore-backed credential storage with the provider capability registry, and
-M21 adds the pure-Kotlin turn orchestration state machine with cancellation and
-delivered-only persistence. `:app` is the only Gradle module. The `domain`,
-`contracts`, `log`, `diagnostics`, `orchestration`, `replay`, and `vad`
-packages (and the `tts` engine seam and credential/providers logic) are pure
-Kotlin (no `android.*` imports, enforced by unit tests); `audio`, `stt`, `tts`,
-and the AndroidKeyStore credential implementation hold the platform / ML Kit /
-system adapters. The 440-test JVM suite covers domain invariants, contract
-ordering and cancellation, the deterministic fakes, fixture replay determinism,
-trace correlation/redaction/timing, repository CRUD/migration and context
-bounds (Robolectric), the conversation UI, capture/STT/TTS/VAD adapters,
-LLM-contract semantics, credential store/registry behavior, and turn
-orchestration. On-device tests live under `app/src/androidTest` and are
-catalogued in [Tests.md](./Tests.md) but are not run yet. A real LLM provider is
-intentionally not wired in yet: the UI renders an explicit "LLM not configured"
-error instead of a fake reply. The app declares the `RECORD_AUDIO` permission
-(requested at the point of use); Smart Turn (M10), the real LLM adapters
-(M14-M19), and local model runtimes (M20) are not implemented yet.
+Keystore-backed credential storage with the provider capability registry, M14
+adds the OpenAI adapter and the shared remote HTTP/JSON/SSE transport the other
+providers reuse, M21 adds the pure-Kotlin turn orchestration state machine with
+cancellation and delivered-only persistence, and M22 adds capability-aware
+settings persisted in DataStore. `:app` is the only Gradle module. The `domain`,
+`contracts`, `log`, `diagnostics`, `orchestration`, `replay`, `settings`, and
+`vad` packages (and the `tts` engine seam, credential/providers logic, and the
+`remote` transport core) are pure Kotlin (no `android.*` imports, enforced by
+unit tests); `audio`, `stt`, `tts`, `remote/OkHttpStreamingEngine`, and the
+AndroidKeyStore/DataStore implementations hold the platform / ML Kit / network
+adapters. The 545-test JVM suite covers domain invariants, contract ordering and
+cancellation, the deterministic fakes, fixture replay determinism, trace
+correlation/redaction/timing, repository CRUD/migration and context bounds
+(Robolectric), the conversation and settings UI, capture/STT/TTS/VAD adapters,
+LLM-contract semantics, credential store/registry, turn orchestration, and the
+recorded OpenAI/SSE fixtures. On-device tests live under
+`app/src/androidTest` and are catalogued in [Tests.md](./Tests.md) but are not run
+yet; the OpenAI adapter also has an opt-in, credential-gated smoke test that is
+skipped in routine CI. The conversation path still defaults to the explicit
+"LLM not configured" error (settings can select a provider, but the turn path
+consumes the selection in M23). The app declares the `RECORD_AUDIO` and
+`INTERNET` permissions; Smart Turn (M10), the remaining provider adapters
+(M15-M19), and local model runtimes (M20) are not implemented yet.
 
 The scaffold requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17
 source/target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0,

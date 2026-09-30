@@ -17,9 +17,11 @@ microphone capture (M07), on-device ML Kit GenAI speech-to-text (M08),
 measured-audio VAD/onset and bounded endpointing (M09), on-device platform TTS
 (M11), a provider-independent LLM streaming contract with a deterministic fake
 (M12), Keystore-backed credential storage with a provider capability registry
-(M13), and pure-Kotlin turn orchestration with cancellation (M21). Smart Turn
-(M10), the real LLM provider adapters and local model runtimes (M14-M20), and
-settings/capability UI (M22+) are still not implemented. Treat the product
+(M13), pure-Kotlin turn orchestration with cancellation (M21), the OpenAI
+adapter with a shared remote HTTP/JSON/SSE transport (M14), and capability-aware
+settings with DataStore persistence (M22). Smart Turn (M10), the remaining LLM
+provider adapters and local model runtimes (M15-M20), and the integration and
+release milestones (M23-M26) are still not implemented. Treat the product
 documents as requirements and direction, not as proof that a feature,
 dependency, model, or device capability already exists. Update this file when the
 project structure and verified commands change. Unresolved risks, open
@@ -169,25 +171,29 @@ app/                        the only application module
     log/                    release-safe developer logging (off in release)
     orchestration/          turn state machine + orchestrator (M21)
     persistence/            Room conversation storage (M05)
-    providers/              provider capability registry (M13)
+    providers/              provider capability registry (M13) + OpenAI adapter (M14)
+    remote/                 shared remote HTTP/JSON/SSE transport (M14)
     replay/                 deterministic PCM replay + fixtures (M03)
+    settings/               settings model + DataStore persistence (M22)
     stt/                    ML Kit GenAI speech-to-text adapter (M08)
     tts/                    on-device platform TTS adapter (M11)
-    ui/                     Compose conversation UI + ViewModel (M06)
+    ui/                     Compose conversation + settings UI (M06/M22)
     vad/                    measured-audio VAD/onset + endpointing (M09)
   schemas/                  exported Room schema JSON (M05)
   src/main/res/                              strings, theme, launcher icon, rules
   src/test/kotlin/com/voicechat/agent/
     domain/, contracts/     JVM domain and contract tests
     audio/, stt/, tts/      JVM capture, STT, and TTS adapter tests
-    credentials/, providers/  JVM credential and capability-registry tests
+    credentials/, providers/  JVM credential, registry, and adapter tests
     diagnostics/, log/      JVM tracing and logging tests
     orchestration/          JVM turn state-machine and orchestrator tests
-    persistence/, ui/       JVM persistence (Robolectric) and UI tests
-    replay/, vad/           JVM replay and VAD tests
-    security/               JVM repository secret scan
+    persistence/, settings/ JVM persistence (Robolectric) and settings tests
+    replay/, remote/        JVM replay and remote-transport tests
+    security/, ui/          JVM secret scan and Compose UI tests
+    vad/                    JVM VAD tests
     fake/                   deterministic contract fakes
   src/test/resources/replay/                 frozen replay fixture bytes
+  src/test/resources/llm/                    recorded provider SSE fixtures
   src/androidTest/                           on-device tests (see Tests.md)
 .github/workflows/ci.yml    CI running the same fast checks
 test_data/                  speech sound files usable to simulate STT

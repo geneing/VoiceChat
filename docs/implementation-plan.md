@@ -10,9 +10,10 @@ conversation UI and manual text path), M07 (microphone capture and audio
 lifecycle), M08 (on-device ML Kit GenAI speech-to-text), M09 (VAD, fast onset,
 and bounded VAD-only endpointing), M11 (on-device TTS), M12 (LLM streaming
 contract and deterministic fake), M13 (credential storage and provider
-capability registry), and M21 (turn orchestration and cancellation) are
-implemented, so no later milestone should be reported as complete until its code
-and validation exist.
+capability registry), M14 (OpenAI adapter and shared remote transport), M21
+(turn orchestration and cancellation), and M22 (settings and capability-aware
+selection) are implemented, so no later milestone should be reported as complete
+until its code and validation exist.
 
 ## Delivery rules
 
