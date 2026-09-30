@@ -82,6 +82,7 @@ construction; the logger relies on these rules and on review.
 | --- | --- |
 | Capture (M07) | session start (source/format/route), stop with frame/drop counts, permission denial/revocation, read errors, route changes, audio focus acquire/loss/abandon. |
 | STT (M08) | availability result, start/refuse-to-start, input-end stop, session end with outcome/frame counts, model download progress/failure. |
+| TTS (M11) | engine availability (voice counts, selected embedded voice id, resolved engine), synthesis start/failure by character count, playback first-audible/completed/interrupted with delivered-vs-total counts and route kind, immediate stop, no-on-device-voice refusal. Never assistant text. |
 | Persistence (M05) | repository open, per-operation load/save/delete success/failure, process-death recovery. |
 | UI (M06) | conversation open/send/cancel/retry/delete, generation start/terminal state, storage failure. Never transcript text. |
 | Diagnostics (M04) | bounded sink start and a one-time overflow warning. |

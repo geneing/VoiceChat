@@ -73,6 +73,7 @@ they do not fake availability, and none requires a human speaker.
 | --- | --- |
 | `audio.MicrophoneCaptureInstrumentedTest` | Without `RECORD_AUDIO`, capture refuses with `AUDIO_PERMISSION_DENIED`; a closed input refuses with `AUDIO_DEVICE_UNAVAILABLE`; with the permission granted a session emits 16 kHz mono frames and a second session can start after the first stops (no busy recorder). |
 | `stt.MlKitSttInstrumentedTest` | Both catalog modes return a typed `SttAvailability` without throwing; the adapter reports the single engine ID; and, when the engine is **not** ready, the adapter refuses to run and emits a typed `STT_MODEL_NOT_READY`/`STT_UNAVAILABLE` failure. When the engine is ready this case is skipped (`Assume`), never faked. |
+| `tts.AndroidTtsInstrumentedTest` | The platform TTS engine initializes and enumerates installed voices; a "ready" voice must be one `getVoices()` reported and not network-required (network voices are never selectable); immediate `stop()` during playback ends the utterance with a terminal event without hanging (skipped with `Assume` when no embedded voice exists); the `OnDeviceTts` contract adapter rejects empty input and closes. Availability is recorded, never faked. |
 | `ui.ConversationAppInstrumentedTest` | The app launches on device and renders the conversation list (Room + Compose smoke). |
 
 ## M07 — Microphone capture
@@ -132,6 +133,45 @@ What to record for every run:
 Genuinely manual and **not** automated: live transcription quality (needs a
 speaker), and the airplane-mode proof. Do not claim these from the JVM tests.
 
+## M11 — On-device text-to-speech
+
+Engine: the Android platform `android.speech.tts.TextToSpeech` API, restricted to
+**embedded (non-network) voices** only (`isNetworkConnectionRequired() == false`,
+`docs/decisions.md` §2.2). There is no cloud TTS and no fallback to a network
+voice. Instrumented coverage is `tts.AndroidTtsInstrumentedTest`; the manual
+checks below are **not** automated and were **not** run for this milestone.
+
+What to record for every run:
+
+- Device model/build, Android build fingerprint, build variant (`debug`), commit.
+- The full embedded voice list from `getVoices()` with, for each voice, its
+  locale and `isNetworkConnectionRequired()` flag; the voice the engine selected,
+  and the locale requested.
+- The output route kind at playback start (built-in speaker, wired headset,
+  Bluetooth) and any route change during playback.
+- First-audible time (from `speak()` to the `TtsEvent.Started`/first-audible
+  event) and total playback time, per voice and per route.
+- Immediate-stop latency (barge-in `stop()` call to the `Interrupted` terminal)
+  with the delivered prefix reported.
+- Empty input and forced-failure behavior; the explicit "no on-device voice"
+  state on a device/locale with only network voices.
+
+| Check | How | Record |
+| --- | --- | --- |
+| Voice discovery | Run `AndroidTtsInstrumentedTest` and read the logged availability/voice counts. | Installed voice count and the embedded subset; the selected voice id; `NoOnDeviceVoice` when no embedded voice exists. Never claim a voice exists without `getVoices()`. |
+| On-device-only selection | Inspect the selected voice's `isNetworkConnectionRequired()`. | It is `false`; a network voice is never selected even when it is the only/locale-best match. |
+| First-audible latency | Speak a fixed phrase per voice/route; time `speak()` to the first-audible event; measure audible output, not the API return. | p50/tail first-audible per voice and route; do not set a budget from a single run. |
+| Speaker / headset routing | Play a phrase through the built-in speaker, a wired headset, and Bluetooth; watch output routing. | Audio is audible on the expected output; the recorded `AUDIO_ROUTE` kind changes; no crash on route change. |
+| Audio focus | Start TTS, then trigger another app's audio (or a call); observe focus handling. | Focus acquired/abandoned as expected; note whether playback ducks/pauses and whether capture (M07) is affected. Final policy is M24. |
+| Attention/empty path | Call the adapter with empty input; on a device/locale with only network voices, attempt to speak. | Empty input completes with no playback and no engine call; no-on-device-voice shows an explicit typed state and stays text-only. |
+| Immediate stop | Start a long phrase, then call `stop()` mid-playback (the instrumented test does this unattended). | Playback stops promptly; the `speak` flow ends with an `Interrupted` terminal (or `Completed` if it had already finished); never hangs. |
+| Failed input | Where reproducible, force an engine error (for example unavailable engine). | A typed `TTS_SYNTHESIS_FAILED`/`TTS_PLAYBACK_FAILED` event; no silent success. |
+| On-device confirmation | After voices are installed, repeat playback in airplane mode. | Playback still works, confirming on-device synthesis with no network voice. |
+
+Genuinely manual and **not** automated: audible first-audible timing, speaker /
+wired / Bluetooth routing, focus interaction, real voice quality, and the
+airplane-mode proof. Do not claim these from the JVM tests.
+
 ## Manual checklist that cannot be automated
 
 - Audio levels, noise floor, clipping, and route behavior on real hardware
@@ -177,8 +217,8 @@ shape. Suggested future entries:
   endpoint per turn, maximum-silence cap, CPU/memory on device.
 - **M10 Smart Turn v3.2** — model load, inference time, veto/hold behavior,
   silence cap, missing/corrupt model.
-- **M11 on-device TTS** — installed voices, on-device-only voice selection,
-  first-audible latency, speaker/headset routing, immediate stop.
+- **M11 on-device TTS** — implemented; see [M11 — On-device
+  text-to-speech](#m11--on-device-text-to-speech) above for the manual checks.
 - **M13 credentials** — Keystore-backed store/replace/remove across process
   restart; no secret in logs, crashes, backups, or QR payloads.
 - **M14–M19 providers** — one section each: destination disclosure, model
