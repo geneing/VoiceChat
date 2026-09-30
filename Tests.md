@@ -661,3 +661,84 @@ R-0112 (credential check). What to record for every run:
 Device-level latency, cancellation-acknowledgement timing, and live provider
 behavior remain unmeasured and are tracked in R-0069, R-0091, and R-0111. **Do
 not mark any of these passed unless the command was actually run.**
+
+## M17 — OpenCode Go adapter
+
+M17 is a **JVM-first** milestone. The adapter is pure Kotlin behind the M12
+contract and reuses the M14 remote transport; every protocol case is a recorded
+SSE fixture or a scripted engine with **no socket, clock, DNS, or real
+credential**. There is no M17-specific instrumented test, so no row is added to
+the automated on-device table above; the existing instrumented tests were
+compiled only. See [docs/opencode-go-adapter.md](./docs/opencode-go-adapter.md).
+
+OpenCode Go is deliberately **not** treated as OpenAI-compatible: its own model
+table places each model on one of three protocols (Chat Completions for
+GLM/Kimi/DeepSeek, Responses for GPT/Grok, Anthropic Messages for Qwen/MiniMax),
+and the adapter dispatches on the model and refuses an unplaced id.
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device, no network): fixture replay for the three
+# protocol families, the unplaced-model and unsupported-reasoning refusals, and
+# the ordinary auth/rate-limit/server/network/terminal-less errors.
+.\gradlew.bat :app:testDebugUnitTest --tests "*OpenCodeGo*"
+
+# Compile the instrumented tests WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+```
+
+What the JVM suite proves instead (details in the linked document):
+
+- the request goes to the **documented endpoint for the selected model's
+  family** (`/chat/completions`, `/responses`, or `/messages`) with
+  `Authorization: Bearer <credential>`, the documented `User-Agent`, and a stable
+  `x-opencode-session`; the Responses family always sends `"store": false`;
+- Chat Completions `data: [DONE]`, Responses `response.completed`, and Messages
+  `message_stop` each terminate the stream, and Messages input/output tokens are
+  merged into one usage report;
+- the reasoning channel (`response.reasoning_*.delta`, `thinking_delta`) is
+  excluded from assistant text;
+- an unplaced model (`omen-alpha`) is refused with `LLM_INVALID_REQUEST` **before
+  any request is sent** — no protocol is assumed for it;
+- a requested reasoning level is refused before send because Go documents no
+  reasoning control (capability declares none);
+- 401/403 → `LLM_AUTHENTICATION_FAILED`, 429 → `LLM_RATE_LIMITED`, other 4xx →
+  `LLM_INVALID_REQUEST`, 5xx → `LLM_UNAVAILABLE`, a dropped connection →
+  `LLM_NETWORK_FAILED`, both as streamed error frames and as HTTP statuses;
+- a terminal-less stream is `LLM_MALFORMED_RESPONSE`, never a completion; a
+  mid-stream cancellation emits no terminal event;
+- no credential validator is offered (Go's `GET /models` answers without a key),
+  and the registry Go row claims no reasoning and marks usage/streaming
+  unverified;
+- no credential, prompt, or assistant text appears in the developer log.
+
+### Opt-in real-provider smoke test (marked NOT run)
+
+`providers.opencodego.OpenCodeGoSmokeTest` is the one M17 test that can touch the
+real service. It is **skipped** (JUnit `Assume`), and so never runs in routine
+CI, unless **both** `VOICECHAT_OPENCODE_GO_SMOKE=1` and `OPENCODE_API_KEY` are
+set:
+
+```powershell
+$env:VOICECHAT_OPENCODE_GO_SMOKE = "1"
+$env:OPENCODE_API_KEY = "<your key>"                          # externally supplied only
+$env:VOICECHAT_OPENCODE_GO_SMOKE_MODEL = "glm-5.3-flash"      # optional; try gpt-5.6-luna, qwen3.8-flash
+.\gradlew.bat :app:testDebugUnitTest --tests "*OpenCodeGoSmokeTest"
+```
+
+It **was not run** for this milestone. This is tracked as R-0138. What to record
+for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit, and the
+  selected model and family.
+- Network/region conditions and the observed time to first text and total
+  completion time.
+- The completion outcome and any typed failure reason — **never** the prompt or
+  the response text, and **never** the API key. The smoke test itself asserts on
+  completion/counts only and prints no content.
+- Whether each family's live SSE framing matches the mapping (R-0131).
+
+Device-level latency, cancellation-acknowledgement timing, and live provider
+behavior remain unmeasured and are tracked in R-0131 and R-0138. **Do not mark
+any of these passed unless the command was actually run.**

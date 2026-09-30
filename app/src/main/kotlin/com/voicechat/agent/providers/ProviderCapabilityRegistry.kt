@@ -130,8 +130,9 @@ class ProviderCapabilityRegistry(
                     ProviderAuth(
                         methods = setOf(AuthMethod.API_KEY),
                         credentialKind = CredentialKind.API_KEY,
-                        // Go's auth/streaming/reasoning semantics are unverified (R-0014);
-                        // do not claim a validation path we have not confirmed.
+                        // Re-verified at M17 (2026-09-29): Go documents API-key auth,
+                        // but `GET /models` answers without a key, so it cannot
+                        // validate one. No minimal check is claimed.
                         validation = CredentialValidationSupport.NONE,
                     ),
                 transport =
@@ -140,14 +141,18 @@ class ProviderCapabilityRegistry(
                         configurable = false,
                         expectedHost = "opencode.ai",
                         streaming = true,
+                        // Go names three protocol families but does not spell out
+                        // the SSE framing, so streaming stays marked (R-0014).
                         unverified = setOf(UnverifiedCapability.STREAMING),
                     ),
                 models =
                     ProviderModelAccess(
                         discovery = ModelDiscovery.ENDPOINT,
+                        // Go documents no reasoning control, and does not promise
+                        // usage reporting; claim neither (R-0014, R-0072).
                         reasoningLevels = emptySet(),
                         usageReporting = false,
-                        unverified = setOf(UnverifiedCapability.REASONING, UnverifiedCapability.AUTH),
+                        unverified = setOf(UnverifiedCapability.REASONING, UnverifiedCapability.USAGE),
                     ),
             )
 

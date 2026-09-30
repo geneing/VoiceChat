@@ -1,0 +1,2 @@
+data: {"id":"chatcmpl_test_0002","object":"chat.completion.chunk","created":1,"model":"glm-5.3-flash","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}
+
