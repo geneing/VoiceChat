@@ -68,10 +68,30 @@ class ProviderCapabilityRegistryTest {
         // The app must not claim a minimal check it has not verified.
         assertEquals(CredentialValidationSupport.NONE, go.auth.validation)
         assertEquals(CredentialValidationSupport.NONE, zen.auth.validation)
+    }
 
+    @Test
+    fun deepSeekExposesItsReverifiedDocumentedCapabilities() {
         val deepSeek = registry.capabilities(KnownProviders.DEEPSEEK)!!
-        assertTrue(deepSeek.models.reasoningLevels.isEmpty())
-        assertTrue(deepSeek.models.unverified.contains(UnverifiedCapability.REASONING))
+
+        // Re-verified at M16 (2026-09-29): Chat Completions accepts every level
+        // this app exposes (`minimal`/`medium`/`xhigh` are documented aliases),
+        // and reports usage. See docs/deepseek-adapter.md.
+        assertEquals(
+            setOf(
+                ReasoningLevel.NONE,
+                ReasoningLevel.MINIMAL,
+                ReasoningLevel.LOW,
+                ReasoningLevel.MEDIUM,
+                ReasoningLevel.HIGH,
+                ReasoningLevel.XHIGH,
+                ReasoningLevel.MAX,
+            ),
+            deepSeek.models.reasoningLevels,
+        )
+        assertTrue(deepSeek.models.usageReporting)
+        assertTrue(deepSeek.models.unverified.isEmpty())
+        assertEquals(CredentialValidationSupport.LIST_MODELS, deepSeek.auth.validation)
     }
 
     @Test

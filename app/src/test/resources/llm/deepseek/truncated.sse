@@ -1,0 +1,5 @@
+data: {"id":"chatcmpl-test-0006","object":"chat.completion.chunk","created":1759100005,"model":"deepseek-flash","system_fingerprint":"fp_test_0001","choices":[{"index":0,"delta":{"role":"assistant","content":"This answer is cut"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-test-0006","object":"chat.completion.chunk","created":1759100005,"model":"deepseek-flash","system_fingerprint":"fp_test_0001","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"length"}],"usage":{"prompt_tokens":8,"completion_tokens":5,"total_tokens":13}}
+
+data: [DONE]

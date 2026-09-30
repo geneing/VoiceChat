@@ -1,0 +1,5 @@
+data: {"id":"chatcmpl-test-0004","object":"chat.completion.chunk","created":1759100003,"model":"deepseek-flash","system_fingerprint":"fp_test_0001","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-test-0004","object":"chat.completion.chunk","created":1759100003,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":" broken
+
+data: [DONE]
