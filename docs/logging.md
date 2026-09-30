@@ -84,6 +84,7 @@ construction; the logger relies on these rules and on review.
 | STT (M08) | availability result, start/refuse-to-start, input-end stop, session end with outcome/frame counts, model download progress/failure. |
 | TTS (M11) | engine availability (voice counts, selected embedded voice id, resolved engine), synthesis start/failure by character count, playback first-audible/completed/interrupted with delivered-vs-total counts and route kind, immediate stop, no-on-device-voice refusal. Never assistant text. |
 | Persistence (M05) | repository open, per-operation load/save/delete success/failure, process-death recovery. |
+| Credentials (M13) | store/replace/remove by provider id and kind and the failure reason by exception *type* only; never the credential value. `Credential.toString()` is redacted and `CredentialRedactionTest` proves the path stays clean. |
 | UI (M06) | conversation open/send/cancel/retry/delete, generation start/terminal state, storage failure. Never transcript text. |
 | LLM contract (M12) | request start (provider/model identity, message and character counts, reasoning level, streaming capability), one line per fake/adapter emission (event kind, index, character count), and stream end (completed, delta count, character count, terminal kind, failure reason, whether usage was reported, provider-reported model). Never prompt, delta, or response text; `LlmStreamLoggingTest` proves the content-free rule. |
 | Diagnostics (M04) | bounded sink start and a one-time overflow warning. |

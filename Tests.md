@@ -76,6 +76,7 @@ they do not fake availability, and none requires a human speaker.
 | `stt.MlKitSttInstrumentedTest` | Both catalog modes return a typed `SttAvailability` without throwing; the adapter reports the single engine ID; and, when the engine is **not** ready, the adapter refuses to run and emits a typed `STT_MODEL_NOT_READY`/`STT_UNAVAILABLE` failure. When the engine is ready this case is skipped (`Assume`), never faked. |
 | `tts.AndroidTtsInstrumentedTest` | The platform TTS engine initializes and enumerates installed voices; a "ready" voice must be one `getVoices()` reported and not network-required (network voices are never selectable); immediate `stop()` during playback ends the utterance with a terminal event without hanging (skipped with `Assume` when no embedded voice exists); the `OnDeviceTts` contract adapter rejects empty input and closes. Availability is recorded, never faked. |
 | `ui.ConversationAppInstrumentedTest` | The app launches on device and renders the conversation list (Room + Compose smoke). |
+| `credentials.AndroidKeystoreCredentialStoreInstrumentedTest` | The real AndroidKeyStore-backed store stores/replaces/removes a credential against the device KeyStore; a second store instance reads the persisted value (restart proxy); the app-private preferences file holds only ciphertext, never the plaintext secret. |
 
 ## M07 — Microphone capture
 
@@ -277,8 +278,10 @@ shape. Suggested future entries:
   silence cap, missing/corrupt model.
 - **M11 on-device TTS** — implemented; see [M11 — On-device
   text-to-speech](#m11--on-device-text-to-speech) above for the manual checks.
-- **M13 credentials** — Keystore-backed store/replace/remove across process
-  restart; no secret in logs, crashes, backups, or QR payloads.
+- **M13 credentials** — implemented; see the [M13
+  section](#m13--credential-storage-and-provider-capability-registry) above
+  (AndroidKeyStore store/replace/remove, restart, no secret in logs, crashes,
+  backups, or QR payloads).
 - **M14–M19 providers** — one section each: destination disclosure, model
   selection, streaming, cancellation, network-loss and auth errors, and proof
   that no silent provider/model fallback occurs.
@@ -317,3 +320,72 @@ What the JVM suite proves instead (see
 Recorded with `:app:testDebugUnitTest`; no device, network, model, or credential
 is involved. Any future real provider belongs to M14–M20, whose device runs are
 recorded in their own sections.
+
+## M13 — Credential storage and provider capability registry
+
+This section covers the AndroidKeyStore-backed credential store and the provider
+capability registry; see [docs/credentials.md](./docs/credentials.md). Most of
+M13 is pure Kotlin, proven by JVM tests. Only the real AndroidKeyStore store is
+device-bound.
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device): store/replace/remove, restart,
+# unsupported-method hiding, endpoint validation, auth errors, redaction, scans.
+.\gradlew.bat :app:testDebugUnitTest
+
+# Compile the instrumented test WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+
+# Run the M13 instrumented test ON the device (NOT run for this milestone)
+.\gradlew.bat :app:connectedDebugAndroidTest `
+  "-Pandroid.testInstrumentationRunnerArguments.class=com.voicechat.agent.credentials.AndroidKeystoreCredentialStoreInstrumentedTest"
+```
+
+What the JVM suite proves instead (details in
+[docs/credentials.md](./docs/credentials.md#tests)):
+
+- store / replace / remove and the redacted `CredentialStatus`;
+- a process-restart read: a new `EncryptedCredentialStore` over the same file-
+  backed blob store loads the value, and the plaintext never appears at rest;
+- a typed `CREDENTIAL_STORAGE_FAILED` on an encrypt failure, and an honest
+  `NotStored`/`null` when the KeyStore key is lost;
+- only documented auth methods are exposed (the enum has no QR value), and
+  unverified provider behavior is marked rather than claimed;
+- per-model capability reconciliation refuses an unsupported reasoning level;
+- endpoint validation: TLS required for non-local hosts, loopback may use `http`,
+  credentials-in-URL and QR-sourced endpoints are refused, and a fixed provider's
+  host cannot be substituted;
+- a QR payload carrying a credential is rejected;
+- a credential never reaches a log line, `toString`, store error, or
+  crash-metadata header map;
+- `RepositorySecretScanTest` finds no credential shape in shipped source,
+  resources, build files, docs, or CI config, and no packaged keystore/Firebase
+  config.
+
+### On-device run (deferred; compile-only for this milestone)
+
+`AndroidKeystoreCredentialStoreInstrumentedTest` exercises the real
+`AndroidKeystore` AES/GCM cipher and the real app-private preferences. It was
+**compiled but not run** on a device for M13 (device testing is deferred).
+
+What to record for every run:
+
+- Device model/build, Android version, build variant (`debug`), commit.
+- The instrumented result for store / status / load / replace / remove.
+- That a **new** store instance (restart proxy) still reads the credential, that
+  the AndroidKeyStore contains alias `voicechat.credentials.v1`, and that the
+  `voicechat-credentials` preferences file holds only ciphertext.
+- A manual **process-restart** check: store a credential, then
+  `adb shell am force-stop com.voicechat.agent`, relaunch, and confirm the status
+  is still `Stored`/the value loads. (A true restart cannot be forced inside a
+  single instrumentation run, so it is a manual step.)
+- The re-entry behavior after an invalidation: lock-screen change or KeyStore
+  reset, then confirm the app reports `NotStored` and does not crash or return a
+  wrong value (R-0070).
+- A backup/restore or device-to-device transfer check showing no credential blob
+  leaves the device (R-0071).
+
+Unrun device items are tracked as R-0070, R-0071, and R-0075; **do not mark any
+row passed unless it was run on the device.**

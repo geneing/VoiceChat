@@ -37,7 +37,7 @@ Chosen to satisfy verified minimums, not copied from the reference projects.
 | Compose BOM | 2026.09.00 (Compose 1.12.1) | Compose BOM mapping page; "Always use the latest Compose BOM version: 2026.09.00". |
 | activity / lifecycle (Compose) | `androidx.activity:activity-compose:1.13.0`, `androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0` | Compose setup guide example. |
 | Persistence | Room 2.8.5 (+ KSP) for conversations; DataStore (Preferences) for settings | Room stable 2.8.5 (2026-09-09); Room minSdk 23; Room recommends KSP. Settings are typed key/value, which DataStore covers. |
-| Credential storage | Defined in M13; do **not** use `androidx.security:security-crypto` | `EncryptedSharedPreferences`, `MasterKey`, `EncryptedFile` are deprecated in `security-crypto` 1.1.0; the API docs direct callers to AndroidKeyStore via `javax.crypto.KeyGenerator`. |
+| Credential storage | Implemented in M13: AndroidKeyStore AES-256/GCM + app-private ciphertext (see [credentials.md](./credentials.md)); do **not** use `androidx.security:security-crypto` | `EncryptedSharedPreferences`, `MasterKey`, `EncryptedFile` are deprecated in `security-crypto` 1.1.0; the API docs direct callers to AndroidKeyStore via `javax.crypto.KeyGenerator`. M13 adds `AndroidKeystoreCredentialStore` exactly that way. |
 | Testing | JUnit4 + Kotlin test for JVM unit tests; `androidx.compose.ui:ui-test-junit4` for UI; Turbine for Flow | Standard, dependency-level choices; pin at M01. |
 | Package identity | Provisional `applicationId`/`namespace` `com.voicechat.agent` | No owner domain is established in the repository. This is a convenience identifier, not a claim of ownership; it must be finalized to a controlled domain before any distribution. Cheap to change now, disruptive after publishing. |
 
@@ -304,6 +304,10 @@ provider's official docs read at the access date.
   agent plus a stable `x-opencode-session` header. Whether a voice agent's traffic
   fits Go's terms is a product/legal question to confirm before M17/M23; the
   repository should not assume it does.
+- **M13 encodes this matrix** as the typed `ProviderCapabilityRegistry`
+  (`providers/`), with auth kept separate from transport and model access; see
+  [credentials.md](./credentials.md#provider-capability-registry). Re-verify a
+  row before the adapter that consumes it ships (R-0072).
 
 ## 5. Deferred and explicitly unsupported items
 

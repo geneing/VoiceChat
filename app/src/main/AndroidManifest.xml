@@ -5,8 +5,9 @@
         Microphone capture is implemented in M07 (com.voicechat.agent.audio).
         RECORD_AUDIO is the only permission the app declares today; it is
         requested at the point of use, never at app start. AGENTS.md forbids
-        declaring a permission without the capability that needs it, so add the
-        next permission (network for LLM providers) only in M13/M14.
+        declaring a permission without the capability that needs it, so the
+        network permission is added with the first provider adapter (M14), not
+        with credential storage/registry (M13), which makes no network call.
     -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 

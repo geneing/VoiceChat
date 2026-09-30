@@ -15,6 +15,13 @@ enum class ErrorCategory {
     TEXT_TO_SPEECH,
     MODEL,
     PERSISTENCE,
+
+    /**
+     * Provider credential storage and connection setup (added in M13): storing
+     * or removing a user-supplied credential, and validating a configurable
+     * server destination.
+     */
+    CREDENTIALS,
     UNKNOWN,
 }
 
@@ -68,6 +75,17 @@ enum class ErrorCode(
     MODEL_CORRUPT(ErrorCategory.MODEL, true),
     MODEL_DOWNLOAD_FAILED(ErrorCategory.MODEL, true),
     PERSISTENCE_FAILED(ErrorCategory.PERSISTENCE, true),
+
+    /*
+     * Provider credential and connection setup (M13). These describe storing,
+     * removing, or validating a user-supplied credential and validating a
+     * configurable server destination. They never carry the credential value:
+     * `detail` is a stable, safe explanation, never key material.
+     */
+    CREDENTIAL_STORAGE_FAILED(ErrorCategory.CREDENTIALS, true),
+    PROVIDER_ENDPOINT_INVALID(ErrorCategory.CREDENTIALS, false),
+    PROVIDER_ENDPOINT_INSECURE(ErrorCategory.CREDENTIALS, false),
+
     UNKNOWN(ErrorCategory.UNKNOWN, false),
 }
 

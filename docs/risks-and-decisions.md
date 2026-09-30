@@ -7,7 +7,7 @@ limitations. It is not a decision record. Resolved choices live in
 that made them; this file records what is still not settled and who is expected
 to settle it.
 
-It currently covers M00-M09. Later milestone agents **append** items here as
+It currently covers M00-M13. Later milestone agents **append** items here as
 they find them and **close** items they resolve.
 
 ## Convention
@@ -41,6 +41,7 @@ genuinely unknown, write "unknown" rather than guessing.
 - [TTS follow-ups (M11)](#tts-follow-ups-m11) — R-0057-R-0060
 - [VAD, onset, and endpointing (M09)](#vad-onset-and-endpointing-m09) — R-0061-R-0064
 - [LLM contract follow-ups (M12)](#llm-contract-follow-ups-m12) — R-0065-R-0069
+- [Credentials and provider registry (M13)](#credentials-and-provider-registry-m13) — R-0070-R-0075
 
 ## Speech: on-device STT, TTS, VAD, and turn completion
 
@@ -71,7 +72,7 @@ genuinely unknown, write "unknown" rather than guessing.
 | R-0018 | open | llm-provider | OpenAI Responses stores conversation content by default, which conflicts with the privacy requirements. | decisions.md §4 | M14 | Set `store: false` and verify it in the adapter. |
 | R-0019 | open | llm-provider | Hermes executes tools (`pwd`, file, browser, MCP) on the server host, not as a pure proxy. | decisions.md §4 | M19, M22 | Destination disclosed, TLS required for non-local hosts, no hard-coded public endpoint. |
 | R-0020 | open | product | Whether OpenCode Go's terms accommodate a non-coding voice client is a product/legal question. | decisions.md §4, §6 | M17, M23 | Terms confirmation before the app relies on Go. |
-| R-0021 | open | credentials | Credential storage is decided (Keystore-backed; `security-crypto` is deprecated) but not implemented. | decisions.md §1 | M13 | Keystore-backed store/replace/remove with redacted status; no bundled reusable secret; store/replace/remove and redaction tests. |
+| R-0021 | resolved (M13) | credentials | Credential storage is decided (Keystore-backed; `security-crypto` is deprecated) but not implemented. | decisions.md §1 | — | M13 implements `CredentialStore` with a platform-free `EncryptedCredentialStore`, an `AndroidKeyStore` AES-256/GCM cipher plus an app-private preferences blob store (no `security-crypto`), and an in-memory JVM implementation. `CredentialStoreTest` covers store/replace/remove, a fresh-instance restart read, at-rest encryption, and typed failures; `CredentialRedactionTest` proves no secret reaches logs or crash metadata; `RepositorySecretScanTest` finds no bundled secret. Details in [credentials.md](./credentials.md). On-device run pending (R-0075). |
 | R-0022 | accepted | llm-provider | QR pairing and OAuth/device authorization beyond OpenRouter's PKCE are not documented by any provider and must not be invented. | decisions.md §4, §5 | M22 (only if documented) | No action; keep the capability false until a provider documents a short-lived, single-use flow. |
 | R-0023 | accepted | llm-provider | Silent provider/model fallback is unsupported; fallback must be explicit and visible. | decisions.md §5 | M21 (enforcement) | M12 lets a fallback be *detected*: `Completed.model`/`reasoning` carry the provider-reported identity and `LlmStreamResult` surfaces it. No action on the rule itself; M21 must add a regression test that no silent switch occurs. |
 | R-0024 | accepted | product | A "fully offline" claim is unsupported because the default LLM path is remote. | decisions.md §5 | — | No action; revisit only if an on-device LLM becomes the default. |
@@ -91,7 +92,7 @@ genuinely unknown, write "unknown" rather than guessing.
 | R-0028 | open | tracing | M04 provides the tracing seam only; M21 owns the request-state vocabulary and calls the recorder from real orchestration. | turn-tracing.md | M21 | M21 orchestrator emits correlated stage events; request-state vocabulary finalized. |
 | R-0029 | open | tracing | `TurnTraceRecorder.playbackStarted`/`playbackStopped`/`playbackDelivered` still have no real caller. | turn-tracing.md | M21, M24 | M11 emits `TTS_PLAYBACK` first-audible/interrupted diagnostics (counts and route kind, no turn id) from `EngineTextToSpeech`, but per-turn correlation and barge-in stop timing are wired only when orchestration owns the recorder (see R-0059). |
 | R-0030 | open | tracing | A developer-visible in-app trace viewer is deferred, and buffer drop/eviction counts are not surfaced in the UI. | turn-tracing.md | unspecified | A developer surface exists and exposes drop/eviction counts. |
-| R-0031 | open | privacy | Redaction covers imperative paths (HTTP headers, debug logs, crash metadata) via helpers, not by construction; those paths are not wired yet. | turn-tracing.md | M13, M26 | `Redaction` applied on provider/debug/crash paths; checks prove no credentials or content leak outside the typed event model. |
+| R-0031 | open (M13 partial) | privacy | Redaction covers imperative paths (HTTP headers, debug logs, crash metadata) via helpers, not by construction; those paths are not wired yet. | turn-tracing.md | M13, M26 | M13 applies `Redaction`/`AppLog.secret` on the credential path and `CredentialRedactionTest` proves a secret never reaches a log line, a `toString`, a store error, or a crash-metadata header map. No crash reporter is wired yet, so the remaining provider/crash paths are still M26. |
 
 ## UI and turn orchestration
 
@@ -133,8 +134,8 @@ genuinely unknown, write "unknown" rather than guessing.
 
 | ID | Status | Area | Item and open question | Source | Resolves in | Evidence to close |
 | --- | --- | --- | --- | --- | --- | --- |
-| R-0048 | open | privacy | External LLM use is a network feature: the transfer must be disclosed, and any change that sends audio, transcript, prompt, or model data off-device must be documented. | AGENTS.md | M13, M22, M26 | Destination and remote text/context transfer shown before a remote request; related docs updated with each such change. |
-| R-0049 | open | privacy | No static or packaged-resource secret checks exist yet. | implementation-plan.md (M13), AGENTS.md | M13, M26 | Checks find no secrets in source, resources, build files, logs, or generated docs; credentials stored only in Keystore-backed storage. |
+| R-0048 | open (M13 partial) | privacy | External LLM use is a network feature: the transfer must be disclosed, and any change that sends audio, transcript, prompt, or model data off-device must be documented. | AGENTS.md | M13, M22, M26 | M13 adds destination disclosure: a validated `ServerDestination.disclosure()` names the scheme and host before text is sent, and [credentials.md](./credentials.md) documents the transport rules. The in-request transfer notice and the full disclosure UI are M22/M26. |
+| R-0049 | resolved (M13) | privacy | No static or packaged-resource secret checks exist yet. | implementation-plan.md (M13), AGENTS.md | — | M13 adds `security.RepositorySecretScanTest`, which scans shipped source, `res`, build files, docs, and CI config for credential shapes (provider keys, AWS/Google/GitHub/Slack tokens, private keys, JWTs, `key = "..."` pairs) and asserts no packaged `.jks`/`.keystore`/`google-services.json`. It finds none; user credentials live only in the AndroidKeyStore. Re-run at M26 against the packaged release artifact. |
 
 ## Capture and STT follow-ups (M07-M08)
 
@@ -170,8 +171,19 @@ genuinely unknown, write "unknown" rather than guessing.
 
 | ID | Status | Area | Item and open question | Source | Resolves in | Evidence to close |
 | --- | --- | --- | --- | --- | --- | --- |
-| R-0065 | open | llm-provider | `LlmCapabilities` is declared per adapter but there is no per-*model* capability source, so `LlmRequestValidator` can only enforce what an adapter has `LlmCapabilities`-declared, not which reasoning levels a specific model exposes. | llm-contract.md | M13, M22 | A provider/model capability catalog (the `/models` surfaces in decisions.md §4) feeds the validator and the settings UI; unsupported model options are hidden. |
+| R-0065 | open (M13 partial) | llm-provider | `LlmCapabilities` is declared per adapter but there is no per-*model* capability source, so `LlmRequestValidator` can only enforce what an adapter has `LlmCapabilities`-declared, not which reasoning levels a specific model exposes. | llm-contract.md | M13, M22 | M13 adds the per-model source (`ModelCapabilities`/`ModelCapabilityCatalog` + `LlmCapabilityReconciler`), which intersects the provider union with the model's `/models` report and feeds `LlmRequestValidator`, so an unsupported option is refused/hidden (`ModelCapabilityReconciliationTest`). The live `/models` parsing (provider adapters, M14+) and the settings UI that consumes it (M22) are still pending. |
 | R-0066 | open | llm-provider | The contract has no reasoning/thinking-channel representation: an adapter that receives a separate reasoning stream must exclude it from `Delta.text` and currently has nowhere to surface it. | llm-contract.md | first adapter with a reasoning channel (M14/M16) | Either a typed side channel or an explicit documented exclusion, decided with the first verified provider; never concatenated into assistant text. |
 | R-0067 | open | llm-provider | A flow that ends without a terminal event is mapped to `LLM_MALFORMED_RESPONSE`, but no adapter exists yet to confirm that real providers always terminate cleanly (or to map an early socket close to `NETWORK` instead). | llm-contract.md, ConversationViewModel.kt | M14-M19 | A fixture proves the adapter's early-close/EOF behavior maps to the intended typed code; the `MALFORMED_RESPONSE` fallback stays only for a genuinely unterminated stream. |
 | R-0068 | open | llm-provider | `TurnStreamTrace` passes delta text to a tracing hook for live rendering; nothing structurally prevents a future trace implementation from retaining it, so content-freedom still depends on review plus the existing redaction tests. | llm-contract.md, docs/logging.md | M21, M26 | M21 records deltas through `TurnTraceRecorder` (counts only); M26 re-checks that no trace implementation retains delta or prompt text. |
 | R-0069 | open | device-validation | Provider latency, cancellation-acknowledgement timing, and streaming-parse behavior of the contract are unmeasured because no adapter is wired; the fake proves semantics, not a provider. | llm-contract.md | M14-M20, M25 | Per-provider fixture tests plus opt-in smoke runs with recorded device/model/reasoning/network conditions. |
+
+## Credentials and provider registry (M13)
+
+| ID | Status | Area | Item and open question | Source | Resolves in | Evidence to close |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-0070 | open | credentials | The AndroidKeyStore key can be permanently invalidated or lost (device restore, lockscreen change, KeyStore reset), leaving an undecryptable credential blob. M13 reports `NotStored`/`null` and requires re-entry, but the invalidation scenarios are not device-tested. | docs/credentials.md | M13 (manual run), M26 | A Pixel 10 run that reproduces a key invalidation and shows the honest re-entry state with no crash and no wrong value. |
+| R-0071 | open | privacy | Encrypted credential blobs live in app-private `SharedPreferences`; exclusion from backup/transfer relies on `allowBackup="false"` and `data_extraction_rules.xml` and is unverified against a real backup/restore or device-to-device transfer. | docs/credentials.md, res/xml/data_extraction_rules.xml | M26 | Device backup/restore and D2D transfer show no credential blob is exported. |
+| R-0072 | open | llm-provider | The provider capability registry encodes the M00 matrix (accessed 2026-09-28); Go/Zen/Hermes entries are explicitly marked unverified and none has been re-checked against live provider docs. | docs/credentials.md, decisions.md §4 | M14-M19, M22 | Each provider row re-verified against current official docs before its adapter ships; `unverified` flags resolved or updated. |
+| R-0073 | open | credentials | Optional minimal credential validation is a policy + interface only; no real network validator exists, so no provider credential is actually validated and the auth-error path is proven with a fake, not a provider. | docs/credentials.md | M14-M19 | A provider adapter implements `CredentialValidator`; a fixture test proves 401/403 maps to `LLM_AUTHENTICATION_FAILED` and never echoes the key. |
+| R-0074 | open | credentials | Destination validation checks scheme/host/TLS but does not resolve DNS, follow redirects, or defend against DNS rebinding; a hostname resolving to a private address would still pass as `https`. | docs/credentials.md, decisions.md §4 | M19 | The Hermes adapter constrains redirects/DNS and proves that a request cannot be redirected to an unintended host. |
+| R-0075 | open | device-validation | The `AndroidKeystoreCredentialStoreInstrumentedTest` is compiled only; store/replace/remove and the restart read have not been run against a real device KeyStore, and a true `force-stop` relaunch remains a manual check. | docs/credentials.md, Tests.md | M13 (manual run), M26 | Pixel 10 run of the instrumented test plus a manual force-stop relaunch showing the credential persists and preferences hold only ciphertext. |

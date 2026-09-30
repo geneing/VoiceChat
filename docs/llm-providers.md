@@ -1,7 +1,9 @@
 # LLM Providers and Connections
 
 This is the planned provider and account-connection scope. No provider client,
-login flow, API-key storage, or QR pairing is implemented yet.
+login flow, or QR pairing is implemented yet; API-key storage and the provider
+capability registry are implemented (see
+[credentials.md](./credentials.md)).
 
 The verified per-provider endpoint, authentication, model-discovery, streaming,
 and reasoning capabilities—and the providers where a capability remains
