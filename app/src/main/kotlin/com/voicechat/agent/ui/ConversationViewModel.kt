@@ -6,29 +6,15 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.voicechat.agent.contracts.ConversationRepository
-import com.voicechat.agent.contracts.DiagnosticOutcome
-import com.voicechat.agent.contracts.DiagnosticStage
 import com.voicechat.agent.contracts.DiagnosticsSink
 import com.voicechat.agent.contracts.LanguageModel
-import com.voicechat.agent.contracts.LlmMessage
-import com.voicechat.agent.contracts.LlmRequest
-import com.voicechat.agent.contracts.LlmRole
-import com.voicechat.agent.contracts.LlmStreamEvent
 import com.voicechat.agent.contracts.NoOpDiagnosticsSink
-import com.voicechat.agent.contracts.TurnStreamTrace
-import com.voicechat.agent.contracts.consume
+import com.voicechat.agent.contracts.TextToSpeech
 import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.diagnostics.SystemMonotonicClock
-import com.voicechat.agent.diagnostics.TurnTraceFactory
-import com.voicechat.agent.diagnostics.TurnTraceRecorder
-import com.voicechat.agent.domain.AssistantDelivery
-import com.voicechat.agent.domain.AssistantTurn
 import com.voicechat.agent.domain.Conversation
 import com.voicechat.agent.domain.ConversationId
-import com.voicechat.agent.domain.DeliveryState
 import com.voicechat.agent.domain.ErrorCode
-import com.voicechat.agent.domain.GeneratedText
-import com.voicechat.agent.domain.GenerationState
 import com.voicechat.agent.domain.ProviderModelSelection
 import com.voicechat.agent.domain.ReasoningLevel
 import com.voicechat.agent.domain.Transcript
@@ -38,23 +24,24 @@ import com.voicechat.agent.domain.UserTurn
 import com.voicechat.agent.domain.UserTurnSource
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
-import com.voicechat.agent.domain.context.ContextMessage
-import com.voicechat.agent.domain.context.ContextRole
 import com.voicechat.agent.domain.context.ModelContextBuilder
 import com.voicechat.agent.log.AppLog
+import com.voicechat.agent.orchestration.TurnObserver
+import com.voicechat.agent.orchestration.TurnOrchestrator
+import com.voicechat.agent.orchestration.TurnOutcome
+import com.voicechat.agent.orchestration.TurnRequest
+import com.voicechat.agent.orchestration.TurnResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /** Generates the stable IDs the conversation layers assign to conversations and turns. */
@@ -76,31 +63,26 @@ object UuidConversationIdFactory : ConversationIdFactory {
 /**
  * Lifecycle-aware state holder for the conversation UI (M06).
  *
- * It is the single seam between Compose and the M02 [ConversationRepository] /
- * [LanguageModel] contracts. It owns the manual-text path and the shared
- * turn/conversation path that voice will reuse in M21:
+ * It is the single seam between Compose and the M02 contracts. Conversation-level
+ * concerns — the history list, opening/deleting a conversation, the composer, and
+ * notices — stay here; **the generation pipeline itself is owned by the M21
+ * [TurnOrchestrator]**.
  *
  * - **One path for text and voice.** [onSend] and the voice seam
  *   ([setProvisionalTranscript] / [commitProvisionalTranscript]) both funnel into
- *   one [submitTurn], which appends a finalized [UserTurn] and persists it
- *   through the repository before generation starts. Manual text is never a
- *   special case.
+ *   one [submitTurn], which appends a finalized [UserTurn] and hands it to the
+ *   orchestrator, which persists it before starting the provider request. Manual
+ *   text is never a special case.
  * - **Correction is not rewriting.** The composer draft is editable and is
  *   persisted exactly as submitted; recognition output is only ever provisional
  *   until the user commits a (possibly corrected) final text.
- * - **Truthful streaming.** Assistant deltas are rendered live from
- *   [ConversationDialogState.liveAssistantText] but are persisted only at a
- *   terminal state. On cancel/failure the persisted turn keeps generation
- *   `CANCELLED`/`FAILED` and delivery `INTERRUPTED`, with only the delivered
- *   prefix, so a cancelled response is never stored as complete.
+ * - **Truthful streaming.** The orchestrator renders assistant deltas live and
+ *   persists only delivered text at a terminal state; a cancelled or failed reply
+ *   is stored as such, with only the delivered prefix.
  *
- * The class is deliberately not the full M21 turn state machine: it covers one
- * manual/text request at a time and leaves barge-in, STT, and TTS integration to
- * later milestones.
- *
- * **Tracing.** Stage events go through the M04 [TurnTraceFactory] /
- * [TurnTraceRecorder] seam, never a parallel logger. Only counts and stable
- * codes are recorded; transcript, prompt, and credential content never are.
+ * **Tracing.** Stage events go through the orchestrator's M04
+ * [com.voicechat.agent.diagnostics.TurnTraceRecorder]; only counts and stable
+ * codes are recorded. Transcript, prompt, and credential content never are.
  */
 class ConversationViewModel(
     private val repository: ConversationRepository,
@@ -112,11 +94,22 @@ class ConversationViewModel(
     private val wallClock: () -> Long = { System.currentTimeMillis() },
     private val idFactory: ConversationIdFactory = UuidConversationIdFactory,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
-    private val contextBuilder: ModelContextBuilder = ModelContextBuilder(),
+    contextBuilder: ModelContextBuilder = ModelContextBuilder(),
+    private val textToSpeech: TextToSpeech? = null,
     scope: CoroutineScope? = null,
 ) : ViewModel(),
     ConversationActions {
-    private val traceFactory = TurnTraceFactory(clock, diagnostics)
+    private val orchestrator =
+        TurnOrchestrator(
+            repository = repository,
+            languageModel = languageModel,
+            textToSpeech = textToSpeech,
+            diagnostics = diagnostics,
+            clock = clock,
+            wallClock = wallClock,
+            assistantTurnId = { idFactory.newTurnId() },
+            contextBuilder = contextBuilder,
+        )
 
     /** External scope for tests; production uses the ViewModel's own scope. */
     private val externalScope = scope
@@ -144,7 +137,7 @@ class ConversationViewModel(
     /** The active generation job, if any. */
     private var generationJob: Job? = null
 
-    /** Identity token for the active generation, so stale jobs cannot update the UI. */
+    /** Identity token for the active generation, so stale work cannot update the UI. */
     private var activeGeneration: Any? = null
 
     /** Set while the holder is being cleared, so teardown does not reconcile a turn. */
@@ -224,7 +217,7 @@ class ConversationViewModel(
         val job = generationJob ?: return
         if (!job.isActive) return
         AppLog.d { "ui: cancel requested" }
-        // Optimistic feedback; the generation job persists the interrupted turn and
+        // Optimistic feedback; the orchestration persists the interrupted turn and
         // then finalizes the state with the persisted turns.
         _uiState.update { state ->
             state.copy(
@@ -241,6 +234,7 @@ class ConversationViewModel(
         val lastUserIndex = conversation.turns.indexOfLast { it is UserTurn }
         if (lastUserIndex < 0) return
         val lastUser = conversation.turns[lastUserIndex] as UserTurn
+        AppLog.d { "ui: retry" }
         val marker = beginGeneration()
         _uiState.update { state ->
             state.copy(
@@ -254,36 +248,14 @@ class ConversationViewModel(
         }
         generationJob =
             coroutineScope().launch(dispatcher) {
-                // Drop the failed/cancelled reply (and any later turns) before re-running.
-                val retried =
+                // Drop the failed/cancelled reply (and any later turns) before re-running;
+                // orchestration re-appends and re-persists the same user turn.
+                val truncated =
                     conversation.copy(
                         updatedAtEpochMillis = wallClock(),
-                        turns = conversation.turns.take(lastUserIndex + 1),
+                        turns = conversation.turns.take(lastUserIndex),
                     )
-                try {
-                    repository.save(retried)
-                } catch (cancellation: CancellationException) {
-                    throw cancellation
-                } catch (failure: Throwable) {
-                    handleStorageFailure(marker, lastUser.transcript.text)
-                    return@launch
-                }
-                currentConversation = retried
-                if (activeGeneration !== marker) return@launch
-                _uiState.update { state ->
-                    state.copy(
-                        dialog =
-                            state.dialog?.copy(
-                                conversationId = retried.id,
-                                title = retried.title,
-                                turns = retried.turns,
-                                phase = TurnPhase.GENERATING,
-                                liveAssistantText = "",
-                            ),
-                    )
-                }
-                val trace = traceFactory.start(lastUser.id, selection, reasoningLevel = reasoning?.name)
-                generate(retried, lastUser.id, trace, marker)
+                runOrchestratedTurn(truncated, lastUser, lastUser.transcript.text, marker)
             }
     }
 
@@ -340,8 +312,8 @@ class ConversationViewModel(
     /**
      * Shows live STT text as provisional (not committed).
      *
-     * This is the M06 seam the M21 voice loop will call; the text is displayed
-     * as provisional and is never persisted or sent until
+     * This is the M06 seam the voice loop calls; the text is displayed as
+     * provisional and is never persisted or sent until
      * [commitProvisionalTranscript] finalizes it.
      */
     fun setProvisionalTranscript(text: String) {
@@ -385,19 +357,6 @@ class ConversationViewModel(
                     ),
             )
         }
-        generationJob =
-            coroutineScope().launch(dispatcher) {
-                runTurn(idFactory.newTurnId(), committed, source, marker)
-            }
-    }
-
-    private suspend fun runTurn(
-        turnId: TurnId,
-        text: String,
-        source: UserTurnSource,
-        marker: Any,
-    ) {
-        val trace = traceFactory.start(turnId, selection, reasoningLevel = reasoning?.name)
         val now = wallClock()
         val base =
             currentConversation?.copy()
@@ -406,287 +365,133 @@ class ConversationViewModel(
                     createdAtEpochMillis = now,
                     updatedAtEpochMillis = now,
                 )
-        val title = base.title ?: titleFrom(text)
+        val title = base.title ?: titleFrom(committed)
         val userTurn =
             UserTurn(
-                id = turnId,
-                transcript = Transcript.final(text),
+                id = idFactory.newTurnId(),
+                transcript = Transcript.final(committed),
                 source = source,
             )
-        val withUser =
-            base.copy(
-                title = title,
-                updatedAtEpochMillis = now,
-                turns = base.turns + userTurn,
-            )
-
-        val saveSpan = trace.start(DiagnosticStage.PERSISTENCE)
-        try {
-            repository.save(withUser)
-            saveSpan.succeed()
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (failure: Throwable) {
-            saveSpan.fail()
-            handleStorageFailure(marker, text)
-            return
-        }
-        currentConversation = withUser
-        if (activeGeneration !== marker) return
-        _uiState.update { state ->
-            state.copy(
-                dialog =
-                    state.dialog?.copy(
-                        conversationId = withUser.id,
-                        title = title,
-                        turns = withUser.turns,
-                        phase = TurnPhase.GENERATING,
-                        liveAssistantText = "",
-                    ),
-            )
-        }
-        generate(withUser, turnId, trace, marker)
+        val titled = base.copy(title = title, updatedAtEpochMillis = now)
+        generationJob =
+            coroutineScope().launch(dispatcher) {
+                runOrchestratedTurn(titled, userTurn, committed, marker)
+            }
     }
 
-    private suspend fun generate(
+    /** Hands one turn to the orchestrator and maps each callback to UI state. */
+    private suspend fun runOrchestratedTurn(
         conversation: Conversation,
-        userTurnId: TurnId,
-        trace: TurnTraceRecorder,
+        userTurn: UserTurn,
+        originalText: String,
         marker: Any,
     ) {
-        val request =
-            LlmRequest(
-                model = selection,
-                // Bound the context once, in M05's ModelContextBuilder: the
-                // request carries only the window the app chose to send.
-                messages = contextBuilder.build(conversation).messages.map { it.toLlmMessage() },
+        val observer =
+            object : TurnObserver {
+                override fun onUserTurnCommitted(conversation: Conversation) {
+                    if (activeGeneration !== marker) return
+                    currentConversation = conversation
+                    _uiState.update { state ->
+                        state.copy(
+                            dialog =
+                                state.dialog?.copy(
+                                    conversationId = conversation.id,
+                                    title = conversation.title,
+                                    turns = conversation.turns,
+                                    phase = TurnPhase.GENERATING,
+                                    liveAssistantText = "",
+                                ),
+                        )
+                    }
+                }
+
+                override fun onLiveAssistantText(text: String) {
+                    if (activeGeneration !== marker) return
+                    _uiState.update { state -> state.copy(dialog = state.dialog?.copy(liveAssistantText = text)) }
+                }
+
+                override fun onTurnFinished(result: TurnResult) {
+                    applyTurnResult(marker, result, originalText)
+                }
+            }
+        orchestrator.run(
+            TurnRequest(
+                conversation = conversation,
+                userTurn = userTurn,
+                selection = selection,
                 reasoning = reasoning,
-            )
-        val requestSpan = trace.start(DiagnosticStage.LLM_REQUEST)
-        trace.requestSelected(selection.providerId.value, selection.modelId.value, reasoning?.name)
-        trace.markStreamStarted()
-        AppLog.d {
-            "ui: generation start provider=${selection.providerId.value} model=${selection.modelId.value} " +
-                "contextMessages=${request.messages.size} contextChars=${request.characterCount}"
-        }
-
-        val rendered = StringBuilder()
-        var terminal = false
-        val streamTrace =
-            UiStreamTrace(trace, clock) { liveText ->
-                rendered.clear()
-                rendered.append(liveText)
-                publishLiveAssistant(marker, liveText)
-            }
-        try {
-            // One reference consumer owns the stream bookkeeping (ordering,
-            // partial text, usage, provider-reported model); this method only
-            // renders deltas and reacts to the terminal state.
-            val result = languageModel.consume(request, streamTrace)
-            val generatedText = rendered.toString()
-            if (result.model != null && result.model.value != selection.modelId.value) {
-                // The provider served a different model than the user selected:
-                // record it so a silent switch is visible (R-0017).
-                AppLog.w { "ui: provider reported a different model than selected" }
-            }
-            terminal = result.terminal != null
-            when (val ended = result.terminal) {
-                is LlmStreamEvent.Completed -> {
-                    requestSpan.succeed()
-                    finishTurn(
-                        conversation = conversation,
-                        generatedText = generatedText,
-                        deliveredText = generatedText,
-                        generationState = GenerationState.COMPLETED,
-                        deliveryState = DeliveryState.COMPLETED,
-                        error = null,
-                        trace = trace,
-                        marker = marker,
-                    )
-                }
-
-                is LlmStreamEvent.Cancelled -> {
-                    requestSpan.cancel()
-                    finishTurn(
-                        conversation = conversation,
-                        generatedText = ended.partialText,
-                        deliveredText = generatedText,
-                        generationState = GenerationState.CANCELLED,
-                        deliveryState = DeliveryState.INTERRUPTED,
-                        error = null,
-                        trace = trace,
-                        marker = marker,
-                    )
-                }
-
-                is LlmStreamEvent.Failed -> {
-                    requestSpan.fail()
-                    finishTurn(
-                        conversation = conversation,
-                        generatedText = ended.partialText,
-                        deliveredText = generatedText,
-                        generationState = GenerationState.FAILED,
-                        deliveryState = DeliveryState.FAILED,
-                        error = ended.error,
-                        trace = trace,
-                        marker = marker,
-                    )
-                }
-
-                // An adapter that ends the flow without a terminal event cannot
-                // say whether the text was whole, so it is treated as a failure
-                // rather than persisted as a completed reply.
-                null, is LlmStreamEvent.Delta -> {
-                    requestSpan.fail()
-                    finishTurn(
-                        conversation = conversation,
-                        generatedText = generatedText,
-                        deliveredText = generatedText,
-                        generationState = GenerationState.FAILED,
-                        deliveryState = DeliveryState.FAILED,
-                        error = VoiceAgentError(ErrorCode.LLM_MALFORMED_RESPONSE),
-                        trace = trace,
-                        marker = marker,
-                    )
-                }
-            }
-        } catch (cancellation: CancellationException) {
-            // The user cancelled or the holder is going away. Persist what was
-            // actually shown as an interrupted turn; never as a completed reply.
-            if (!terminal && !closed) {
-                withContext(NonCancellable) {
-                    requestSpan.cancel()
-                    finishTurn(
-                        conversation = conversation,
-                        generatedText = rendered.toString(),
-                        deliveredText = rendered.toString(),
-                        generationState = GenerationState.CANCELLED,
-                        deliveryState = DeliveryState.INTERRUPTED,
-                        error = null,
-                        trace = trace,
-                        marker = marker,
-                    )
-                }
-            }
-            throw cancellation
-        }
+            ),
+            observer,
+        )
     }
 
     /**
-     * Persists a terminal assistant turn and publishes the final UI state.
+     * Applies the orchestrator's terminal result to the dialog.
      *
-     * Delivery never exceeds generation: [deliveredText] is kept only when it is a
-     * prefix of [generatedText]. A turn with no generated and no delivered text is
-     * not persisted, so a cancelled-before-any-output request leaves no phantom
-     * reply.
+     * Only a user-turn persistence failure restores the draft; otherwise the
+     * persisted turns are adopted and the phase/notice are derived from the
+     * typed [TurnOutcome], so a cancelled or failed reply is never shown as a
+     * completed one.
      */
-    private suspend fun finishTurn(
-        conversation: Conversation,
-        generatedText: String,
-        deliveredText: String,
-        generationState: GenerationState,
-        deliveryState: DeliveryState,
-        error: VoiceAgentError?,
-        trace: TurnTraceRecorder,
+    private fun applyTurnResult(
         marker: Any,
+        result: TurnResult,
+        originalText: String,
     ) {
-        AppLog.d {
-            "ui: turn terminal generation=$generationState delivery=$deliveryState " +
-                "generated=${generatedText.length} delivered=${deliveredText.length} error=${error?.code?.name ?: "none"}"
-        }
-        val outcome = persistAssistant(conversation, generatedText, deliveredText, generationState, deliveryState, marker)
-        when (generationState) {
-            GenerationState.COMPLETED -> {
-                trace.turnCompleted()
-            }
-
-            GenerationState.FAILED -> {
-                trace.error(DiagnosticStage.LLM_REQUEST, (error?.code ?: ErrorCode.LLM_REQUEST_FAILED).name)
-                trace.turnEnded(DiagnosticOutcome.FAILED)
-            }
-
-            GenerationState.CANCELLED -> {
-                trace.turnEnded(DiagnosticOutcome.CANCELLED)
-            }
-
-            GenerationState.IN_PROGRESS -> {
-                Unit
-            }
-        }
         if (closed) return
         if (activeGeneration !== marker) return
-        val persistedTurns = (outcome as? PersistOutcome.Saved)?.conversation?.turns
-        val persistNotice = (outcome as? PersistOutcome.Failed)?.notice
+        if (!result.userTurnPersisted) {
+            handleStorageFailure(marker, originalText)
+            return
+        }
+        val record = result.record
+        val error = record?.failure
+        val outcome = record?.outcome
+        val notice =
+            when {
+                result.persistenceFailure != null -> {
+                    ConversationNotice.Failure(ErrorCode.PERSISTENCE_FAILED, retryable = true)
+                }
+
+                outcome is TurnOutcome.ProviderError && error != null -> {
+                    error.toNotice()
+                }
+
+                outcome is TurnOutcome.TtsFailure && error != null -> {
+                    error.toNotice()
+                }
+
+                outcome is TurnOutcome.Cancelled -> {
+                    ConversationNotice.RequestCancelled
+                }
+
+                outcome is TurnOutcome.Interrupted -> {
+                    ConversationNotice.RequestCancelled
+                }
+
+                else -> {
+                    null
+                }
+            }
+        val phase = record?.phase ?: TurnPhase.IDLE
+        AppLog.d {
+            "ui: turn terminal phase=$phase outcome=${outcome?.let { it::class.simpleName } ?: "none"} " +
+                "generated=${record?.generatedText?.length ?: 0} delivered=${record?.deliveredText?.length ?: 0}"
+        }
+        currentConversation = result.conversation
         activeGeneration = null
         _uiState.update { state ->
             val dialog = state.dialog ?: return@update state
             state.copy(
                 dialog =
                     dialog.copy(
-                        turns = persistedTurns ?: dialog.turns,
+                        turns = result.conversation.turns,
                         liveAssistantText = null,
-                        phase =
-                            when (generationState) {
-                                GenerationState.COMPLETED -> TurnPhase.COMPLETED
-                                GenerationState.CANCELLED -> TurnPhase.CANCELLED
-                                GenerationState.FAILED -> TurnPhase.FAILED
-                                GenerationState.IN_PROGRESS -> TurnPhase.GENERATING
-                            },
-                        notice =
-                            when {
-                                persistNotice != null -> persistNotice
-                                error != null -> ConversationNotice.Failure(error.code, error.retryable)
-                                generationState == GenerationState.CANCELLED -> ConversationNotice.RequestCancelled
-                                else -> null
-                            },
+                        phase = phase,
+                        notice = notice,
                     ),
             )
         }
-    }
-
-    private suspend fun persistAssistant(
-        conversation: Conversation,
-        generatedText: String,
-        deliveredText: String,
-        generationState: GenerationState,
-        deliveryState: DeliveryState,
-        marker: Any,
-    ): PersistOutcome {
-        if (generatedText.isEmpty() && deliveredText.isEmpty()) return PersistOutcome.Skipped
-        val delivered = if (generatedText.startsWith(deliveredText)) deliveredText else generatedText
-        val assistant =
-            AssistantTurn(
-                id = idFactory.newTurnId(),
-                generated = GeneratedText(text = generatedText, state = generationState),
-                delivery = AssistantDelivery(deliveredText = delivered, state = deliveryState),
-            )
-        val updated =
-            conversation.copy(
-                updatedAtEpochMillis = wallClock(),
-                turns = conversation.turns + assistant,
-            )
-        try {
-            repository.save(updated)
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (failure: Throwable) {
-            return PersistOutcome.Failed(failure.toNotice())
-        }
-        // Only adopt the saved conversation when this generation still owns the UI;
-        // a navigation away leaves the repository updated without clobbering the
-        // newly opened conversation in memory.
-        if (activeGeneration === marker) {
-            currentConversation = updated
-        }
-        return PersistOutcome.Saved(updated)
-    }
-
-    private fun publishLiveAssistant(
-        marker: Any,
-        text: String,
-    ) {
-        if (activeGeneration !== marker) return
-        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(liveAssistantText = text)) }
     }
 
     private fun handleStorageFailure(
@@ -767,6 +572,7 @@ fun conversationViewModelFactory(
     selection: ProviderModelSelection,
     reasoning: ReasoningLevel? = null,
     diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
+    textToSpeech: TextToSpeech? = null,
 ): ViewModelProvider.Factory =
     viewModelFactory {
         initializer {
@@ -776,6 +582,7 @@ fun conversationViewModelFactory(
                 selection = selection,
                 reasoning = reasoning,
                 diagnostics = diagnostics,
+                textToSpeech = textToSpeech,
             )
         }
     }
@@ -795,10 +602,10 @@ private fun Conversation.toDialogState(): ConversationDialogState =
                     TurnPhase.CANCELLED
                 }
 
-                is AssistantTurn -> {
+                is com.voicechat.agent.domain.AssistantTurn -> {
                     when (last.generated.state) {
-                        GenerationState.CANCELLED -> TurnPhase.CANCELLED
-                        GenerationState.FAILED -> TurnPhase.FAILED
+                        com.voicechat.agent.domain.GenerationState.CANCELLED -> TurnPhase.CANCELLED
+                        com.voicechat.agent.domain.GenerationState.FAILED -> TurnPhase.FAILED
                         else -> TurnPhase.IDLE
                     }
                 }
@@ -811,78 +618,7 @@ private fun ConversationUiState.openFailed(notice: ConversationNotice): Conversa
         list = list.copy(notice = notice),
     )
 
-/**
- * Bridges the shared stream consumer to the M06 UI and the M04 trace.
- *
- * It records only counts, stable state/reason names, and reported token counts
- * through [TurnTraceRecorder]. Delta text never reaches the trace or the log;
- * [onDeltaAppended] receives the running total length only.
- */
-private class UiStreamTrace(
-    private val trace: TurnTraceRecorder,
-    private val clock: MonotonicClock,
-    private val onRenderedText: (String) -> Unit,
-) : TurnStreamTrace {
-    private val rendered = StringBuilder()
-
-    override fun onDelta(
-        index: Int,
-        characterCount: Int,
-        text: String,
-    ) {
-        rendered.append(text)
-        // The trace records only the delta index and its length, never the text.
-        trace.llmDelta(clock.nanoTime(), characterCount)
-        onRenderedText(rendered.toString())
-    }
-
-    override fun onCompleted(event: LlmStreamEvent.Completed) {
-        trace.requestState("completed")
-        trace.requestEndReason("completed")
-        trace.requestUsage(
-            promptTokens = event.usage?.promptTokens,
-            completionTokens = event.usage?.completionTokens,
-            totalTokens = event.usage?.totalTokens,
-        )
-    }
-
-    override fun onEnded(
-        reason: String,
-        characterCount: Int,
-    ) {
-        trace.requestState("ended")
-        trace.requestEndReason(reason)
-    }
-
-    /** The assistant text rendered so far. */
-    val text: String get() = rendered.toString()
-}
-
-private fun ContextMessage.toLlmMessage(): LlmMessage =
-    LlmMessage(
-        role =
-            when (role) {
-                ContextRole.USER -> LlmRole.USER
-                ContextRole.ASSISTANT -> LlmRole.ASSISTANT
-            },
-        content = text,
-    )
-
-/** Result of writing a terminal assistant turn. */
-private sealed interface PersistOutcome {
-    /** The turn was written and this is the resulting conversation. */
-    data class Saved(
-        val conversation: Conversation,
-    ) : PersistOutcome
-
-    /** The write failed; [notice] is safe to show. */
-    data class Failed(
-        val notice: ConversationNotice,
-    ) : PersistOutcome
-
-    /** There was nothing worth persisting. */
-    data object Skipped : PersistOutcome
-}
+private fun VoiceAgentError.toNotice(): ConversationNotice = ConversationNotice.Failure(code, retryable)
 
 private fun Throwable.toNotice(): ConversationNotice {
     val error = (this as? VoiceAgentException)?.error

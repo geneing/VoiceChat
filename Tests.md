@@ -76,6 +76,7 @@ they do not fake availability, and none requires a human speaker.
 | `stt.MlKitSttInstrumentedTest` | Both catalog modes return a typed `SttAvailability` without throwing; the adapter reports the single engine ID; and, when the engine is **not** ready, the adapter refuses to run and emits a typed `STT_MODEL_NOT_READY`/`STT_UNAVAILABLE` failure. When the engine is ready this case is skipped (`Assume`), never faked. |
 | `tts.AndroidTtsInstrumentedTest` | The platform TTS engine initializes and enumerates installed voices; a "ready" voice must be one `getVoices()` reported and not network-required (network voices are never selectable); immediate `stop()` during playback ends the utterance with a terminal event without hanging (skipped with `Assume` when no embedded voice exists); the `OnDeviceTts` contract adapter rejects empty input and closes. Availability is recorded, never faked. |
 | `ui.ConversationAppInstrumentedTest` | The app launches on device and renders the conversation list (Room + Compose smoke). |
+| `orchestration.TurnOrchestrationInstrumentedTest` | Runs the real M21 `TurnOrchestrator`/`TurnStateMachine` on device with an inline fake provider and an in-memory repository: one text turn completes and persists a truthful assistant turn. No network, credential, microphone, or real TTS; a structural smoke check, not a provider/voice measurement. |
 
 ## M07 — Microphone capture
 
@@ -317,3 +318,46 @@ What the JVM suite proves instead (see
 Recorded with `:app:testDebugUnitTest`; no device, network, model, or credential
 is involved. Any future real provider belongs to M14–M20, whose device runs are
 recorded in their own sections.
+
+## M21 — Turn orchestration and cancellation
+
+M21 is a **JVM-first** milestone: the turn state machine and orchestrator are
+pure-Kotlin and `android.*`-free, so the acceptance behavior is proven by
+`:app:testDebugUnitTest` with deterministic fakes and no device, network,
+credential, microphone, or real TTS. The package does not depend on the Compose
+`ui` package (`OrchestrationPurityTest`).
+
+What the JVM suite proves (see [docs/orchestration.md](./docs/orchestration.md)):
+
+- voice and manual turns share one path; a voice turn records its `VOICE` source;
+- interim transcript revisions apply in order and stale ones are dropped;
+- no-speech, empty, and low-confidence transcripts end as explicit outcomes;
+- provider failure, remote cancellation, user cancellation, barge-in
+  interruption, and TTS failure each map to a typed terminal state;
+- out-of-order late events and events from a superseded turn are dropped by turn
+  ID and never mutate a newer turn (cancellation races);
+- generated/queued/delivered accounting persists only the delivered prefix and
+  leaves no phantom assistant turn when nothing was output;
+- history and trace stay content-free, and a provider-reported model mismatch is
+  recorded rather than silently accepted.
+
+An instrumented test compiles the same path for the device runtime:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+# Fast, deterministic checks (no device)
+.\gradlew.bat :app:testDebugUnitTest
+
+# Compile the instrumented test WITHOUT a device
+.\gradlew.bat :app:assembleDebugAndroidTest
+```
+
+`orchestration.TurnOrchestrationInstrumentedTest` **was not run** for this
+milestone; per the device-testing policy it is compiled only, and it is a
+structural smoke check with a fake provider, not a voice-quality measurement.
+
+The live capture -> VAD -> STT -> orchestration loop, TTS chunk overlap, and
+barge-in onset timing remain **manual/device** work for M24/M25 (R-0080–R-0083);
+do not claim them from the JVM suite.
+

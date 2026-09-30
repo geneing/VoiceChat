@@ -3,17 +3,20 @@ package com.voicechat.agent.domain
 /**
  * Coarse lifecycle of a single voice or text turn.
  *
- * This is a deliberate, conservative seam: the authoritative turn state machine
- * is implemented by orchestration in M21, which may refine the event set. The
- * transitions here exist so adapters and tests share one definition of a legal
- * turn lifecycle and can reject impossible transitions instead of inferring
- * them from UI booleans (see `docs/architecture.md`, "State and interaction
- * model").
+ * This is the shared, platform-free vocabulary the M21 orchestration state
+ * machine drives and every adapter/test agrees on, so an impossible lifecycle
+ * is rejected instead of being inferred from UI booleans (see
+ * `docs/architecture.md`, "State and interaction model", and
+ * `docs/orchestration.md`).
  *
- * `IDLE -> LISTENING -> GENERATING -> SPEAKING -> COMPLETED`
+ * Manual text starts directly at [GENERATING] (there is no listening stage), so
+ * `IDLE -> GENERATING` is legal. A voice turn listens first and commits a final
+ * transcript: `IDLE -> LISTENING -> GENERATING`. Streaming TTS moves
+ * `GENERATING -> SPEAKING` while generation may still be in flight, and a
+ * text-only turn completes straight from [GENERATING].
  *
- * `INTERRUPTED` is the barge-in branch: assistant playback was cut short, and
- * the same user is expected to continue speaking (`INTERRUPTED -> LISTENING`).
+ * `INTERRUPTED` is the barge-in branch: assistant output was cut short, and the
+ * same user is expected to continue speaking (`INTERRUPTED -> LISTENING`).
  * `COMPLETED`, `CANCELLED`, and `FAILED` are terminal.
  */
 enum class TurnPhase {
@@ -45,11 +48,19 @@ enum class TurnPhase {
 
     private fun allowedTransitions(): Set<TurnPhase> =
         when (this) {
-            IDLE -> setOf(LISTENING)
+            // Manual text may generate without a listening stage; voice listens first.
+            IDLE -> setOf(LISTENING, GENERATING)
+
             LISTENING -> setOf(GENERATING, CANCELLED, FAILED, IDLE)
-            GENERATING -> setOf(SPEAKING, CANCELLED, FAILED)
+
+            // A streamed reply may complete before any speech (text-only) or be
+            // interrupted by barge-in before the first chunk is audible.
+            GENERATING -> setOf(SPEAKING, COMPLETED, INTERRUPTED, CANCELLED, FAILED)
+
             SPEAKING -> setOf(COMPLETED, INTERRUPTED, CANCELLED, FAILED)
+
             INTERRUPTED -> setOf(LISTENING, CANCELLED, FAILED)
+
             COMPLETED, CANCELLED, FAILED -> emptySet()
         }
 

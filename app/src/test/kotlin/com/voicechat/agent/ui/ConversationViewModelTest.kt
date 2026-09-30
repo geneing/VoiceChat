@@ -8,6 +8,7 @@ import com.voicechat.agent.contracts.LanguageModel
 import com.voicechat.agent.contracts.LlmStreamEvent
 import com.voicechat.agent.contracts.LlmUsage
 import com.voicechat.agent.contracts.NoOpDiagnosticsSink
+import com.voicechat.agent.contracts.TtsEvent
 import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.domain.AssistantTurn
 import com.voicechat.agent.domain.ConversationId
@@ -25,6 +26,7 @@ import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.fake.DeterministicLanguageModel
 import com.voicechat.agent.fake.FakeLanguageModel
 import com.voicechat.agent.fake.FakeMonotonicClock
+import com.voicechat.agent.fake.FakeTextToSpeech
 import com.voicechat.agent.fake.InMemoryConversationRepository
 import com.voicechat.agent.fake.RecordingDiagnosticsSink
 import com.voicechat.agent.fake.ScriptedLlmStep
@@ -63,6 +65,7 @@ class ConversationViewModelTest {
         diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
         clock: MonotonicClock = FakeMonotonicClock(),
         idFactory: ConversationIdFactory = SequentialConversationIdFactory(),
+        textToSpeech: com.voicechat.agent.contracts.TextToSpeech? = null,
     ): ConversationViewModel {
         val testDispatcher = UnconfinedTestDispatcher(testScheduler)
         return ConversationViewModel(
@@ -74,6 +77,7 @@ class ConversationViewModelTest {
             wallClock = { NOW_EPOCH_MILLIS },
             idFactory = idFactory,
             dispatcher = testDispatcher,
+            textToSpeech = textToSpeech,
             scope = CoroutineScope(testDispatcher),
         )
     }
@@ -689,6 +693,52 @@ class ConversationViewModelTest {
             )
             assertTrue(sink.events.none { it.attributes.containsValue("secret prompt") })
             assertTrue(sink.events.none { it.attributes.containsValue("hello") })
+            viewModel.shutdown()
+        }
+
+    @Test
+    fun aTtsFailureIsShownAsAFailedTurnAndNotACompletedReply() =
+        runTest {
+            val repository = InMemoryConversationRepository()
+            val tts =
+                FakeTextToSpeech(
+                    script = { utteranceId, _ ->
+                        listOf(
+                            TtsEvent.Queued(utteranceId, "Hello."),
+                            TtsEvent.Failed(VoiceAgentError(ErrorCode.TTS_PLAYBACK_FAILED)),
+                        )
+                    },
+                )
+            val model =
+                FakeLanguageModel(
+                    providerId = selection.providerId,
+                    script = listOf(LlmStreamEvent.Delta("Hello."), LlmStreamEvent.Completed()),
+                )
+            val viewModel = newViewModel(repository, model, textToSpeech = tts)
+
+            viewModel.onNewConversation()
+            viewModel.onComposerChanged("Q")
+            viewModel.onSend()
+            advanceUntilIdle()
+
+            assertEquals(
+                TurnPhase.FAILED,
+                viewModel.uiState.value.dialog
+                    ?.phase,
+            )
+            assertEquals(
+                ConversationNotice.Failure(ErrorCode.TTS_PLAYBACK_FAILED, retryable = true),
+                viewModel.uiState.value.dialog
+                    ?.notice,
+            )
+            val persisted =
+                repository.load(
+                    viewModel.uiState.value.dialog!!
+                        .conversationId!!,
+                )!!
+            val assistant = persisted.turns.last() as AssistantTurn
+            assertEquals(GenerationState.FAILED, assistant.generated.state)
+            assertEquals("", assistant.delivery.deliveredText)
             viewModel.shutdown()
         }
 
