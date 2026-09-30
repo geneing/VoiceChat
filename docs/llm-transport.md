@@ -117,6 +117,11 @@ package.
   backoff loop: a streamed response must not be silently replayed, and the typed
   `RATE_LIMITED`/`UNAVAILABLE`/`TIMEOUT` reasons carry `retryable = true` so the
   caller decides.
+- **Redirects.** None are followed. The OkHttp engine sets
+  `followRedirects(false)`/`followSslRedirects(false)`, so a 3xx is surfaced as
+  its own status and becomes a typed failure; a request can never be silently
+  redirected to an unintended host (added with the M19 Hermes adapter, risk
+  R-0074). DNS resolution and DNS-rebinding defense are still out of scope.
 - **Bounds.** Buffered bodies are capped (1 MiB default); frames are capped
   (4 MiB default). No unbounded buffering anywhere.
 - **Privacy.** No transport method logs a request, header, credential, prompt, or
@@ -143,7 +148,8 @@ credential in the harness, so every provider fixture is deterministic.
 - One HTTP implementation (OkHttp). A future provider needing a different client
   implements `HttpStreamingEngine`; nothing else changes.
 - No automatic retry, `Retry-After` handling, DNS-rebinding defense, or
-  certificate pinning (R-0090, R-0094, R-0099); these are tracked for M26 and
-  M19.
+  certificate pinning (R-0090, R-0094, R-0099, R-0154); these are tracked for M26.
+  Redirects are now disabled, but DNS resolution and rebinding defense remain
+  open.
 - The transport is a TLS POST + SSE client. WebSocket transports (for example a
   future OpenAI WebSocket mode) are out of scope.

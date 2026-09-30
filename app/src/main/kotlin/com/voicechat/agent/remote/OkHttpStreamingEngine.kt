@@ -59,6 +59,10 @@ internal object OkHttpFailureMapper {
  *   bounds the gap between body bytes, and `callTimeout` is disabled so a long
  *   stream is not cut off. `retryOnConnectionFailure` is off: retries are the
  *   caller's decision, based on the typed `RATE_LIMITED`/`UNAVAILABLE` reason.
+ * - **No redirects.** `followRedirects`/`followSslRedirects` are off, so a 3xx
+ *   is returned as-is and a request can never be silently redirected to an
+ *   unintended host (risk R-0074). A caller sees the 3xx status and maps it to a
+ *   typed failure instead of following it.
  * - **Privacy.** Nothing is logged here; the caller's adapter records only
  *   identities and counts.
  */
@@ -129,6 +133,10 @@ class OkHttpStreamingEngine(
                 .callTimeout(0, TimeUnit.MILLISECONDS)
                 // No implicit retry: a streamed response must not be silently replayed.
                 .retryOnConnectionFailure(false)
+                // No redirects (R-0074): a 3xx is surfaced as its own status, so a
+                // request cannot be silently redirected to an unintended host.
+                .followRedirects(false)
+                .followSslRedirects(false)
                 .build()
     }
 }
