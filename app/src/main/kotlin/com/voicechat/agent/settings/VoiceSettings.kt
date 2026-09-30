@@ -44,14 +44,29 @@ data class VoiceSettings(
     val ttsVoiceId: String? = null,
     /** Smart Turn is opt-in and default-off until M25 evidence (decisions §3.3). */
     val smartTurnEnabled: Boolean = false,
+    /**
+     * The selected **on-device** local model (M20), or `null` for the remote path.
+     * A flat, non-sensitive id: it names an allow-listed local model, never a
+     * path or credential. Local and remote selection are mutually exclusive in
+     * the turn path so the user's explicit choice is never silently overridden.
+     */
+    val llmLocalModelId: ModelId? = null,
 ) {
-    /** The provider/model pair, or `null` when incomplete. */
+    /**
+     * The provider/model pair, or `null` when incomplete or when an on-device
+     * local model is selected (M20): the two backends are mutually exclusive, so
+     * a local choice never resolves to a remote provider.
+     */
     val llmSelection: ProviderModelSelection?
         get() {
+            if (llmLocalModelId != null) return null
             val provider = llmProviderId ?: return null
             val model = llmModelId ?: return null
             return ProviderModelSelection(providerId = provider, modelId = model)
         }
+
+    /** True when the user chose an on-device local model rather than a remote one. */
+    val usesLocalModel: Boolean get() = llmLocalModelId != null
 
     /** The reasoning level a request should use; absent means [ReasoningLevel.NONE]. */
     val effectiveReasoningLevel: ReasoningLevel

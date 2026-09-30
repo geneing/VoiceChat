@@ -4,6 +4,7 @@ import com.voicechat.agent.contracts.LanguageModel
 import com.voicechat.agent.domain.ConversationId
 import com.voicechat.agent.domain.ProviderModelSelection
 import com.voicechat.agent.domain.ReasoningLevel
+import com.voicechat.agent.local.LocalLanguageModelFactory
 import com.voicechat.agent.providers.ProviderCapabilityRegistry
 import com.voicechat.agent.providers.ProviderLanguageModelFactory
 import com.voicechat.agent.settings.VoiceSettings
@@ -24,6 +25,8 @@ data class ActiveProviderTurn(
     val reasoning: ReasoningLevel?,
     val languageModel: LanguageModel,
     val configured: Boolean,
+    /** True when the turn runs on an on-device model rather than a remote provider (M20). */
+    val onDevice: Boolean = false,
 )
 
 /**
@@ -40,7 +43,25 @@ object ProviderTurnResolver {
         conversationId: ConversationId,
         registry: ProviderCapabilityRegistry,
         factory: ProviderLanguageModelFactory,
+        localFactory: LocalLanguageModelFactory? = null,
     ): ActiveProviderTurn {
+        // An on-device selection is explicit and takes precedence. It never falls
+        // back to a remote provider: if the local adapter cannot be built (not
+        // allow-listed, not installed, or unavailable), the honest not-configured
+        // state is kept (M20).
+        settings.llmLocalModelId?.let { localId ->
+            val localModel =
+                localFactory?.create(localId)
+                    ?: return unconfigured(onDevice = true)
+            return ActiveProviderTurn(
+                selection = ProviderModelSelection(providerId = localModel.providerId, modelId = localId),
+                reasoning = null,
+                languageModel = localModel,
+                configured = true,
+                onDevice = true,
+            )
+        }
+
         val selection = settings.llmSelection ?: return unconfigured()
         // No adapter for this provider: keep the explicit not-configured state.
         val model =
@@ -57,13 +78,14 @@ object ProviderTurnResolver {
         )
     }
 
-    private fun unconfigured(): ActiveProviderTurn {
+    private fun unconfigured(onDevice: Boolean = false): ActiveProviderTurn {
         val selection = ConversationDefaults.selection
         return ActiveProviderTurn(
             selection = selection,
             reasoning = null,
             languageModel = NotConfiguredLanguageModel(providerId = selection.providerId),
             configured = false,
+            onDevice = onDevice,
         )
     }
 }

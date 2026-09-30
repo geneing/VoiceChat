@@ -299,8 +299,10 @@ shape. Suggested future entries:
 - **M14–M19 providers** — one section each: destination disclosure, model
   selection, streaming, cancellation, network-loss and auth errors, and proof
   that no silent provider/model fallback occurs.
-- **M20 local LLM runtimes** — availability, unprovisioned/corrupt/insufficient
-  resource paths, memory/thermal contention with STT/TTS.
+- **M20 local LLM runtimes** — implemented (JVM only; device run deferred); see
+  the [M20 section](#m20--local-model-runtimes-and-curated-catalog) below for
+  availability, unprovisioned/corrupt/insufficient-resource paths, and the manual
+  memory/thermal/STT-TTS-contention rows.
 - **M21/M24 voice loop and barge-in** — end-to-end STT → LLM → TTS, live
   transcript, barge-in stop/cancel timing, delivered-vs-generated history.
 - **M25 quality/latency evaluation** — labeled corpus per condition, per-stage
@@ -1241,14 +1243,13 @@ Unrun device items are tracked as R-0046, R-0050, R-0060, R-0063, R-0080,
 R-0081, R-0082, and R-0083; **do not mark any row passed unless it was run on the
 device.**
 
-
-## M10 � Smart Turn v3.2 (optional semantic end-of-turn)
+## M10 - Smart Turn v3.2 (optional semantic end-of-turn)
 
 Path: the optional `turn.SmartTurnCompletionDetector` over the pinned
 `smart-turn-v3.2-int8.onnx` artifact behind the M02 `TurnCompletionDetector`
 contract, invoked once per VAD-confirmed candidate pause by the M09
 `BoundedTurnEndpointPolicy`. It is **opt-in and default off**
-(`docs/decisions.md` �3.3, [docs/smart-turn.md](./docs/smart-turn.md)); with it
+(`docs/decisions.md` §3.3, [docs/smart-turn.md](./docs/smart-turn.md)); with it
 off the behavior is exactly the M09 VAD-only bounded endpoint.
 
 Run the JVM suite first; it proves config validation, the adapter contract,
@@ -1305,3 +1306,71 @@ false-commit/false-hold tradeoffs, and threshold calibration are **unmeasured**
 and tracked as R-0190; M10's JVM suite proves the contract and opt-in behavior
 only. This section is a checklist, not a result: **do not mark any row passed
 unless it was run on the device.**
+
+## M20 — Local model runtimes and curated catalog
+
+M20 adds runtime discovery for AICore / ML Kit GenAI, a LiteRT-LM adapter behind
+the M12 `LanguageModel` contract, an allow-listed (currently empty) `.litertlm`
+catalog, typed availability for every lifecycle state, and explicit
+local-versus-remote selection. See [local-models.md](./docs/local-models.md) and
+R-0210–R-0219.
+
+### JVM suite (run)
+
+`local.LocalModelCatalogTest`, `local.LocalAvailabilityMappingTest`,
+`local.LocalModelStoreTest`, `local.LocalLanguageModelTest`,
+`local.LocalVsRemoteSelectionTest`, and `local.LocalSourcePurityTest` cover:
+
+- runtime discovery maps each availability state to the correct typed result, and
+  only `AVAILABLE`/`Installed` becomes ready;
+- catalog validation rejects entries missing required metadata or carrying a bad
+  checksum, and an empty catalog is a valid honest result;
+- unavailable / unprovisioned / missing / corrupt / insufficient-resource paths;
+- the AICore and LiteRT-LM adapters' request→stream mapping and typed errors via
+  fakes, including partial text on a mid-stream failure and "never open a session
+  for a missing or corrupt model";
+- local versus remote selection is explicit and never crosses over in either
+  direction;
+- only the three vendor/platform files import `android.*` / `com.google.*`.
+
+Verified command (Windows PowerShell, `2026-09-29`, debug variant):
+
+```
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest :app:lintDebug spotlessCheck :app:assembleDebugAndroidTest --console=plain
+```
+
+All tasks passed. The suite is device-free, network-free, and does not load the
+native LiteRT runtime or a real model.
+
+### Device checks (scaffolded; NOT run)
+
+`local.LocalRuntimeInstrumentedTest` **was not run** for this milestone; it is
+compiled only (`:app:assembleDebugAndroidTest`). It reports the real AICore
+availability, and (only if a local model is installed) attempts an init and
+records load time and heap delta. It uses early returns, not `Assume`, so an
+absent capability is a pass with its state logged, not an assumption failure.
+
+Do not claim any M20 device result until it is measured on a Pixel 10.
+
+### Pixel 10 measurements (manual; marked NOT run)
+
+No performance claim is made for M20. Cold/warm startup, memory, thermal
+behavior, latency, and contention with STT/TTS are measured later (R-0215). For
+every run, record: device model/build, Android version, debug variant, commit,
+AICore `checkStatus()` result, whether the model was provisioned, and the
+installed allow-listed model id (if any).
+
+| Check | How | Record |
+| --- | --- | --- |
+| AICore availability | Run `LocalRuntimeInstrumentedTest` (or read `checkStatus()` in the debug probe) with and without AICore provisioning. | `AVAILABLE`/`DOWNLOADABLE`/`DOWNLOADING`/`UNAVAILABLE` and the mapped typed state; `DOWNLOADABLE` must report unprovisioned, never ready. |
+| AICore cold/warm startup | Generate a short reply once after process start (cold) and again in the same process (warm). | Time to first token and to completion, heap delta, thermal state; note that AICore load is system-managed. |
+| LiteRT-LM cold/warm startup | With an allow-listed bundle installed, initialize an `Engine`, then reuse. | Init time, first-token latency, peak heap, storage occupied; confirm `initialize()` failure is reported as a failed init, never success. |
+| Missing / corrupt model | Remove or truncate the installed bundle, then attempt a turn. | Typed `NOT_CONFIGURED`/`CORRUPT` state, no session opened, no false completion. |
+| Insufficient resources | Run with heavy memory pressure / a model larger than the device can hold. | The `INSUFFICIENT_RESOURCES`/failed state; no crash, no fabricated reply. |
+| Contention with STT/TTS | Run a full voice turn on AICore while STT and TTS are active. | First-token latency and thermal/memory delta versus a text-only turn; whether TTS playback disturbs the local model. |
+| Barge-in with a local model | Interrupt an on-device generation mid-stream. | Cancellation stops generation promptly; stored history keeps only delivered text. |
+
+Unrun M20 device items are tracked as R-0215; **do not mark any row passed unless
+it was run on the device.**
+

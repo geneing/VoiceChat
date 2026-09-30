@@ -6,6 +6,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.remember
 import com.voicechat.agent.credentials.AndroidKeystoreCredentialStore
+import com.voicechat.agent.local.AndroidLocalModelFileStore
+import com.voicechat.agent.local.CatalogLocalLanguageModelFactory
+import com.voicechat.agent.local.LocalModelInstaller
 import com.voicechat.agent.persistence.ConversationPersistence
 import com.voicechat.agent.providers.ProviderCapabilityRegistry
 import com.voicechat.agent.providers.RegisteredProviderLanguageModelFactory
@@ -56,6 +59,14 @@ class MainActivity : ComponentActivity() {
                 val transport = remember { RemoteTransport(OkHttpStreamingEngine()) }
                 val providerFactory =
                     remember { RegisteredProviderLanguageModelFactory(registry, credentials, transport) }
+                // M20: the on-device path. App-private storage + the real LiteRT-LM
+                // and AICore generators; no model file is bundled or auto-downloaded.
+                val localModelFactory =
+                    remember {
+                        CatalogLocalLanguageModelFactory(
+                            installer = LocalModelInstaller(AndroidLocalModelFileStore(applicationContext.applicationContext)),
+                        )
+                    }
                 val languageModel = remember { ConversationDefaults.languageModel() }
                 val settingsFactory =
                     remember {
@@ -97,6 +108,7 @@ class MainActivity : ComponentActivity() {
                     settingsFlow = settingsFlow,
                     providerRegistry = registry,
                     providerFactory = providerFactory,
+                    localModelFactory = localModelFactory,
                     voiceSessionFactory = voiceFactory,
                 )
             }

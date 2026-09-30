@@ -122,6 +122,9 @@ remote.
   TLS/redirect hardening, and server-side-tool disclosure (M19).
 - [Settings](./docs/settings.md) — capability-aware selection and DataStore
   persistence (M22).
+- [Local model runtimes](./docs/local-models.md) — AICore/ML Kit GenAI discovery,
+  the allow-listed (currently empty) LiteRT-LM catalog, app-managed lifecycle, and
+  explicit local-versus-remote selection (M20).
 - [Logging](./docs/logging.md) — release-safe developer logging and redaction.
 - [On-device test plan](./Tests.md) — what to run on the phone and what to
   record, per milestone.
@@ -182,12 +185,18 @@ delivered-only persistence, and M22 adds capability-aware settings persisted in
 DataStore, and M23 wires the persisted selection and credentials through a
 registry-driven provider factory into the orchestrator so a configured provider
 adapter serves the turn (OpenCode Go as the initial path), and M24 adds the
-voice session coordinator with responsive barge-in. `:app` is the only
+voice session coordinator with responsive barge-in. M20 adds eligible on-device
+local LLM runtimes: AICore/Gemini Nano discovery through the beta ML Kit GenAI
+Prompt API, a LiteRT-LM `.litertlm` adapter behind the same LLM contract, a
+curated (currently empty) allow-listed catalog with a bounded, integrity-checked,
+atomic app-private install lifecycle, typed availability, and explicit
+local-versus-remote selection that never falls back silently (device run
+deferred). `:app` is the only
 Gradle module. The `domain`, `contracts`, `log`,
 `diagnostics`, `orchestration`, `replay`, `settings`, `vad`, and `turn` packages
 (and the `tts` engine seam, credential/providers logic, and the `remote`
 transport core) are pure Kotlin (no `android.*` imports, enforced by unit tests);
-`audio`, `stt`, `tts`, `turn/OnnxSmartTurnEngine`, `turn/OkHttpSmartTurnModelSource`,
+`audio`, `stt`, `tts`, `local`, `turn/OnnxSmartTurnEngine`, `turn/OkHttpSmartTurnModelSource`,
 `remote/OkHttpStreamingEngine`, and the AndroidKeyStore/DataStore
 implementations hold the platform / ML Kit / network adapters. The 813-test JVM
 suite covers domain invariants, contract ordering and cancellation, the
@@ -196,7 +205,8 @@ timing, repository CRUD/migration and context bounds (Robolectric), the
 conversation and settings UI, capture/STT/TTS/VAD adapters, the Smart Turn
 adapter/config/model-lifecycle/endpoint path, LLM-contract semantics, credential
 store/registry, turn orchestration, the text-first slice, the voice loop and
-barge-in, and the recorded OpenAI/OpenRouter/DeepSeek/OpenCode Go/OpenCode
+barge-in, local runtime discovery/catalog/lifecycle and the on-device adapters,
+and the recorded OpenAI/OpenRouter/DeepSeek/OpenCode Go/OpenCode
 Zen/Hermes SSE fixtures.
 On-device tests live under
 `app/src/androidTest` and are catalogued in [Tests.md](./Tests.md) but are not run
@@ -206,10 +216,10 @@ adapter when one is configured and credentialed, and otherwise shows the
 explicit "LLM not configured" state (M23), and the voice loop drives capture →
 VAD/onset → STT → orchestration → TTS with responsive barge-in (M24). The app
 declares the `RECORD_AUDIO`
-and `INTERNET` permissions; local model runtimes (M20), evaluation (M25), and
-release hardening (M26) are not implemented yet, and the implemented Smart Turn
+and `INTERNET` permissions; speech/latency evaluation (M25) and
+release hardening (M26) are not implemented yet. The implemented Smart Turn
 (M10) is opt-in and default off with its on-device numbers still to be measured
-by M25.
+by M25, and the M20 local runtime path has device validation deferred.
 
 The scaffold requires JDK 17 or newer (AGP 9.4's minimum) and sets Java 17
 source/target compatibility; it pins Gradle 9.6.0, Android Gradle Plugin 9.4.0,

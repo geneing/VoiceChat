@@ -101,6 +101,18 @@ dependencies {
     // the JVM tests never load the native runtime.
     implementation(libs.onnxruntime.android)
 
+    // On-device LLM runtimes (M20). AICore/Gemini Nano discovery uses the ML Kit
+    // GenAI Prompt API; the LiteRT-LM artifact backs the optional, allow-listed
+    // local `.litertlm` path. All vendor types stay inside the
+    // `com.voicechat.agent.local` package (LocalSourcePurityTest).
+    implementation(libs.mlkit.genai.prompt)
+    implementation(libs.litertlm.android)
+    // NOTE: `com.google.ai.edge.litert:litert` is deliberately NOT wired here.
+    // Its published AARs (`litert` + its transitive `litert-api`) declare the same
+    // manifest namespace, which fails AGP 9 manifest merging; nothing in M20 uses
+    // the LiteRT Java API directly, and `litertlm-android` is self-contained. See
+    // docs/local-models.md and R-0216.
+
     // Durable conversation storage (M05). Room entity/DAO code lives in the
     // persistence package and maps to the platform-free domain types.
     implementation(libs.androidx.room.runtime)
