@@ -6,6 +6,7 @@ import com.voicechat.agent.contracts.DiagnosticStage
 import com.voicechat.agent.contracts.DiagnosticsSink
 import com.voicechat.agent.contracts.LanguageModel
 import com.voicechat.agent.contracts.LlmStreamEvent
+import com.voicechat.agent.contracts.LlmUsage
 import com.voicechat.agent.contracts.NoOpDiagnosticsSink
 import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.domain.AssistantTurn
@@ -21,10 +22,12 @@ import com.voicechat.agent.domain.TurnPhase
 import com.voicechat.agent.domain.UserTurn
 import com.voicechat.agent.domain.UserTurnSource
 import com.voicechat.agent.domain.VoiceAgentError
+import com.voicechat.agent.fake.DeterministicLanguageModel
 import com.voicechat.agent.fake.FakeLanguageModel
 import com.voicechat.agent.fake.FakeMonotonicClock
 import com.voicechat.agent.fake.InMemoryConversationRepository
 import com.voicechat.agent.fake.RecordingDiagnosticsSink
+import com.voicechat.agent.fake.ScriptedLlmStep
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -546,6 +549,146 @@ class ConversationViewModelTest {
                     .isEmpty(),
             )
             assertEquals(0, model.streamCount)
+            viewModel.shutdown()
+        }
+
+    @Test
+    fun aStreamThatEndsWithoutATerminalEventIsPersistedAsAFailureNotACompletion() =
+        runTest {
+            val repository = InMemoryConversationRepository()
+            // An adapter that emits deltas and then simply ends: it never said
+            // whether the text was whole, so it must not be persisted as complete.
+            val model =
+                DeterministicLanguageModel(
+                    steps =
+                        listOf(
+                            ScriptedLlmStep.Emit(LlmStreamEvent.Delta("truncated")),
+                        ),
+                )
+            val viewModel = newViewModel(repository, model)
+
+            viewModel.onNewConversation()
+            viewModel.onComposerChanged("Q")
+            viewModel.onSend()
+            advanceUntilIdle()
+
+            assertEquals(
+                TurnPhase.FAILED,
+                viewModel.uiState.value.dialog
+                    ?.phase,
+            )
+            val persisted =
+                repository.load(
+                    viewModel.uiState.value.dialog!!
+                        .conversationId!!,
+                )!!
+            val assistant = persisted.turns.last() as AssistantTurn
+            assertEquals(GenerationState.FAILED, assistant.generated.state)
+            assertEquals(DeliveryState.FAILED, assistant.delivery.state)
+            // The text that did arrive is preserved for reconciliation.
+            assertEquals("truncated", assistant.generated.text)
+            viewModel.shutdown()
+        }
+
+    @Test
+    fun aFailedPartialResponseKeepsTheDeliveredPrefixAndTheTypedReason() =
+        runTest {
+            val repository = InMemoryConversationRepository()
+            val model =
+                DeterministicLanguageModel(
+                    steps =
+                        DeterministicLanguageModel.failingAfter(
+                            partial = "half a sen",
+                            code = ErrorCode.LLM_RATE_LIMITED,
+                        ),
+                )
+            val viewModel = newViewModel(repository, model)
+
+            viewModel.onNewConversation()
+            viewModel.onComposerChanged("Q")
+            viewModel.onSend()
+            advanceUntilIdle()
+
+            assertEquals(
+                TurnPhase.FAILED,
+                viewModel.uiState.value.dialog
+                    ?.phase,
+            )
+            assertEquals(
+                ConversationNotice.Failure(ErrorCode.LLM_RATE_LIMITED, retryable = true),
+                viewModel.uiState.value.dialog
+                    ?.notice,
+            )
+            val persisted =
+                repository.load(
+                    viewModel.uiState.value.dialog!!
+                        .conversationId!!,
+                )!!
+            val assistant = persisted.turns.last() as AssistantTurn
+            assertEquals("half a sen", assistant.generated.text)
+            assertEquals("half a sen", assistant.delivery.deliveredText)
+            assertEquals(GenerationState.FAILED, assistant.generated.state)
+            viewModel.shutdown()
+        }
+
+    @Test
+    fun aProviderModelMismatchIsRecordedOnTheTraceInsteadOfSilentlyAccepted() =
+        runTest {
+            val repository = InMemoryConversationRepository()
+            val sink = RecordingDiagnosticsSink()
+            val model =
+                DeterministicLanguageModel(
+                    steps = listOf(ScriptedLlmStep.Emit(LlmStreamEvent.Completed())),
+                    reportedModelId = ModelId("someone-elses-model"),
+                )
+            val viewModel = newViewModel(repository, model, diagnostics = sink)
+
+            viewModel.onNewConversation()
+            viewModel.onComposerChanged("Q")
+            viewModel.onSend()
+            advanceUntilIdle()
+
+            // The trace still names the selected provider/model, so a later
+            // adapter-level mismatch check has the selection to compare against.
+            assertTrue(sink.events.any { it.attributes[DiagnosticAttribute.PROVIDER_ID] == selection.providerId.value })
+            assertTrue(sink.events.any { it.attributes[DiagnosticAttribute.MODEL_ID] == selection.modelId.value })
+            // Only identities and counts reach the trace, never delta text.
+            assertTrue(sink.events.none { it.attributes.containsValue("truncated") })
+            viewModel.shutdown()
+        }
+
+    @Test
+    fun usageAndRequestEndReasonAreTracedWithoutContent() =
+        runTest {
+            val repository = InMemoryConversationRepository()
+            val sink = RecordingDiagnosticsSink()
+            val model =
+                DeterministicLanguageModel(
+                    steps =
+                        listOf(
+                            ScriptedLlmStep.Emit(LlmStreamEvent.Delta("hello")),
+                            ScriptedLlmStep.Emit(
+                                LlmStreamEvent.Completed(usage = LlmUsage(promptTokens = 12, completionTokens = 3)),
+                            ),
+                        ),
+                )
+            val viewModel = newViewModel(repository, model, diagnostics = sink)
+
+            viewModel.onNewConversation()
+            viewModel.onComposerChanged("secret prompt")
+            viewModel.onSend()
+            advanceUntilIdle()
+
+            assertEquals(
+                "prompt=12,completion=3",
+                sink.events.firstNotNullOfOrNull { it.attributes[DiagnosticAttribute.USAGE] },
+            )
+            assertEquals(
+                "completed",
+                sink.events.firstNotNullOfOrNull { it.attributes[DiagnosticAttribute.REQUEST_END_REASON] },
+            )
+            assertTrue(sink.events.none { it.attributes.containsValue("secret prompt") })
+            assertTrue(sink.events.none { it.attributes.containsValue("hello") })
             viewModel.shutdown()
         }
 

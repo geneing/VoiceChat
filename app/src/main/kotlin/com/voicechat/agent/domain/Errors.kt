@@ -46,6 +46,21 @@ enum class ErrorCode(
     LLM_MALFORMED_RESPONSE(ErrorCategory.LANGUAGE_MODEL, true),
     LLM_UNAVAILABLE(ErrorCategory.LANGUAGE_MODEL, true),
     LLM_REQUEST_FAILED(ErrorCategory.LANGUAGE_MODEL, true),
+
+    /**
+     * The consumer cancelled the request. It is the typed code for a cancelled
+     * stream event; orchestration normally treats `CancellationException` as the
+     * signal and does not surface this code as an error (added in M12).
+     */
+    LLM_CANCELLED(ErrorCategory.LANGUAGE_MODEL, false),
+
+    /**
+     * The request asked for something the selected provider/model does not
+     * support (for example a reasoning level outside its declared capability).
+     * Retrying the identical request cannot succeed, so it is not retryable
+     * (added in M12).
+     */
+    LLM_INVALID_REQUEST(ErrorCategory.LANGUAGE_MODEL, false),
     TTS_NO_ON_DEVICE_VOICE(ErrorCategory.TEXT_TO_SPEECH, false),
     TTS_SYNTHESIS_FAILED(ErrorCategory.TEXT_TO_SPEECH, true),
     TTS_PLAYBACK_FAILED(ErrorCategory.TEXT_TO_SPEECH, true),

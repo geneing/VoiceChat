@@ -290,3 +290,30 @@ shape. Suggested future entries:
   p50/tail latency with full configuration metadata.
 - **M26 release hardening** — the full permission/network/model/process-death
   matrix on the release build.
+
+## M12 — LLM streaming contract and deterministic fake (JVM only)
+
+**No device test is required for M12.** The milestone defines the provider-neutral
+request/stream/error contract, the reference consumer, and a deterministic fake.
+All of it is pure Kotlin covered by `:app:testDebugUnitTest`; nothing in M12
+touches the microphone, AICore/ML Kit, TFLite/LiteRT, audio routing, or a real
+provider, and the fake requires no network or credentials. There is no
+`androidTest` source for M12, so there is nothing to add to the automated
+on-device table above.
+
+What the JVM suite proves instead (see
+[docs/llm-contract.md](./docs/llm-contract.md)):
+
+- event ordering (`Delta*` then exactly one terminal event);
+- backpressure (a slow consumer suspends the producer, no lost events);
+- cancellation (mid-stream, and a race at the emission boundary);
+- timeout (a stall plus a typed `LLM_TIMEOUT`, never a silent end);
+- malformed and empty streams (a terminal-less end is a failure, not a completion);
+- partial-response state (`Cancelled`/`Failed` carry the text received so far);
+- determinism (identical event sequences and virtual timestamps across runs);
+- no vendor/platform type in the contract, and no prompt/response/credential
+  content in the trace or the developer log.
+
+Recorded with `:app:testDebugUnitTest`; no device, network, model, or credential
+is involved. Any future real provider belongs to M14–M20, whose device runs are
+recorded in their own sections.
