@@ -2,7 +2,14 @@
 <resources>
     <!--
         Compose draws the UI; this theme only styles the window before Compose
-        attaches and keeps the system action bar out of the way.
+        attaches and keeps the system action bar out of the way. The window
+        background is the brand's warm surface so launching never flashes a
+        white (or green) frame before the first Compose frame.
     -->
-    <style name="Theme.VoiceAgent" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.VoiceAgent" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/brand_background</item>
+        <item name="android:statusBarColor">@color/brand_background</item>
+        <item name="android:navigationBarColor">@color/brand_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>
