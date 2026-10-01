@@ -9,9 +9,10 @@ import kotlinx.coroutines.flow.Flow
 /**
  * SQL surface for conversations and turns.
  *
- * All mutations go through [replaceConversation] so a saved conversation and its
- * turns are replaced in one transaction; a crash can never leave a conversation
- * whose turn list is half updated.
+ * All mutations go through [replaceConversation] (full replacement, for recovery,
+ * rename, and deletion) or [upsertTurnAndConversation] (append/update the active
+ * turn without rewriting its siblings); each is one transaction, so a crash can
+ * never leave a conversation whose turn list is half updated.
  */
 @Dao
 internal abstract class ConversationDao {
@@ -47,6 +48,9 @@ internal abstract class ConversationDao {
     @Upsert
     abstract suspend fun upsertTurns(turns: List<TurnEntity>)
 
+    @Upsert
+    abstract suspend fun upsertTurn(turn: TurnEntity)
+
     @Query("DELETE FROM turns WHERE conversationId = :conversationId")
     abstract suspend fun deleteTurns(conversationId: String)
 
@@ -69,5 +73,22 @@ internal abstract class ConversationDao {
         if (turns.isNotEmpty()) {
             upsertTurns(turns)
         }
+    }
+
+    /**
+     * Upserts one conversation row and one turn row atomically, leaving every
+     * sibling turn untouched (CODE_REVIEW P2, R-0222).
+     *
+     * The conversation is written first so the turn's foreign key is satisfied.
+     * Unlike [replaceConversation], this never deletes the turn list, so appending
+     * or updating the active turn does not rewrite the whole history.
+     */
+    @Transaction
+    open suspend fun upsertTurnAndConversation(
+        conversation: ConversationEntity,
+        turn: TurnEntity,
+    ) {
+        upsertConversation(conversation)
+        upsertTurn(turn)
     }
 }

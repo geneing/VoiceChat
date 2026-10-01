@@ -343,6 +343,62 @@ class RoomConversationRepositoryTest {
         }
 
     @Test
+    fun saveTurnAppendsOneTurnWithoutRewritingSiblings() =
+        runTest {
+            repository.save(
+                conversation(
+                    "conversation-1",
+                    updatedAt = 10L,
+                    turns = listOf(userTurn("u1", "first"), userTurn("u2", "second")),
+                ),
+            )
+
+            val appended =
+                conversation(
+                    "conversation-1",
+                    updatedAt = 11L,
+                    turns =
+                        listOf(
+                            userTurn("u1", "first"),
+                            userTurn("u2", "second"),
+                            assistantTurn("a1", generated = "new reply", delivered = ""),
+                        ),
+                )
+            repository.saveTurn(appended, appended.turns.last())
+
+            val loaded = repository.load(ConversationId("conversation-1"))!!
+            assertEquals(listOf(TurnId("u1"), TurnId("u2"), TurnId("a1")), loaded.turns.map { it.id })
+            assertEquals(3, database.conversationDao().turnCount("conversation-1"))
+            assertEquals(11L, loaded.updatedAtEpochMillis)
+        }
+
+    @Test
+    fun saveTurnUpdatesAnExistingTurnInPlace() =
+        runTest {
+            repository.save(
+                conversation(
+                    "conversation-1",
+                    updatedAt = 10L,
+                    turns = listOf(userTurn("u1", "first"), assistantTurn("a1", generated = "partial", delivered = "")),
+                ),
+            )
+
+            val settled = assistantTurn("a1", generated = "complete reply", delivered = "complete reply")
+            val updated =
+                conversation(
+                    "conversation-1",
+                    updatedAt = 12L,
+                    turns = listOf(userTurn("u1", "first"), settled),
+                )
+            repository.saveTurn(updated, settled)
+
+            val loaded = repository.load(ConversationId("conversation-1"))!!
+            assertEquals(listOf(TurnId("u1"), TurnId("a1")), loaded.turns.map { it.id })
+            assertEquals(settled, loaded.turns.last())
+            assertEquals(2, database.conversationDao().turnCount("conversation-1"))
+        }
+
+    @Test
     fun buildingContextForANewConversationNeverIncludesAnOlderOne() =
         runTest {
             repository.save(

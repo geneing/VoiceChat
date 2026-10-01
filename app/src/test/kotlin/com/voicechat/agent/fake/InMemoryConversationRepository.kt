@@ -5,6 +5,7 @@ import com.voicechat.agent.domain.Conversation
 import com.voicechat.agent.domain.ConversationId
 import com.voicechat.agent.domain.ConversationSummary
 import com.voicechat.agent.domain.ErrorCode
+import com.voicechat.agent.domain.Turn
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
 import kotlinx.coroutines.flow.Flow
@@ -46,6 +47,32 @@ class InMemoryConversationRepository : ConversationRepository {
             throw VoiceAgentException(error)
         }
         conversations.update { it + (conversation.id to conversation) }
+    }
+
+    /**
+     * Append/update path (CODE_REVIEW P2, R-0222). Simulates a real append: the
+     * stored conversation keeps its existing turns and only [turn] is replaced or
+     * added, so a test can prove sibling turns are not rewritten.
+     */
+    override suspend fun saveTurn(
+        conversation: Conversation,
+        turn: Turn,
+    ) {
+        failOnNextSave?.let { error ->
+            failOnNextSave = null
+            throw VoiceAgentException(error)
+        }
+        conversations.update { stored ->
+            val existing = stored[conversation.id]
+            val merged =
+                if (existing == null) {
+                    conversation
+                } else {
+                    val withoutTurn = existing.turns.filterNot { it.id == turn.id }
+                    conversation.copy(turns = withoutTurn + turn)
+                }
+            stored + (conversation.id to merged)
+        }
     }
 
     override suspend fun delete(id: ConversationId) {
