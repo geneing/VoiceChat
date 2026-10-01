@@ -77,11 +77,14 @@ class OkHttpSmartTurnModelSource(
                 .Builder()
                 .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                // A model download is one response; no implicit retry or redirect
-                // (a redirect could point at an unintended host).
+                // A model download is one response. Redirects are followed because
+                // the pinned Hugging Face URL answers 302 to a CDN; the destination
+                // is pinned, so following it is intentional, and the exact size +
+                // SHA-256 check after the download is what actually guarantees the
+                // bytes are the reviewed artifact.
                 .retryOnConnectionFailure(false)
-                .followRedirects(false)
-                .followSslRedirects(false)
+                .followRedirects(true)
+                .followSslRedirects(true)
                 .build()
     }
 }

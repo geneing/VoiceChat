@@ -20,6 +20,7 @@ import com.voicechat.agent.providers.StaticModelCapabilityCatalog
 import com.voicechat.agent.settings.InMemorySettingsStore
 import com.voicechat.agent.settings.InvalidSelection
 import com.voicechat.agent.settings.SettingsCapabilities
+import com.voicechat.agent.settings.SettingsCapabilityProvider
 import com.voicechat.agent.settings.SettingsNotice
 import com.voicechat.agent.settings.SettingsValidator
 import com.voicechat.agent.settings.SmartTurnState
@@ -95,6 +96,8 @@ class SettingsViewModelTest {
         store: InMemorySettingsStore = InMemorySettingsStore(VoiceSettings.EMPTY),
         capabilities: SettingsCapabilities = capabilities(),
         downloader: SttModelDownloader = NoOpSttModelDownloader,
+        smartTurnInstaller: SmartTurnModelInstaller = UnavailableSmartTurnModelInstaller,
+        capabilityProvider: SettingsCapabilityProvider = StaticSettingsCapabilityProvider(capabilities),
     ): Harness {
         val dispatcher = UnconfinedTestDispatcher(scheduler)
         val scope = CoroutineScope(dispatcher)
@@ -104,9 +107,10 @@ class SettingsViewModelTest {
                 store = store,
                 registry = registry,
                 credentials = credentials,
-                capabilityProvider = StaticSettingsCapabilityProvider(capabilities),
+                capabilityProvider = capabilityProvider,
                 modelCatalog = modelCatalog,
                 sttDownloader = downloader,
+                smartTurnInstaller = smartTurnInstaller,
                 dispatcher = dispatcher,
                 scope = scope,
             )
@@ -681,6 +685,51 @@ class SettingsViewModelTest {
 
             // Advanced is preferred, but only Basic is ready, so Basic is shown.
             assertEquals(SttMode.BASIC, h.viewModel.uiState.value.stt.selectedMode)
+            h.scope.cancel()
+        }
+
+    @Test
+    fun installingTheSmartTurnModelEnablesItAndClearsTheProgressState() =
+        runTest {
+            val installer =
+                SmartTurnModelInstaller {
+                    flow {
+                        emit(SmartTurnInstallStatus.Started(totalBytes = 11_123_370L))
+                        emit(SmartTurnInstallStatus.Completed)
+                    }
+                }
+            // The device reports the model missing until the install completes.
+            var snapshots = 0
+            val provider =
+                object : SettingsCapabilityProvider {
+                    override suspend fun snapshot(): SettingsCapabilities {
+                        val available = snapshots > 0
+                        snapshots++
+                        return SettingsCapabilities(
+                            sttAvailability = listOf(SttAvailability.Ready(SttEngine(SttMode.ADVANCED, Locale.US))),
+                            ttsVoices = listOf(embeddedVoice()),
+                            smartTurn = if (available) SmartTurnState.Available else SmartTurnState.DownloadRequired,
+                            models = listOf(ModelAvailability.Ready(model)),
+                        )
+                    }
+                }
+            val h =
+                harness(
+                    testScheduler,
+                    capabilities = capabilities(smartTurn = SmartTurnState.DownloadRequired),
+                    smartTurnInstaller = installer,
+                    capabilityProvider = provider,
+                )
+            advanceUntilIdle()
+            assertTrue(h.viewModel.uiState.value.smartTurn.needsDownload)
+
+            h.viewModel.onDownloadSmartTurnModel()
+            advanceUntilIdle()
+
+            val smartTurn = h.viewModel.uiState.value.smartTurn
+            assertFalse(smartTurn.installing)
+            assertTrue(smartTurn.selectable)
+            assertTrue(smartTurn.enabled)
             h.scope.cancel()
         }
 

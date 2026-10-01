@@ -35,6 +35,9 @@ class SmartTurnModelStore(
     /** The app-private file the verified model is installed at. */
     fun modelFile(): File = File(directory, artifact.fileName)
 
+    /** The pinned artifact's expected byte size, for a progress/description total. */
+    fun pinnedSizeBytes(): Long = artifact.sizeBytes
+
     /**
      * Resolves the current model state, verifying the size and SHA-256 of any
      * present file. Runs off the main thread.

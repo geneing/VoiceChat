@@ -35,6 +35,10 @@ Implemented:
 - A started, user-approved **STT model download** with a determinate progress bar
   (`SttModelDownloader`, M08), replacing the previous static "Model download
   required" text.
+- A user-approved **Smart Turn artifact download** (`SmartTurnModelInstaller`,
+  M10): the pinned ONNX file is fetched over HTTPS into app-private storage,
+  verified against its exact size and SHA-256, and installed atomically. Nothing
+  is bundled in the APK.
 - A **first-run default**: the app opens on OpenCode Go with its free model
   (`longcat-2.5-preview-free`), and Smart Turn enabled, so a fresh install has a
   working configuration the user can change. Nothing is pre-selected that the
@@ -104,9 +108,10 @@ app/src/main/kotlin/com/voicechat/agent/settings/
   SettingsState.kt             SettingsUiState, sections, notices, SettingsActions
   PreferencesSettingsStore.kt  the only platform file: DataStore implementation
 app/src/main/kotlin/com/voicechat/agent/ui/
-  SettingsViewModel.kt         state holder: observe + validate + persist + credential + STT download
+  SettingsViewModel.kt         state holder: observe + validate + persist + credential + model installs
   SettingsScreen.kt            the Compose surface
   SttModelDownloader.kt        M08 download seam (MlKitSttModelDownloader / NoOp default)
+  SmartTurnModelInstaller.kt   M10 artifact-install seam (pinned URL -> app-private storage)
   AndroidSettingsCapabilityProvider.kt  app-boundary runtime snapshot reader
 ```
 
@@ -199,13 +204,16 @@ banner. See `docs/risks-and-decisions.md` for the recorded decision.
 
 ## Smart Turn
 
-Smart Turn is **enabled by default** when the pinned detector is installed.
-Because M10's artifact must be downloaded into app-private storage, a device
-without it reports `SmartTurnState.DownloadRequired` and the toggle is disabled
-with that reason. Clearing the default on such a device is a normal fallback and
-is **not** reported as an invalid selection; the validator only records an
-`InvalidSelection` when a selection the user actually made can no longer be
-honoured.
+Smart Turn is **enabled by default** when the pinned detector is installed. On a
+device without the artifact the section shows a **Download Smart Turn model**
+action: it fetches the revision-pinned ONNX file over HTTPS through
+`SmartTurnModelStore.install` (exact byte size + SHA-256, atomic move into
+app-private storage) and shows a progress row while it runs. On success the
+toggle becomes selectable and the on-by-default flag is restored. The artifact is
+never bundled in the APK. Clearing the default because the model is missing is a
+normal fallback and is **not** reported as an invalid selection; the validator
+only records an `InvalidSelection` when a selection the user actually made can no
+longer be honoured.
 
 ## Tests
 
@@ -219,7 +227,7 @@ honoured.
 | QR is unsupported and unsafe | `settings.ProviderAuthorizationTest`, `providers.PairingQrPolicyTest` |
 | DataStore round-trip, restart proxy, first-run defaults, no credential at rest | `settings.PreferencesSettingsStoreTest` |
 | platform-free settings core | `settings.SettingsSourcePurityTest` |
-| state holder: options, defaults, validation, STT download, credential replace/remove, persistence | `ui.SettingsViewModelTest` |
+| state holder: options, defaults, validation, STT download, Smart Turn install, credential replace/remove, persistence | `ui.SettingsViewModelTest` |
 | Compose: dropdowns, download progress, credential controls, hidden/disabled options | `ui.SettingsScreenUiTest` |
 | real AndroidKeyStore + DataStore persistence | `settings.PreferencesSettingsStoreInstrumentedTest` (compiled; device run in [Tests.md](../Tests.md)) |
 
