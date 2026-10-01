@@ -3,6 +3,7 @@ package com.voicechat.agent.ui
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -27,9 +28,6 @@ import com.voicechat.agent.remote.scriptedResponse
 import com.voicechat.agent.settings.VoiceSettings
 import com.voicechat.agent.ui.ConversationTestTags.COMPOSER
 import com.voicechat.agent.ui.ConversationTestTags.NEW_CONVERSATION
-import com.voicechat.agent.ui.ConversationTestTags.PROVIDER_DISCLOSURE
-import com.voicechat.agent.ui.ConversationTestTags.REMOTE_TRANSFER_NOTICE
-import com.voicechat.agent.ui.ConversationTestTags.RETENTION_NOTICE
 import com.voicechat.agent.ui.ConversationTestTags.SEND
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -81,34 +79,7 @@ class TextFirstSliceUiTest {
     }
 
     @Test
-    fun theDialogDisclosesTheProviderModelAndRemoteTransferBeforeSend() {
-        settings.value = goSettings()
-        setConversationApp()
-
-        composeRule.onNodeWithTag(NEW_CONVERSATION).performClick()
-        composeRule.waitForIdle()
-
-        composeRule.onNodeWithTag(PROVIDER_DISCLOSURE).assertIsDisplayed()
-        composeRule.onNodeWithText("Provider: OpenCode Go · Model: glm-5.3-flash").assertIsDisplayed()
-        composeRule.onNodeWithTag(REMOTE_TRANSFER_NOTICE).assertIsDisplayed()
-        // R-0139: the registry's retention note is shown before any send.
-        composeRule.onNodeWithTag(RETENTION_NOTICE).assertIsDisplayed()
-    }
-
-    @Test
-    fun anUnselectedProviderShowsTheHonestNotConfiguredHint() {
-        settings.value = VoiceSettings.EMPTY
-        setConversationApp()
-
-        composeRule.onNodeWithTag(NEW_CONVERSATION).performClick()
-        composeRule.waitForIdle()
-
-        composeRule.onNodeWithTag(PROVIDER_DISCLOSURE).assertIsDisplayed()
-        composeRule.onNodeWithText("No provider or model is selected. Choose one in Settings before sending.").assertIsDisplayed()
-    }
-
-    @Test
-    fun sendingThroughTheFixtureProviderRendersAndPersistsTheReply() {
+    fun sendingRendersAndPersistsTheReplyWithoutDisclosureBanners() {
         settings.value = goSettings()
         val repository =
             com.voicechat.agent.fake
@@ -116,6 +87,8 @@ class TextFirstSliceUiTest {
         setConversationApp(repository = repository)
 
         composeRule.onNodeWithTag(NEW_CONVERSATION).performClick()
+        composeRule.waitForIdle()
+
         composeRule.onNodeWithTag(COMPOSER).performClick()
         composeRule.onNodeWithTag(COMPOSER).performTextInput("Hello provider")
         composeRule.onNodeWithTag(SEND).performClick()
@@ -131,6 +104,22 @@ class TextFirstSliceUiTest {
         assertEquals(2, persisted.turns.size)
         assertTrue(persisted.turns.last() is AssistantTurn)
         assertEquals("Hello, world", (persisted.turns.last() as AssistantTurn).generated.text)
+    }
+
+    @Test
+    fun theDialogShowsNoTransferOrRetentionNotice() {
+        settings.value = goSettings()
+        setConversationApp()
+
+        composeRule.onNodeWithTag(NEW_CONVERSATION).performClick()
+        composeRule.waitForIdle()
+
+        // The conversation surface names no destination, transfer, or retention
+        // policy: configuring the provider is the consent step.
+        composeRule.onAllNodesWithText("Requests go to", substring = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("leave the device", substring = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Retention", substring = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Data transfer").assertCountEquals(0)
     }
 
     private fun goSettings(): VoiceSettings =

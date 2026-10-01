@@ -124,10 +124,6 @@ object ConversationTestTags {
     const val TRANSCRIPT = "transcript"
     const val LOADING = "loading"
     const val OPEN_SETTINGS = "open-settings"
-    const val PROVIDER_DISCLOSURE = "provider-disclosure"
-    const val REMOTE_TRANSFER_NOTICE = "conversation-remote-transfer"
-    const val RETENTION_NOTICE = "conversation-retention"
-    const val TOOL_EXECUTION_NOTICE = "conversation-tool-execution"
     const val VOICE_TOGGLE = "voice-toggle"
 
     /** Row for [id] in the conversation history drawer. */
@@ -577,7 +573,6 @@ fun ConversationDialogScreen(
             dialog.notice?.let { notice ->
                 NoticeBanner(notice = notice, onDismiss = actions::onDismissNotice)
             }
-            ProviderDisclosureBanner(provider = dialog.provider)
             when {
                 dialog.isLoading -> {
                     LoadingRow(label = stringResource(R.string.loading_conversation))
@@ -964,79 +959,6 @@ private fun NoticeBanner(
             TextButton(onClick = onDismiss, modifier = Modifier.testTag(ConversationTestTags.DISMISS_NOTICE)) {
                 Text(stringResource(R.string.dismiss))
             }
-        }
-    }
-}
-
-/**
- * Discloses where the next request will go before it is sent (M23, R-0097).
- *
- * It shows the persisted selection's provider/model, the validated destination,
- * the remote text/context-transfer notice, and the provider's retention/training
- * note where the registry records one (R-0139). With nothing selected it shows
- * the honest not-configured hint instead of an empty or misleading line.
- */
-@Composable
-private fun ProviderDisclosureBanner(provider: ProviderDisclosure) {
-    val shape = RoundedCornerShape(12.dp)
-    Column(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp)
-                .clip(shape)
-                .border(1.dp, MaterialTheme.colorScheme.outline, shape)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-    ) {
-        if (!provider.hasSelection) {
-            Text(
-                text = stringResource(R.string.disclosure_not_configured),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag(ConversationTestTags.PROVIDER_DISCLOSURE),
-            )
-            return
-        }
-        Text(
-            text = stringResource(R.string.disclosure_provider_model, provider.providerDisplayName!!, provider.modelId!!),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.testTag(ConversationTestTags.PROVIDER_DISCLOSURE),
-        )
-        if (provider.destination != null) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(R.string.disclosure_requests_go_to, provider.destination),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (provider.remoteTransfer) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(R.string.disclosure_remote_transfer),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag(ConversationTestTags.REMOTE_TRANSFER_NOTICE),
-            )
-        }
-        provider.retentionNotice?.let { note ->
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(R.string.disclosure_retention, note),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag(ConversationTestTags.RETENTION_NOTICE),
-            )
-        }
-        if (provider.toolExecutionOnServer) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(R.string.disclosure_tool_execution),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag(ConversationTestTags.TOOL_EXECUTION_NOTICE),
-            )
         }
     }
 }

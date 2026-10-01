@@ -58,9 +58,26 @@ data class SttEngine(
             SttMode.ADVANCED -> "ML Kit Speech Recognition (Advanced)"
         }
 
+    /**
+     * The name of the recognizer model a settings dropdown shows, without the
+     * vendor engine prefix. The engine is named once by the section heading, so
+     * the selectable entries are the models themselves.
+     */
+    val modelDisplayName: String =
+        when (mode) {
+            SttMode.BASIC -> BASIC_MODEL_DISPLAY_NAME
+            SttMode.ADVANCED -> ADVANCED_MODEL_DISPLAY_NAME
+        }
+
     companion object {
         /** The one on-device STT engine this app ships. */
         val ENGINE_ID: EngineId = EngineId("mlkit-genai-speech-recognition")
+
+        /** The Basic-mode recognizer model, named without the vendor prefix. */
+        const val BASIC_MODEL_DISPLAY_NAME: String = "Speech Recognizer (Basic)"
+
+        /** The Advanced (GenAI) recognizer model, named without the vendor prefix. */
+        const val ADVANCED_MODEL_DISPLAY_NAME: String = "Speech Recognizer (Advanced GenAI)"
     }
 }
 

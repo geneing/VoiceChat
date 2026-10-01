@@ -76,7 +76,26 @@ private fun MutablePreferences.putOrRemove(
     if (value.isNullOrBlank()) remove(key) else set(key, value)
 }
 
-private fun Preferences.toVoiceSettings(): VoiceSettings =
+private fun Preferences.toVoiceSettings(): VoiceSettings {
+    // First run: the record is completely pristine (no key of any kind has ever
+    // been written), so seed the app's documented default provider/model. A
+    // record that was explicitly cleared keeps its cleared value: clearing still
+    // writes the smart-turn flag, so the record is no longer pristine.
+    val pristine =
+        this[SettingsKeys.STT_MODE] == null &&
+            this[SettingsKeys.STT_LOCALE] == null &&
+            this[SettingsKeys.LLM_PROVIDER] == null &&
+            this[SettingsKeys.LLM_MODEL] == null &&
+            this[SettingsKeys.LLM_AUTH] == null &&
+            this[SettingsKeys.REASONING] == null &&
+            this[SettingsKeys.LLM_SERVER_URL] == null &&
+            this[SettingsKeys.LLM_LOCAL_MODEL] == null &&
+            this[SettingsKeys.TTS_VOICE] == null &&
+            this[SettingsKeys.SMART_TURN] == null
+    return if (pristine) VoiceSettings.firstRunDefaults() else toStoredVoiceSettings()
+}
+
+private fun Preferences.toStoredVoiceSettings(): VoiceSettings =
     VoiceSettings(
         sttMode = enumOrNull<SttMode>(this[SettingsKeys.STT_MODE]),
         sttLocaleLanguageTag = this[SettingsKeys.STT_LOCALE],
@@ -86,7 +105,7 @@ private fun Preferences.toVoiceSettings(): VoiceSettings =
         reasoningLevel = enumOrNull<ReasoningLevel>(this[SettingsKeys.REASONING]),
         llmServerUrl = this[SettingsKeys.LLM_SERVER_URL],
         ttsVoiceId = this[SettingsKeys.TTS_VOICE],
-        smartTurnEnabled = this[SettingsKeys.SMART_TURN] ?: false,
+        smartTurnEnabled = this[SettingsKeys.SMART_TURN] ?: true,
         llmLocalModelId = this[SettingsKeys.LLM_LOCAL_MODEL]?.let(::ModelId),
     )
 

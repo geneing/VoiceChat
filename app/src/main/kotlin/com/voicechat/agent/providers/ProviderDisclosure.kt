@@ -1,15 +1,18 @@
 package com.voicechat.agent.providers
 
 /**
- * What the conversation surface shows about where a request will go, before it
- * is sent (M23).
+ * The provider/model a conversation turn will run with (M23).
  *
  * It is a small, provider-neutral display value derived from the persisted M22
- * selection and the M13 registry, so the dialog can disclose the destination and
- * the remote text/context transfer **before** any text leaves the device (R-0097)
- * and can name the selected provider's retention/training behavior where the
- * registry records one (R-0139). It carries no credential, prompt, or transcript
- * content.
+ * selection and the M13 registry: just enough for a screen to name the active
+ * provider and model.
+ *
+ * **No destination, retention, or transfer warning.** The conversation surface
+ * deliberately does not carry a data-transfer notice card; asking the user to
+ * configure a provider and credential is the consent step. The registry still
+ * records each provider's destination/retention facts (`ServerDestination`,
+ * `dataRetentionNote`, `toolExecutionOnServer`) for documentation and for any
+ * future explicit consent surface; they are simply not rendered as banners.
  *
  * [hasSelection] is true only when both a provider and a model are selected; the
  * dialog uses it to keep the honest "not configured" hint otherwise.
@@ -17,10 +20,6 @@ package com.voicechat.agent.providers
 data class ProviderDisclosure(
     val providerDisplayName: String? = null,
     val modelId: String? = null,
-    val destination: String? = null,
-    val remoteTransfer: Boolean = false,
-    val toolExecutionOnServer: Boolean = false,
-    val retentionNotice: String? = null,
 ) {
     /** True when a provider and model are both selected. */
     val hasSelection: Boolean get() = providerDisplayName != null && modelId != null
@@ -30,14 +29,10 @@ data class ProviderDisclosure(
         val NONE: ProviderDisclosure = ProviderDisclosure()
 
         /**
-         * Builds the disclosure for [settings] against [registry].
+         * Builds the identity value for [settings] against [registry].
          *
          * A selection with an unknown provider, or no selection at all, yields
-         * [NONE] rather than a partially-guessed disclosure. The destination is
-         * the validated `ServerDestination.disclosure()` from the provider
-         * endpoint policy (the same value the M22 settings surface shows); it is
-         * `null` when the provider has no validated destination yet (an
-         * unconfigured Hermes server).
+         * [NONE] rather than a partially-guessed value.
          */
         fun from(
             settings: com.voicechat.agent.settings.VoiceSettings,
@@ -45,18 +40,9 @@ data class ProviderDisclosure(
         ): ProviderDisclosure {
             val selection = settings.llmSelection ?: return NONE
             val provider = registry.capabilities(selection.providerId) ?: return NONE
-            val destination =
-                (
-                    ProviderEndpointPolicy.destinationFor(provider, settings.llmServerUrl)
-                        as? EndpointValidation.Valid
-                )?.destination?.disclosure()
             return ProviderDisclosure(
                 providerDisplayName = provider.displayName,
                 modelId = selection.modelId.value,
-                destination = destination,
-                remoteTransfer = true,
-                toolExecutionOnServer = provider.toolExecutionOnServer,
-                retentionNotice = provider.dataRetentionNote,
             )
         }
     }

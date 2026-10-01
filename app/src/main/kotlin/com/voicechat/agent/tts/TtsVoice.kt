@@ -77,6 +77,29 @@ sealed interface TtsEngineAvailability {
  * matches, so the caller must surface the explicit "no on-device voice" state.
  */
 object OnDeviceVoiceSelector {
+    /**
+     * The voice locales the app offers, matching the languages the on-device STT
+     * engine can recognize. A voice outside this set is never listed: the app
+     * only speaks a language it can also hear.
+     */
+    val SUPPORTED_LANGUAGE_TAGS: Set<String> =
+        linkedSetOf(
+            "en-US",
+            "en-GB",
+            "en-AU",
+            "es-US",
+            "es-ES",
+        )
+
+    /** True when [locale] is one of the locales the app offers a voice for. */
+    fun isSupportedLocale(locale: Locale): Boolean = normalize(locale) in SUPPORTED_LANGUAGE_TAGS
+
+    /**
+     * The embedded voices the app offers: on-device (`!requiresNetwork`) **and**
+     * in a supported locale. This is the list the settings dropdown renders.
+     */
+    fun supportedVoices(voices: List<TtsVoice>): List<TtsVoice> = onDeviceVoices(voices).filter { isSupportedLocale(it.locale) }
+
     /** Installed voices that do not require a network connection. */
     fun onDeviceVoices(voices: List<TtsVoice>): List<TtsVoice> = voices.filter { it.isOnDevice }
 
@@ -85,7 +108,7 @@ object OnDeviceVoiceSelector {
         voices: List<TtsVoice>,
         locale: Locale,
     ): TtsVoice? =
-        onDeviceVoices(voices)
+        supportedVoices(voices)
             .filter { it.locale.language == locale.language }
             .sortedWith(
                 compareByDescending<TtsVoice> { it.locale == locale }
@@ -95,11 +118,21 @@ object OnDeviceVoiceSelector {
 
     /**
      * The installed embedded voice with exactly [voiceId], or `null` when it is
-     * not installed or requires a network connection. A selected voice is never
-     * silently substituted (R-0181).
+     * not installed, requires a network connection, or is outside the supported
+     * locales. A selected voice is never silently substituted (R-0181).
      */
     fun selectPreferred(
         voices: List<TtsVoice>,
         voiceId: String,
-    ): TtsVoice? = onDeviceVoices(voices).firstOrNull { it.id == voiceId }
+    ): TtsVoice? = supportedVoices(voices).firstOrNull { it.id == voiceId }
+
+    /** The BCP-47 tag for [locale], normalizing a region-less tag to a supported one. */
+    private fun normalize(locale: Locale): String {
+        val tag = locale.toLanguageTag()
+        if (tag in SUPPORTED_LANGUAGE_TAGS) return tag
+        // A voice reported as `en`/`es` without a region still maps to a supported
+        // language; prefer the US variant, matching the STT default.
+        val fallback = "$tag-US"
+        return if (fallback in SUPPORTED_LANGUAGE_TAGS) fallback else tag
+    }
 }

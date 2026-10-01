@@ -92,10 +92,9 @@ class TextFirstSliceTest {
 
             val dialog = viewModel.uiState.value.dialog!!
             assertEquals(TurnPhase.COMPLETED, dialog.phase)
-            // The disclosure names the selected provider/model before/at send.
+            // The active selection is carried as the turn identity (no warning card).
             assertEquals("OpenCode Go", dialog.provider.providerDisplayName)
             assertEquals(goModel, dialog.provider.modelId)
-            assertTrue(dialog.provider.remoteTransfer)
 
             val assistant = dialog.turns.last() as AssistantTurn
             assertEquals("Hello, world", assistant.generated.text)
@@ -368,7 +367,10 @@ class TextFirstSliceTest {
     fun withNoProviderSelectedTheTurnStaysHonestlyNotConfigured() =
         runTest {
             val model = FakeLanguageModel(providerId = KnownProviders.OPENCODE_GO, script = listOf(LlmStreamEvent.Completed()))
-            val viewModel = newViewModel(MutableStateFlow(VoiceSettings.EMPTY), factory = { _, _, _ -> model })
+            // The app's default is a real provider; this exercises the genuinely
+            // unselected case a user can reach by choosing "no provider".
+            val unselected = VoiceSettings(sttLocaleLanguageTag = VoiceSettings.DEFAULT_LANGUAGE_TAG)
+            val viewModel = newViewModel(MutableStateFlow(unselected), factory = { _, _, _ -> model })
 
             viewModel.onNewConversation()
             assertFalse(

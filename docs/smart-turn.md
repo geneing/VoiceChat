@@ -89,15 +89,15 @@ app/src/androidTest/kotlin/com/voicechat/agent/turn/
 
 ## Opt-in behavior
 
-Smart Turn is **default off** (`VoiceSettings.smartTurnEnabled = false`,
-`docs/decisions.md` §3.3) and stays opt-in until M25 evidence supports another
-default. The `SmartTurnDetectorFactory` reads the persisted flag at the start of
-each voice session:
+Smart Turn is **enabled by default** in the settings record
+(`VoiceSettings.smartTurnEnabled = true`), but it only runs when the pinned
+artifact is installed. The `SmartTurnDetectorFactory` reads the persisted flag at
+the start of each voice session:
 
 | State | Result |
 | --- | --- |
-| Disabled (default) | `null`; the detector is **never constructed**, the engine is never opened, and the M09 bounded VAD-only policy is used. |
-| Enabled, model missing | `null`, typed `MODEL_UNAVAILABLE`, recorded; the settings surface reports `DownloadRequired`. |
+| Disabled | `null`; the detector is **never constructed**, the engine is never opened, and the M09 bounded VAD-only policy is used. |
+| Enabled, model missing | `null`, typed `MODEL_UNAVAILABLE`, recorded; the settings surface reports `DownloadRequired` and disables the toggle. |
 | Enabled, model corrupt (wrong size/hash) | `null`, typed `MODEL_CORRUPT`, a user-visible reason, recorded; the VAD-only policy applies. |
 | Enabled, verified, graph fails to load | `null`, typed `MODEL_UNAVAILABLE`, recorded; the VAD-only policy applies. |
 | Enabled and verified | A `SmartTurnCompletionDetector` is built and evaluated once per candidate pause. |
@@ -105,9 +105,10 @@ each voice session:
 Availability is exposed through the M02 `ModelAvailability` contract
 (`ModelTask.TURN_COMPLETION`, `ModelRuntime.ONNX_RUNTIME`) and mapped to the
 existing `SmartTurnState` in the settings model, so the settings screen disables
-the toggle with a reason when the model is not installed, and
-`SettingsValidator` clears an enabled flag that is no longer supportable. No
-settings model was restructured for M10.
+the toggle with a reason when the model is not installed. Clearing the on-by-default
+flag because this device lacks the artifact is a normal fallback, not a rejected
+user choice, so the validator does **not** record an `InvalidSelection` for it
+(R-0233).
 
 **No per-frame inference.** The detector is invoked only from
 `BoundedTurnEndpointPolicy` at a `CANDIDATE_PAUSE` transition, over the
@@ -216,7 +217,9 @@ proven by the JVM suite.** Everything numeric about the model on Pixel 10 is
   **not** this app's performance and must not be quoted as such.
 
 M25 owns calibration, the acceptance evidence, and any decision to change the
-default. Until then Smart Turn stays opt-in and default off (R-0190).
+default. The settings default is now **on** (the product owner's direction), but
+the detector still only runs when its verified artifact is installed, so a device
+without it behaves exactly as the VAD-only default did (R-0190, R-0233).
 
 ## Sources
 

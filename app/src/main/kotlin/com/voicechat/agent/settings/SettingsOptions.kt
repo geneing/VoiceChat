@@ -69,7 +69,7 @@ object SettingsOptions {
         availabilities.map { availability ->
             SelectableOption(
                 value = availability.engine,
-                label = availability.engine.displayName,
+                label = availability.engine.modelDisplayName,
                 state = availability.toOptionState(),
                 selected = availability.engine.mode == selected,
             )
@@ -158,17 +158,20 @@ object SettingsOptions {
     ): Boolean = LlmCapabilityReconciler.effective(provider, model).reasoningLevels.any { it != ReasoningLevel.NONE }
 
     /**
-     * The installed **on-device** voices only.
+     * The installed **on-device** voices only, restricted to the supported
+     * locales.
      *
      * A network-required voice is unsupported (`docs/decisions.md` §2.2), so it is
      * absent rather than shown-as-disabled; when the list is empty the UI reports
-     * the explicit “no on-device voice” state.
+     * the explicit “no on-device voice” state. A voice outside
+     * [OnDeviceVoiceSelector.SUPPORTED_LANGUAGE_TAGS] is likewise absent: the app
+     * only offers a voice whose language it can actually speak.
      */
     fun ttsVoices(
         voices: List<TtsVoice>,
         selectedId: String?,
     ): List<SelectableOption<TtsVoice>> =
-        OnDeviceVoiceSelector.onDeviceVoices(voices).map { voice ->
+        OnDeviceVoiceSelector.supportedVoices(voices).map { voice ->
             SelectableOption(
                 value = voice,
                 label = "${voice.displayName} (${voice.locale.toLanguageTag()})",

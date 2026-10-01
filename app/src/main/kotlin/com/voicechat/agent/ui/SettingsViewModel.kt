@@ -43,10 +43,14 @@ import com.voicechat.agent.settings.SettingsStore
 import com.voicechat.agent.settings.SettingsUiState
 import com.voicechat.agent.settings.SettingsValidator
 import com.voicechat.agent.settings.SmartTurnSettingsSection
+import com.voicechat.agent.settings.SttDownloadProgress
 import com.voicechat.agent.settings.SttSettingsSection
 import com.voicechat.agent.settings.TtsSettingsSection
 import com.voicechat.agent.settings.UnimplementedProviderAuthFlow
 import com.voicechat.agent.settings.VoiceSettings
+import com.voicechat.agent.stt.SttAvailability
+import com.voicechat.agent.stt.SttDownloadStatus
+import com.voicechat.agent.stt.SttEngines
 import com.voicechat.agent.stt.SttMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -72,9 +76,9 @@ import kotlinx.coroutines.launch
  *   method or an unsupported reasoning level is absent, while a known but
  *   currently unavailable mode/model/voice is disabled with a reason;
  * - stores/replaces/removes the provider credential through the M13
- *   [CredentialStore] and never puts a secret in [SettingsUiState];
- * - exposes the validated destination and the remote-transfer disclosure before
- *   any text leaves the device.
+ *   [CredentialStore] and never puts a secret in [SettingsUiState]. Selecting a
+ *   provider and storing its credential is the user's consent step; the screen
+ *   shows provider facts, not a transfer/retention notice.
  *
  * Credential values never appear in the UI state, log lines, or persisted
  * settings; only the redacted [CredentialStatus] does.
@@ -86,6 +90,7 @@ class SettingsViewModel(
     private val capabilityProvider: SettingsCapabilityProvider,
     private val modelCatalog: ModelCapabilityCatalog = EmptyModelCapabilityCatalog,
     private val authFlow: ProviderAuthFlow = UnimplementedProviderAuthFlow,
+    private val sttDownloader: SttModelDownloader = NoOpSttModelDownloader,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     scope: CoroutineScope? = null,
 ) : ViewModel(),
@@ -103,6 +108,8 @@ class SettingsViewModel(
     private var destinationDraft: String = ""
     private var destinationError: String? = null
     private var authFlowState: AuthorizationUiState = AuthorizationUiState.Idle
+    private var sttDownload: SttDownloadProgress? = null
+    private var sttDownloadJob: Job? = null
     private var closed: Boolean = false
 
     private val startupJob: Job =
@@ -123,6 +130,64 @@ class SettingsViewModel(
 
     override fun onSelectSttMode(mode: SttMode) {
         update(current.copy(sttMode = mode))
+    }
+
+    override fun onDownloadSttModel() {
+        val mode = current.sttMode ?: return
+        val availability =
+            capabilities.sttAvailability.firstOrNull { it.engine.mode == mode }
+                ?: return
+        if (availability !is SttAvailability.DownloadRequired) return
+        if (sttDownloadJob?.isActive == true) return
+        val engine = availability.engine
+        sttDownload = SttDownloadProgress(bytesDownloaded = 0L, bytesToDownload = 0L)
+        rebuild()
+        sttDownloadJob =
+            coroutineScope().launch(dispatcher) {
+                try {
+                    sttDownloader.download(engine).collect { status ->
+                        when (status) {
+                            is SttDownloadStatus.Started -> {
+                                sttDownload =
+                                    SttDownloadProgress(
+                                        bytesDownloaded = 0L,
+                                        bytesToDownload = status.bytesToDownload,
+                                    )
+                            }
+
+                            is SttDownloadStatus.Progress -> {
+                                sttDownload =
+                                    SttDownloadProgress(
+                                        bytesDownloaded = status.bytesDownloaded,
+                                        bytesToDownload = sttDownload?.bytesToDownload ?: 0L,
+                                    )
+                            }
+
+                            SttDownloadStatus.Completed -> {
+                                sttDownload = null
+                                capabilities = readCapabilities()
+                            }
+
+                            is SttDownloadStatus.Failed -> {
+                                sttDownload = null
+                                notice =
+                                    SettingsNotice.Failure(
+                                        status.error.code,
+                                        status.error.detail ?: "The speech model could not be downloaded.",
+                                    )
+                            }
+                        }
+                        rebuild()
+                    }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Throwable) {
+                    AppLog.w(failure) { "settings: stt download failed" }
+                    sttDownload = null
+                    notice = SettingsNotice.Failure(ErrorCode.MODEL_DOWNLOAD_FAILED, "The speech model could not be downloaded.")
+                    rebuild()
+                }
+            }
     }
 
     override fun onSelectLlmProvider(providerId: ProviderId) {
@@ -174,7 +239,8 @@ class SettingsViewModel(
         when (val validated = ServerDestinationValidator.validate(text, EndpointSource.USER_ENTERED)) {
             is EndpointValidation.Valid -> {
                 destinationError = null
-                // Persist the trimmed, validated text; the disclosure is derived from it.
+                // Persist the trimmed, validated text; the turn path resolves the
+                // endpoint from it.
                 update(current.copy(llmServerUrl = text.trim()))
             }
 
@@ -285,7 +351,16 @@ class SettingsViewModel(
         if (destinationDraft.isBlank()) {
             destinationDraft = validation.settings.llmServerUrl.orEmpty()
         }
-        if (!validation.isValid) {
+        // A stored value the app cannot support is worth a notice — but only
+        // once the runtime has actually reported its catalog. Before that, an
+        // empty snapshot would look like a rejection of a perfectly valid
+        // selection, so nothing is reported and nothing is persisted.
+        val hadStoredSelection =
+            stored.llmProviderId != null ||
+                stored.llmModelId != null ||
+                stored.sttMode != null ||
+                stored.ttsVoiceId != null
+        if (!validation.isValid && hadStoredSelection && !capabilities.isUnread) {
             notice = SettingsNotice.Info(SettingsNotice.Info.InfoKind.INVALID_SELECTION_CLEARED)
         }
         if (persistCorrections && validation.settings != stored) {
@@ -373,14 +448,21 @@ class SettingsViewModel(
     private fun rebuild() {
         val provider = current.llmProviderId?.let { registry.capabilities(it) }
         val modelCapabilities = readModelCapabilities(current)
-        val endpoint = provider?.let { ProviderEndpointPolicy.destinationFor(it, current.llmServerUrl) }
-        val disclosure = (endpoint as? EndpointValidation.Valid)?.destination?.disclosure()
+
+        // When the user has not chosen an STT mode, present the preferred one the
+        // device actually reports ready (Advanced before Basic). This is a
+        // capability-driven default, not a stored selection, so it is only
+        // shown, never persisted until the user picks it or a turn uses it.
+        val effectiveSttMode =
+            current.sttMode
+                ?: SttEngines.preferred(capabilities.sttAvailability)?.mode
 
         val stt =
             SttSettingsSection(
-                options = SettingsOptions.sttModes(capabilities.sttAvailability, current.sttMode),
-                selectedMode = current.sttMode,
+                options = SettingsOptions.sttModes(capabilities.sttAvailability, effectiveSttMode),
+                selectedMode = effectiveSttMode,
                 localeLanguageTag = current.sttLocaleLanguageTag ?: VoiceSettings.DEFAULT_LANGUAGE_TAG,
+                download = sttDownload,
             )
 
         val providerModels =
@@ -411,10 +493,6 @@ class SettingsViewModel(
                 selectedReasoning = current.effectiveReasoningLevel,
                 connection = provider?.let { ProviderConnectionState.derive(it, credentialStatus) } ?: ConnectionState.Disconnected,
                 credentialStatus = credentialStatus,
-                destinationDisclosure = disclosure,
-                remoteTransfer = provider != null,
-                toolExecutionOnServer = provider?.toolExecutionOnServer == true,
-                retentionNotice = provider?.dataRetentionNote,
                 destinationDraft = destinationDraft,
                 destinationError = destinationError,
                 needsConfiguredDestination = provider?.transport?.configurable == true,
@@ -451,6 +529,7 @@ class SettingsViewModel(
     fun shutdown() {
         closed = true
         startupJob.cancel()
+        sttDownloadJob?.cancel()
     }
 
     override fun onCleared() {
@@ -499,6 +578,7 @@ fun settingsViewModelFactory(
     capabilityProvider: SettingsCapabilityProvider,
     modelCatalog: ModelCapabilityCatalog = EmptyModelCapabilityCatalog,
     authFlow: ProviderAuthFlow = UnimplementedProviderAuthFlow,
+    sttDownloader: SttModelDownloader = MlKitSttModelDownloader,
 ): ViewModelProvider.Factory =
     viewModelFactory {
         initializer {
@@ -509,6 +589,7 @@ fun settingsViewModelFactory(
                 capabilityProvider = capabilityProvider,
                 modelCatalog = modelCatalog,
                 authFlow = authFlow,
+                sttDownloader = sttDownloader,
             )
         }
     }

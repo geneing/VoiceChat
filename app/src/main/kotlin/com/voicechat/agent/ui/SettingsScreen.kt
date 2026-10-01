@@ -6,21 +6,23 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -47,16 +49,10 @@ import com.voicechat.agent.R
 import com.voicechat.agent.contracts.ModelAvailability
 import com.voicechat.agent.contracts.ModelCatalogState
 import com.voicechat.agent.domain.ConnectionState
-import com.voicechat.agent.domain.ReasoningLevel
-import com.voicechat.agent.providers.AuthMethod
-import com.voicechat.agent.providers.ProviderCapabilities
-import com.voicechat.agent.settings.AuthorizationUiState
 import com.voicechat.agent.settings.SelectableOption
 import com.voicechat.agent.settings.SettingsActions
 import com.voicechat.agent.settings.SettingsNotice
 import com.voicechat.agent.settings.SettingsUiState
-import com.voicechat.agent.stt.SttEngine
-import com.voicechat.agent.tts.TtsVoice
 
 /**
  * Test tags for the settings surface, so UI tests locate controls by a stable
@@ -73,10 +69,6 @@ object SettingsTestTags {
     const val CREDENTIAL_SAVE = "settings-credential-save"
     const val CREDENTIAL_REMOVE = "settings-credential-remove"
     const val CREDENTIAL_STATUS = "settings-credential-status"
-    const val DESTINATION_DISCLOSURE = "settings-destination-disclosure"
-    const val REMOTE_TRANSFER_NOTICE = "settings-remote-transfer"
-    const val TOOL_EXECUTION_NOTICE = "settings-tool-execution"
-    const val RETENTION_NOTICE = "settings-retention-notice"
     const val DESTINATION_FIELD = "settings-destination-field"
     const val DESTINATION_ERROR = "settings-destination-error"
     const val CONNECTION_STATE = "settings-connection-state"
@@ -85,32 +77,35 @@ object SettingsTestTags {
     const val SMART_TURN_TOGGLE = "settings-smart-turn-toggle"
     const val SMART_TURN_REASON = "settings-smart-turn-reason"
 
-    /** Radio option for an STT mode. */
-    fun sttOption(mode: String): String = "settings-stt-$mode"
+    /** The selectable dropdown for an STT model. */
+    const val STT_DROPDOWN = "settings-stt-dropdown"
 
-    /** Disabled reason for an STT mode. */
-    fun sttReason(mode: String): String = "settings-stt-reason-$mode"
+    /** The progress bar shown while the selected STT model downloads. */
+    const val STT_DOWNLOAD_PROGRESS = "settings-stt-download-progress"
 
-    /** Radio option for a provider. */
-    fun providerOption(id: String): String = "settings-provider-$id"
+    /** The action that starts the selected STT model download. */
+    const val STT_DOWNLOAD_ACTION = "settings-stt-download-action"
 
-    /** Radio option for a model. */
-    fun modelOption(id: String): String = "settings-model-$id"
+    /** The selectable dropdown for a provider. */
+    const val PROVIDER_DROPDOWN = "settings-provider-dropdown"
 
-    /** Disabled reason for a model. */
-    fun modelReason(id: String): String = "settings-model-reason-$id"
+    /** The selectable dropdown for a model. */
+    const val MODEL_DROPDOWN = "settings-model-dropdown"
+
+    /** The selectable dropdown for a reasoning level. */
+    const val REASONING_DROPDOWN = "settings-reasoning-dropdown"
+
+    /** The selectable dropdown for a TTS voice. */
+    const val TTS_DROPDOWN = "settings-tts-voice-dropdown"
 
     /** The catalog-level notice shown when no model is listed (M27, R-0102). */
     const val MODEL_CATALOG_NOTICE: String = "settings-model-catalog-notice"
 
-    /** Radio option for an auth method. */
-    fun authOption(method: String): String = "settings-auth-$method"
+    /** Disabled reason for a model entry inside the dropdown menu. */
+    fun modelReason(id: String): String = "settings-model-reason-$id"
 
-    /** Radio option for a reasoning level. */
-    fun reasoningOption(level: String): String = "settings-reasoning-$level"
-
-    /** Radio option for a TTS voice. */
-    fun ttsOption(id: String): String = "settings-tts-voice-$id"
+    /** A disabled entry inside a dropdown menu, tagged by its value. */
+    fun menuOption(value: String): String = "settings-menu-option-$value"
 }
 
 /**
@@ -186,23 +181,59 @@ private fun SttSection(
 ) {
     SettingsHeading("On-device speech-to-text")
     Text(
-        text = "Engine: ML Kit GenAI Speech Recognition (one on-device engine; no cloud fallback).",
+        text = "One on-device recognizer; no cloud fallback.",
         style = MaterialTheme.typography.bodySmall,
     )
     if (state.stt.options.isEmpty()) {
         Text("No STT engine status is available on this device.", style = MaterialTheme.typography.bodyMedium)
         return
     }
-    state.stt.options.forEach { option ->
-        OptionRow(
-            label = option.label,
-            selected = option.isSelected,
-            enabled = option.isAvailable,
-            tag = SettingsTestTags.sttOption(option.value.mode.name),
-            onSelect = { actions.onSelectSttMode(option.value.mode) },
+    val selectable = state.stt.options.filter { it.isAvailable }
+    if (selectable.isNotEmpty()) {
+        OptionDropdown(
+            label = "Recognizer model",
+            options = selectable,
+            selected = selectable.firstOrNull { it.isSelected },
+            tag = SettingsTestTags.STT_DROPDOWN,
+            optionTag = { SettingsTestTags.menuOption(it.value.modelId.value) },
+            onSelect = { actions.onSelectSttMode(it.value.mode) },
         )
-        option.unavailableReason?.let { reason ->
-            DisabledReason(text = reason, tag = SettingsTestTags.sttReason(option.value.mode.name))
+    }
+
+    // The selected-but-unprovisioned model: offer the download, then show its
+    // progress. An available model shows nothing extra.
+    val selected = state.stt.selectedOption
+    if (state.stt.download != null) {
+        SttDownloadBar(progress = state.stt.download)
+    } else if (selected != null && !selected.isAvailable) {
+        val reason = selected.unavailableReason.orEmpty()
+        Text(
+            text = reason,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag(SettingsTestTags.STT_DOWNLOAD_PROGRESS),
+        )
+        if (reason.contains("download", ignoreCase = true)) {
+            Button(
+                onClick = actions::onDownloadSttModel,
+                modifier = Modifier.testTag(SettingsTestTags.STT_DOWNLOAD_ACTION),
+            ) {
+                Text("Download speech model")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SttDownloadBar(progress: com.voicechat.agent.settings.SttDownloadProgress) {
+    Column(modifier = Modifier.testTag(SettingsTestTags.STT_DOWNLOAD_PROGRESS)) {
+        Text("Downloading speech model…", style = MaterialTheme.typography.bodySmall)
+        Spacer(modifier = Modifier.height(6.dp))
+        val fraction = progress.fraction
+        if (fraction == null) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        } else {
+            LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -215,16 +246,14 @@ private fun LlmSection(
     val llm = state.llm
     SettingsHeading("Language model")
 
-    Text("Provider", style = MaterialTheme.typography.labelLarge)
-    llm.providers.forEach { option ->
-        OptionRow(
-            label = option.label,
-            selected = option.isSelected,
-            enabled = option.isAvailable,
-            tag = SettingsTestTags.providerOption(option.value.providerId.value),
-            onSelect = { actions.onSelectLlmProvider(option.value.providerId) },
-        )
-    }
+    OptionDropdown(
+        label = "Provider",
+        options = llm.providers,
+        selected = llm.providers.firstOrNull { it.isSelected },
+        tag = SettingsTestTags.PROVIDER_DROPDOWN,
+        optionTag = { SettingsTestTags.menuOption(it.value.providerId.value) },
+        onSelect = { actions.onSelectLlmProvider(it.value.providerId) },
+    )
 
     val provider = llm.selectedProviderId
     if (provider == null) {
@@ -232,7 +261,6 @@ private fun LlmSection(
         return
     }
 
-    Text("Model", style = MaterialTheme.typography.labelLarge)
     if (llm.models.isEmpty()) {
         ModelCatalogNotice(
             state = llm.modelCatalogState,
@@ -240,40 +268,14 @@ private fun LlmSection(
             onRefresh = actions::onRefresh,
         )
     } else {
-        llm.models.forEach { option: SelectableOption<ModelAvailability> ->
-            OptionRow(
-                label = option.label,
-                selected = option.isSelected,
-                enabled = option.isAvailable,
-                tag = SettingsTestTags.modelOption(option.value.model.id.value),
-                onSelect = { actions.onSelectLlmModel(option.value.model.id) },
-            )
-            option.unavailableReason?.let { reason ->
-                DisabledReason(text = reason, tag = SettingsTestTags.modelReason(option.value.model.id.value))
-            }
-        }
-    }
-
-    Text("Authentication", style = MaterialTheme.typography.labelLarge)
-    llm.authMethods.forEach { option ->
-        OptionRow(
-            label = option.label,
-            selected = option.isSelected,
-            enabled = option.isAvailable,
-            tag = SettingsTestTags.authOption(option.value.name),
-            onSelect = { actions.onSelectAuthMethod(option.value) },
+        OptionDropdown(
+            label = "Model",
+            options = llm.models,
+            selected = llm.models.firstOrNull { it.isSelected },
+            tag = SettingsTestTags.MODEL_DROPDOWN,
+            optionTag = { SettingsTestTags.menuOption(it.value.model.id.value) },
+            onSelect = { actions.onSelectLlmModel(it.value.model.id) },
         )
-        if (option.value == AuthMethod.OAUTH_PKCE && option.isSelected) {
-            Button(
-                onClick = actions::onBeginProviderSignIn,
-                modifier = Modifier.testTag(SettingsTestTags.SIGN_IN),
-            ) {
-                Text("Sign in with browser")
-            }
-            AuthorizationState(
-                authFlow = llm.authFlow,
-            )
-        }
     }
 
     CredentialControls(
@@ -303,18 +305,16 @@ private fun LlmSection(
         }
     }
 
-    Text("Reasoning level", style = MaterialTheme.typography.labelLarge)
-    llm.reasoning.forEach { option ->
-        OptionRow(
-            label = option.label,
-            selected = option.value == llm.selectedReasoning,
-            enabled = option.isAvailable,
-            tag = SettingsTestTags.reasoningOption(option.value.name),
-            onSelect = { actions.onSelectReasoningLevel(option.value) },
+    if (llm.reasoning.isNotEmpty()) {
+        OptionDropdown(
+            label = "Reasoning level",
+            options = llm.reasoning,
+            selected = llm.reasoning.firstOrNull { it.isSelected },
+            tag = SettingsTestTags.REASONING_DROPDOWN,
+            optionTag = { SettingsTestTags.menuOption(it.value.name) },
+            onSelect = { actions.onSelectReasoningLevel(it.value) },
         )
     }
-
-    RemoteTransferDisclosure(state = llm)
 }
 
 @Composable
@@ -325,43 +325,41 @@ private fun CredentialControls(
     onRemove: () -> Unit,
 ) {
     var draft by remember { mutableStateOf("") }
-    Text("Credential", style = MaterialTheme.typography.labelLarge)
-    Text(
-        text =
-            when (status) {
-                is com.voicechat.agent.credentials.CredentialStatus.Stored -> {
-                    "A ${status.kind.name.lowercase().replace('_', ' ')} is stored for $providerName."
-                }
-
-                is com.voicechat.agent.credentials.CredentialStatus.NotStored -> {
-                    "No credential is stored for $providerName."
-                }
-            },
-        style = MaterialTheme.typography.bodySmall,
-        modifier = Modifier.testTag(SettingsTestTags.CREDENTIAL_STATUS),
-    )
-    OutlinedTextField(
-        value = draft,
-        onValueChange = { draft = it },
-        label = { Text("API key") },
-        singleLine = true,
-        visualTransformation = PasswordVisualTransformation(),
-        modifier = Modifier.fillMaxWidth().testTag(SettingsTestTags.CREDENTIAL_FIELD),
-    )
+    val stored = status is com.voicechat.agent.credentials.CredentialStatus.Stored
+    Text("API key", style = MaterialTheme.typography.labelLarge)
+    if (stored) {
+        Text(
+            text = "Stored for $providerName.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.testTag(SettingsTestTags.CREDENTIAL_STATUS),
+        )
+    } else {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            placeholder = { Text("Paste your API key") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth().testTag(SettingsTestTags.CREDENTIAL_FIELD),
+        )
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(
-            onClick = {
-                onSave(draft)
-                draft = ""
-            },
-            enabled = draft.isNotBlank(),
-            modifier = Modifier.testTag(SettingsTestTags.CREDENTIAL_SAVE),
-        ) {
-            Text(if (status is com.voicechat.agent.credentials.CredentialStatus.Stored) "Replace" else "Save")
+        if (!stored) {
+            Button(
+                onClick = {
+                    onSave(draft)
+                    draft = ""
+                },
+                enabled = draft.isNotBlank(),
+                modifier = Modifier.testTag(SettingsTestTags.CREDENTIAL_SAVE),
+            ) {
+                Text("Save")
+            }
         }
         OutlinedButton(
             onClick = onRemove,
-            enabled = status is com.voicechat.agent.credentials.CredentialStatus.Stored,
+            enabled = stored,
             modifier = Modifier.testTag(SettingsTestTags.CREDENTIAL_REMOVE),
         ) {
             Text("Remove")
@@ -387,40 +385,6 @@ private fun ConnectionLine(state: ConnectionState) {
 }
 
 @Composable
-private fun RemoteTransferDisclosure(state: com.voicechat.agent.settings.LlmSettingsSection) {
-    Text("Data transfer", style = MaterialTheme.typography.labelLarge)
-    Text(
-        text =
-            state.destinationDisclosure
-                ?.let { stringResource(R.string.disclosure_requests_go_to, it) }
-                ?: stringResource(R.string.disclosure_no_destination),
-        style = MaterialTheme.typography.bodySmall,
-        modifier = Modifier.testTag(SettingsTestTags.DESTINATION_DISCLOSURE),
-    )
-    if (state.remoteTransfer) {
-        Text(
-            text = stringResource(R.string.disclosure_remote_transfer),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.testTag(SettingsTestTags.REMOTE_TRANSFER_NOTICE),
-        )
-    }
-    state.retentionNotice?.let { note ->
-        Text(
-            text = stringResource(R.string.disclosure_retention, note),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.testTag(SettingsTestTags.RETENTION_NOTICE),
-        )
-    }
-    if (state.toolExecutionOnServer) {
-        Text(
-            text = stringResource(R.string.disclosure_tool_execution),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.testTag(SettingsTestTags.TOOL_EXECUTION_NOTICE),
-        )
-    }
-}
-
-@Composable
 private fun TtsSection(
     state: SettingsUiState,
     actions: SettingsActions,
@@ -429,21 +393,22 @@ private fun TtsSection(
     Text("On-device voices only; a network voice is never used.", style = MaterialTheme.typography.bodySmall)
     if (state.tts.noOnDeviceVoice) {
         Text(
-            text = "No on-device voice is installed for this locale; the app stays text-only.",
+            text =
+                "No on-device voice is installed for this locale; the app stays text-only. " +
+                    "Install one in system settings to enable speech.",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.testTag(SettingsTestTags.TTS_NO_VOICE),
         )
         return
     }
-    state.tts.options.forEach { option: SelectableOption<TtsVoice> ->
-        OptionRow(
-            label = option.label,
-            selected = option.isSelected,
-            enabled = option.isAvailable,
-            tag = SettingsTestTags.ttsOption(option.value.id),
-            onSelect = { actions.onSelectTtsVoice(option.value.id) },
-        )
-    }
+    OptionDropdown(
+        label = "Voice",
+        options = state.tts.options,
+        selected = state.tts.options.firstOrNull { it.isSelected },
+        tag = SettingsTestTags.TTS_DROPDOWN,
+        optionTag = { SettingsTestTags.menuOption(it.value.id) },
+        onSelect = { actions.onSelectTtsVoice(it.value.id) },
+    )
 }
 
 @Composable
@@ -469,7 +434,12 @@ private fun SmartTurnSection(
         )
     }
     state.smartTurn.unavailableReason?.let { reason ->
-        DisabledReason(text = reason, tag = SettingsTestTags.SMART_TURN_REASON)
+        Text(
+            text = reason,
+            modifier = Modifier.testTag(SettingsTestTags.SMART_TURN_REASON),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
@@ -482,38 +452,62 @@ private fun SettingsHeading(text: String) {
     )
 }
 
+/**
+ * A labelled, single-choice dropdown built from capability-aware options.
+ *
+ * A supported option is selectable; a known-but-unavailable option is listed but
+ * disabled with its reason, so an unsupported capability is never shown and an
+ * unavailable one is explained rather than hidden. The current selection is the
+ * field's displayed value.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OptionRow(
+private fun <T> OptionDropdown(
     label: String,
-    selected: Boolean,
-    enabled: Boolean,
+    options: List<SelectableOption<T>>,
+    selected: SelectableOption<T>?,
     tag: String,
-    onSelect: () -> Unit,
+    optionTag: (SelectableOption<T>) -> String,
+    onSelect: (SelectableOption<T>) -> Unit,
 ) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .selectable(selected = selected, enabled = enabled, onClick = onSelect),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RadioButton(selected = selected, onClick = onSelect, enabled = enabled, modifier = Modifier.testTag(tag))
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(text = label, style = MaterialTheme.typography.bodyMedium)
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        Spacer(modifier = Modifier.height(4.dp))
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = !expanded },
+        ) {
+            OutlinedTextField(
+                value = selected?.label ?: "Not selected",
+                onValueChange = {},
+                readOnly = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                modifier = Modifier.fillMaxWidth().menuAnchor().testTag(tag),
+            )
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                options.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.label) },
+                        enabled = option.isAvailable,
+                        onClick = {
+                            expanded = false
+                            onSelect(option)
+                        },
+                        modifier = Modifier.testTag(optionTag(option)),
+                    )
+                    option.unavailableReason?.let { reason ->
+                        Text(
+                            text = reason,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        }
     }
-}
-
-@Composable
-private fun DisabledReason(
-    text: String,
-    tag: String,
-) {
-    Text(
-        text = text,
-        modifier = Modifier.padding(start = 48.dp).testTag(tag),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        style = MaterialTheme.typography.bodySmall,
-    )
 }
 
 /**
@@ -580,18 +574,6 @@ private fun ModelCatalogNotice(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-}
-
-@Composable
-private fun AuthorizationState(authFlow: AuthorizationUiState) {
-    val text =
-        when (authFlow) {
-            is AuthorizationUiState.Idle -> "Not started."
-            is AuthorizationUiState.AwaitingAuthorization -> "Waiting for authorization at ${authFlow.authorizationUri}."
-            is AuthorizationUiState.Completed -> authFlow.message
-            is AuthorizationUiState.Rejected -> "Sign-in unavailable (${authFlow.reason.name.lowercase().replace('_', ' ')})."
-        }
-    Text(text = text, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable

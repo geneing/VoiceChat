@@ -25,9 +25,9 @@ Implemented:
 - The honest `NotConfiguredLanguageModel`/`LLM_NOT_CONFIGURED` state remains
   only when nothing is selected (or the selected provider has no adapter),
   never as a fake success (R-0012).
-- The dialog discloses the selected provider/model, the validated destination,
-  the remote text/context-transfer notice, and the provider's retention/training
-  note where the registry records one — before/at send (R-0097, R-0139).
+- The dialog carries the turn's provider/model identity; it does **not** render a
+  destination/transfer/retention notice card (removed by product decision; see
+  R-0232). Selecting the provider and storing its credential is the consent step.
 - A documented, static model list for OpenCode Go so a selection is real without
   claiming the live `/models` surface is wired (R-0102 stays open).
 - Automated tests proving the full lifecycle, cancellation, retry, a typed
@@ -57,7 +57,7 @@ MainActivity
         │
         ├─ VoiceAgentRoot(settingsFlow, providerRegistry, providerFactory)
         │      └─ ConversationViewModel
-        │             ├─ observes settingsFlow -> ProviderDisclosure (dialog banner)
+        │             ├─ observes settingsFlow -> ProviderDisclosure (provider/model identity)
         │             └─ at send: ProviderTurnResolver.resolve(settings, conversationId, registry, factory)
         │                      -> ActiveProviderTurn(selection, reasoning, adapter)
         │                      -> TurnOrchestrator.run(request, observer, languageModel = adapter)
@@ -73,14 +73,14 @@ diverge.
 ```
 app/src/main/kotlin/com/voicechat/agent/providers/
   ProviderLanguageModelFactory.kt   registry-driven factory (all six adapters)
-  ProviderDisclosure.kt             display value: provider/model/destination/retention
+  ProviderDisclosure.kt             display value: provider/model identity (no notice card)
   DocumentedModelCatalog.kt         documented static model ids (OpenCode Go)
 app/src/main/kotlin/com/voicechat/agent/ui/
   ProviderTurnContext.kt            ActiveProviderTurn + ProviderTurnResolver
 app/src/test/kotlin/com/voicechat/agent/
   providers/ProviderLanguageModelFactoryTest.kt
   ui/TextFirstSliceTest.kt          full lifecycle, cancel, retry, failure, bounds, trace
-  ui/TextFirstSliceUiTest.kt        Compose disclosure + visible result (Robolectric)
+  ui/TextFirstSliceUiTest.kt        Compose send/render + result (Robolectric)
   ui/TextFirstSliceSmokeTest.kt     opt-in real-provider smoke (not run)
 ```
 
@@ -128,21 +128,17 @@ The M12 request contract still carries no `max_tokens`; the Anthropic Messages
 family sends a bounded fixed `4096` default. The limit stays a documented
 implementation default, not a Go-verified figure, and the risk remains tracked.
 
-## Disclosure before send
+## Provider identity (no disclosure banner)
 
-`ProviderDisclosure.from(settings, registry)` derives:
+`ProviderDisclosure.from(settings, registry)` derives only the selected
+provider's display name and model id, and is `NONE` until both are selected.
 
-- the selected provider's display name and model id;
-- the validated destination (`ServerDestination.disclosure()`), the same value
-  the M22 settings screen shows;
-- the remote text/context-transfer notice (reused verbatim from the shared
-  string resource);
-- the provider's `dataRetentionNote` where the registry records one
-  (OpenCode Go/Zen/OpenRouter/OpenAI), and the Hermes server-side-tools notice.
-
-The conversation dialog renders this banner above the transcript before any
-send, and the M22 settings screen renders the same strings and retention note,
-so the wording has one source of truth.
+The conversation surface deliberately renders **no** destination, transfer, or
+retention notice: that card was removed by product decision (R-0232). Configuring
+the provider and storing its credential in Settings is the consent step. The
+registry still records `ServerDestination`, `dataRetentionNote`, and
+`toolExecutionOnServer` as provider facts for documentation and validation — they
+are simply not shown as banners.
 
 ## Bounded context
 
@@ -168,17 +164,17 @@ Credential-free and network-free JVM tests under `:app:testDebugUnitTest`:
 - `providers.ProviderLanguageModelFactoryTest` — OpenCode Go adapter + the
   conversation-scoped session header; every known provider resolves; Hermes
   needs a validated destination; an unknown provider has no adapter; the
-  disclosure names provider/model/destination/retention and is `NONE` until
-  both a provider and a model are selected.
+  identity names the selected provider/model and is `NONE` until both are
+  selected.
 - `ui.TextFirstSliceTest` — full lifecycle over the real OpenCode Go adapter and
   a recorded SSE fixture; incremental deltas; cancellation as an interrupted
   turn; retry after a failure; a typed `LLM_RATE_LIMITED` failure that persists
   no phantom turn; the persisted selection changes the adapter and endpoint;
   nothing selected stays `LLM_NOT_CONFIGURED`; the bounded context; a
   content-free trace.
-- `ui.TextFirstSliceUiTest` (Robolectric) — the dialog shows the provider/model,
-  the remote-transfer notice, and the retention note before send; the honest
-  not-configured hint; a fixture-backed send renders and persists the reply.
+- `ui.TextFirstSliceUiTest` (Robolectric) — the conversation surface renders no
+  transfer/retention notice; the honest not-configured hint; a fixture-backed
+  send renders and persists the reply.
 
 The opt-in real-provider smoke, and the Pixel 10 manual procedure, are documented
 in [Tests.md](../Tests.md) § M23 and marked **not run**.
@@ -196,7 +192,9 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 - The Pixel 10 run with a real credential/network/Keystore store (R-0161).
 - Sending the app-local conversation id to the provider as a session hint
   (R-0162).
-- The retention/training disclosure is a dated, provider-level summary, not a
-  live per-model policy (R-0163).
+- The retention/training disclosure data is still a dated, provider-level summary
+  rather than a live per-model policy; it is no longer rendered in the UI
+  (R-0163, R-0232).
 - Per-turn adapter construction and transport lifecycle (R-0164).
-- No explicit per-send consent gate: the disclosure is informational (R-0165).
+- No in-app disclosure and no per-send consent gate; the provider/credential
+  configuration step is the only consent surface (R-0165, R-0232).

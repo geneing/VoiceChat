@@ -44,6 +44,16 @@ data class SettingsCapabilities(
         SmartTurnState.Unavailable("Smart Turn is not installed; the bounded VAD endpoint is used."),
     /** The models the selected provider currently offers and their availability. */
     val models: List<ModelAvailability> = emptyList(),
+    /**
+     * True when no runtime check has produced this snapshot yet.
+     *
+     * An unread snapshot is **not** evidence that a stored selection is
+     * unsupported, so validation must not treat its empty lists as a rejection
+     * (and must not raise an "invalid selection cleared" notice). The empty
+     * snapshot is [EMPTY] / [UNREAD]; a real check that found nothing is a
+     * different, authoritative answer.
+     */
+    val isUnread: Boolean = false,
 ) {
     companion object {
         /**
@@ -51,7 +61,7 @@ data class SettingsCapabilities(
          * before the first runtime check and in tests that only exercise one
          * capability.
          */
-        val EMPTY: SettingsCapabilities = SettingsCapabilities()
+        val EMPTY: SettingsCapabilities = SettingsCapabilities(isUnread = true)
     }
 }
 

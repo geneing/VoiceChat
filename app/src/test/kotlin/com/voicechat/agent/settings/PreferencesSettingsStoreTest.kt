@@ -119,6 +119,18 @@ class PreferencesSettingsStoreTest {
         }
 
     @Test
+    fun aPristineStoreStartsWithTheDocumentedDefaultProviderAndModel() =
+        runBlocking {
+            val scope = ioScope()
+            val store = newStore(newFile(), scope)
+
+            val firstRun = store.observe().first()
+            assertEquals(VoiceSettings.DEFAULT_PROVIDER_ID, firstRun.llmProviderId)
+            assertEquals(VoiceSettings.DEFAULT_MODEL_ID, firstRun.llmModelId)
+            scope.cancel()
+        }
+
+    @Test
     fun noCredentialShapedValueIsPersisted() =
         runBlocking {
             val file = newFile()
