@@ -129,7 +129,8 @@ class ProviderLanguageModelFactoryTest {
 
     @Test
     fun theDisclosureIsNoneUntilProviderAndModelAreBothSelected() {
-        assertEquals(ProviderDisclosure.NONE, ProviderDisclosure.from(VoiceSettings.EMPTY, registry))
+        // An empty selection has no identity to name.
+        assertEquals(ProviderDisclosure.NONE, ProviderDisclosure.from(VoiceSettings(sttLocaleLanguageTag = "en-US"), registry))
         assertEquals(
             ProviderDisclosure.NONE,
             ProviderDisclosure.from(VoiceSettings(llmProviderId = KnownProviders.OPENCODE_GO), registry),

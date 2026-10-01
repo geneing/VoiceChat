@@ -26,8 +26,19 @@ Implemented:
   stored selection the registry/runtime no longer supports.
 - The settings Compose surface and its ViewModel, including credential
   replace/remove through the M13 `CredentialStore`.
-- The validated destination and the remote text/context-transfer disclosure
-  shown before text leaves the device.
+- A **dropdown-per-section** surface: the recognizer model, provider, model,
+  reasoning level, and TTS voice are single-choice dropdowns, not radio lists.
+  Sub-sections that are not applicable (no Authentication choice; no Reasoning
+  section when the provider offers none) are absent rather than empty.
+- The credential box is a single **API key** entry that disappears once a value
+  is stored, replaced by a "Stored for <provider>." line and a Remove action.
+- A started, user-approved **STT model download** with a determinate progress bar
+  (`SttModelDownloader`, M08), replacing the previous static "Model download
+  required" text.
+- A **first-run default**: the app opens on OpenCode Go with its free model
+  (`longcat-2.5-preview-free`), and Smart Turn enabled, so a fresh install has a
+  working configuration the user can change. Nothing is pre-selected that the
+  device reports unavailable.
 - A transport-free, short-lived, single-use provider authorization session for
   the one provider that documents a browser flow (OpenRouter PKCE).
 
@@ -74,6 +85,12 @@ The settings record **never contains a credential**. `CredentialStore` (M13)
 remains the only place a secret is written, and `PreferencesSettingsStore` has no
 API that accepts one.
 
+**First-run defaults.** A *pristine* DataStore record (no key of any kind ever
+written) is read as `VoiceSettings.firstRunDefaults()`: OpenCode Go with
+`longcat-2.5-preview-free`, the default STT locale, and Smart Turn enabled.
+Clearing a selection still writes the smart-turn flag, so an explicitly cleared
+provider is never re-seeded.
+
 ## Package layout
 
 ```
@@ -87,8 +104,9 @@ app/src/main/kotlin/com/voicechat/agent/settings/
   SettingsState.kt             SettingsUiState, sections, notices, SettingsActions
   PreferencesSettingsStore.kt  the only platform file: DataStore implementation
 app/src/main/kotlin/com/voicechat/agent/ui/
-  SettingsViewModel.kt         state holder: observe + validate + persist + credential ops
+  SettingsViewModel.kt         state holder: observe + validate + persist + credential + STT download
   SettingsScreen.kt            the Compose surface
+  SttModelDownloader.kt        M08 download seam (MlKitSttModelDownloader / NoOp default)
   AndroidSettingsCapabilityProvider.kt  app-boundary runtime snapshot reader
 ```
 
@@ -105,7 +123,10 @@ Two rules are mechanical, not stylistic:
    value, so a QR option cannot be shown. Reasoning levels come from the M13
    reconciliation (`LlmCapabilityReconciler.effective` = provider union ∩
    model's `/models` report), so a level a model does not expose is absent.
-   Network-required TTS voices are excluded entirely.
+   Network-required TTS voices are excluded entirely, and so is any voice outside
+   the app's supported locales (`OnDeviceVoiceSelector.SUPPORTED_LANGUAGE_TAGS`:
+   `en-US`, `en-GB`, `en-AU`, `es-US`, `es-ES`) — the app only offers a voice it
+   can also recognize speech for.
 2. **A known-but-unavailable entry is shown disabled with a reason.** An
    unprovisioned STT mode, a downloadable/unavailable model, and a Smart Turn
    model that is not installed are rendered with `OptionState.Unavailable` and a
@@ -116,8 +137,13 @@ Two rules are mechanical, not stylistic:
 runtime snapshot and clears (and re-saves) anything invalid, recording an
 `InvalidSelection` reason. This is the mechanical form of "persist only validated
 selections": an unknown provider, a model that is not ready, an undocumented auth
-method, an unsupported reasoning level, a non-ready STT mode, a missing/network
-TTS voice, or Smart Turn on an unsupported device is dropped rather than trusted.
+method, an unsupported reasoning level, a non-ready STT mode, or a
+missing/network TTS voice is dropped rather than trusted.
+
+**An unread snapshot is not a rejection.** `SettingsCapabilities.isUnread` is
+true until the runtime reports once. Validation does not drop a stored selection
+against an unread snapshot, so a cold start cannot clear a valid choice before
+the STT/TTS/model status has been read.
 
 ## Authentication and credentials
 
@@ -132,7 +158,9 @@ The auth methods shown come from the registry (`ProviderCapabilityRegistry`):
 API keys are stored, replaced, and removed through the M13
 `CredentialStore` (AndroidKeyStore-backed on device). The settings screen shows
 only the redacted `CredentialStatus`; the credential value never enters
-`SettingsUiState`, a log line, or DataStore.
+`SettingsUiState`, a log line, or DataStore. There is no separate Authentication
+picker: the credential kind is resolved from the provider's own registry entry,
+so the single API-key field is the whole surface.
 
 ### Provider authorization (short-lived, single-use)
 
@@ -161,23 +189,23 @@ embeds an API key/token/password as `CARRIES_CREDENTIAL`, and any other as
 
 ## Destination and remote-transfer disclosure
 
-Before text can leave the device the settings surface shows:
-
-- the selected provider and model;
-- the validated destination (`ServerDestination.disclosure()`, e.g.
-  `https://openrouter.ai/api/v1`), derived from the provider policy;
-- for a configurable provider (Hermes) an address field whose value is validated
-  (TLS required for non-local hosts) and only then persisted;
-- a remote-transfer notice: the transcript text and the bounded context the app
-  sends leave the device, while the **full stored conversation is not sent**;
-- for Hermes, that the server executes tools on its own host.
+**Removed.** The settings surface and the conversation dialog no longer render a
+destination/remote-transfer/retention notice card. Configuring a provider and
+storing its credential is the app's consent step. The registry still records each
+provider's destination, `dataRetentionNote`, and `toolExecutionOnServer` as
+provider facts, and the validated destination for a configurable provider
+(Hermes) is still enforced before persistence — it is simply not shown as a
+banner. See `docs/risks-and-decisions.md` for the recorded decision.
 
 ## Smart Turn
 
-Smart Turn is opt-in and default-off until M25 evidence
-([decisions.md §3.3](./decisions.md#33-smart-turn-v32-artifact-verified-separately)).
-Because M10 is not implemented, the toggle is disabled with a reason and a stored
-`true` is cleared by the validator.
+Smart Turn is **enabled by default** when the pinned detector is installed.
+Because M10's artifact must be downloaded into app-private storage, a device
+without it reports `SmartTurnState.DownloadRequired` and the toggle is disabled
+with that reason. Clearing the default on such a device is a normal fallback and
+is **not** reported as an invalid selection; the validator only records an
+`InvalidSelection` when a selection the user actually made can no longer be
+honoured.
 
 ## Tests
 
@@ -186,12 +214,13 @@ Because M10 is not implemented, the toggle is disabled with a reason and a store
 | unsupported auth/reasoning/network voice hidden | `settings.SettingsOptionsTest` |
 | unavailable model/STT disabled with a reason | `settings.SettingsOptionsTest` |
 | invalid stored selection dropped | `settings.SettingsValidatorTest` |
+| unread snapshot does not clear a stored selection | `settings.SettingsValidatorTest`, `ui.SettingsViewModelTest` |
 | short-lived, single-use pairing; expiry/reuse; arbitrary destination; reusable credential | `settings.ProviderAuthorizationTest` |
 | QR is unsupported and unsafe | `settings.ProviderAuthorizationTest`, `providers.PairingQrPolicyTest` |
-| DataStore round-trip, restart proxy, no credential at rest | `settings.PreferencesSettingsStoreTest` |
+| DataStore round-trip, restart proxy, first-run defaults, no credential at rest | `settings.PreferencesSettingsStoreTest` |
 | platform-free settings core | `settings.SettingsSourcePurityTest` |
-| state holder: options, validation, credential replace/remove, persistence, disclosure | `ui.SettingsViewModelTest` |
-| Compose: hidden/disabled/selected options, credential controls, disclosure | `ui.SettingsScreenUiTest` |
+| state holder: options, defaults, validation, STT download, credential replace/remove, persistence | `ui.SettingsViewModelTest` |
+| Compose: dropdowns, download progress, credential controls, hidden/disabled options | `ui.SettingsScreenUiTest` |
 | real AndroidKeyStore + DataStore persistence | `settings.PreferencesSettingsStoreInstrumentedTest` (compiled; device run in [Tests.md](../Tests.md)) |
 
 Verified commands (Windows host, wrapper; results in [Tests.md](../Tests.md)):

@@ -26,6 +26,7 @@ import com.voicechat.agent.settings.SmartTurnState
 import com.voicechat.agent.settings.StaticSettingsCapabilityProvider
 import com.voicechat.agent.settings.VoiceSettings
 import com.voicechat.agent.stt.SttAvailability
+import com.voicechat.agent.stt.SttDownloadStatus
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttMode
 import com.voicechat.agent.tts.TtsVoice
@@ -33,6 +34,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -73,8 +75,9 @@ class SettingsViewModelTest {
         models: List<ModelAvailability> = listOf(ModelAvailability.Ready(model)),
         smartTurn: SmartTurnState = SmartTurnState.Available,
         voices: List<TtsVoice> = listOf(embeddedVoice()),
+        stt: List<SttAvailability> = listOf(SttAvailability.Ready(SttEngine(SttMode.ADVANCED, Locale.US))),
     ) = SettingsCapabilities(
-        sttAvailability = listOf(SttAvailability.Ready(SttEngine(SttMode.ADVANCED, Locale.US))),
+        sttAvailability = stt,
         ttsVoices = voices,
         smartTurn = smartTurn,
         models = models,
@@ -91,6 +94,7 @@ class SettingsViewModelTest {
         scheduler: TestCoroutineScheduler,
         store: InMemorySettingsStore = InMemorySettingsStore(VoiceSettings.EMPTY),
         capabilities: SettingsCapabilities = capabilities(),
+        downloader: SttModelDownloader = NoOpSttModelDownloader,
     ): Harness {
         val dispatcher = UnconfinedTestDispatcher(scheduler)
         val scope = CoroutineScope(dispatcher)
@@ -102,6 +106,7 @@ class SettingsViewModelTest {
                 credentials = credentials,
                 capabilityProvider = StaticSettingsCapabilityProvider(capabilities),
                 modelCatalog = modelCatalog,
+                sttDownloader = downloader,
                 dispatcher = dispatcher,
                 scope = scope,
             )
@@ -457,6 +462,227 @@ class SettingsViewModelTest {
         assertEquals(KnownProviders.OPENAI, validation.settings.llmProviderId)
         assertNull(validation.settings.llmModelId)
     }
+
+    @Test
+    fun theDefaultSelectionIsOpenCodeGoWithItsFreeModel() =
+        runTest {
+            // The default provider/model must be present in the capability snapshot
+            // for validation to keep it; the app ships that snapshot from the
+            // documented OpenCode Go catalog.
+            val defaultModel =
+                ModelAvailability.Ready(
+                    ModelDescriptor(
+                        id = VoiceSettings.DEFAULT_MODEL_ID,
+                        task = ModelTask.LANGUAGE_MODEL,
+                        displayName = "longcat-2.5-preview-free",
+                        runtime = ModelRuntime.REMOTE_API,
+                        providerId = KnownProviders.OPENCODE_GO,
+                    ),
+                )
+            val h = harness(testScheduler, capabilities = capabilities(models = listOf(defaultModel)))
+            advanceUntilIdle()
+
+            val llm = h.viewModel.uiState.value.llm
+            assertEquals(KnownProviders.OPENCODE_GO, llm.selectedProviderId)
+            assertEquals(VoiceSettings.DEFAULT_MODEL_ID, llm.selectedModelId)
+            // The default is durable like any other choice.
+            assertEquals(
+                KnownProviders.OPENCODE_GO,
+                h.store
+                    .observe()
+                    .first()
+                    .llmProviderId,
+            )
+            assertEquals(
+                VoiceSettings.DEFAULT_MODEL_ID,
+                h.store
+                    .observe()
+                    .first()
+                    .llmModelId,
+            )
+            h.scope.cancel()
+        }
+
+    @Test
+    fun smartTurnIsEnabledByDefaultWhenTheDetectorIsInstalled() =
+        runTest {
+            val h = harness(testScheduler, capabilities = capabilities(smartTurn = SmartTurnState.Available))
+            advanceUntilIdle()
+
+            assertTrue(h.viewModel.uiState.value.smartTurn.enabled)
+            assertTrue(h.viewModel.uiState.value.smartTurn.selectable)
+            h.scope.cancel()
+        }
+
+    @Test
+    fun smartTurnDefaultsOffWhenTheDetectorIsNotInstalled() =
+        runTest {
+            val h = harness(testScheduler, capabilities = capabilities(smartTurn = SmartTurnState.Unavailable("not installed")))
+            advanceUntilIdle()
+
+            assertFalse(h.viewModel.uiState.value.smartTurn.enabled)
+            h.scope.cancel()
+        }
+
+    @Test
+    fun voicesOutsideTheSupportedLocalesAreNotOffered() =
+        runTest {
+            val voices =
+                listOf(
+                    TtsVoice("en-us", "English (US)", Locale.US, requiresNetwork = false),
+                    TtsVoice("de-de", "German", Locale.GERMANY, requiresNetwork = false),
+                )
+            val h = harness(testScheduler, capabilities = capabilities(voices = voices))
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf("en-us"),
+                h.viewModel.uiState.value.tts.options
+                    .map { it.value.id },
+            )
+            h.scope.cancel()
+        }
+
+    @Test
+    fun downloadingAnSttModelReportsProgressAndRefreshesAvailability() =
+        runTest {
+            val engine = SttEngine(SttMode.ADVANCED, Locale.US)
+            val downloader =
+                SttModelDownloader {
+                    flow {
+                        emit(SttDownloadStatus.Started(bytesToDownload = 1000))
+                        emit(SttDownloadStatus.Progress(bytesDownloaded = 500))
+                        emit(SttDownloadStatus.Completed)
+                    }
+                }
+            val h =
+                harness(
+                    testScheduler,
+                    store = InMemorySettingsStore(VoiceSettings(sttMode = SttMode.ADVANCED)),
+                    capabilities =
+                        capabilities(
+                            stt =
+                                listOf(
+                                    SttAvailability.DownloadRequired(engine),
+                                    SttAvailability.Ready(SttEngine(SttMode.BASIC, Locale.US)),
+                                ),
+                        ),
+                    downloader = downloader,
+                )
+            advanceUntilIdle()
+            h.viewModel.onDismissNotice()
+
+            h.viewModel.onDownloadSttModel()
+            advanceUntilIdle()
+
+            // The download completed, so the progress bar is gone and no failure
+            // notice remains.
+            assertNull(h.viewModel.uiState.value.stt.download)
+            assertNull(h.viewModel.uiState.value.notice)
+            h.scope.cancel()
+        }
+
+    @Test
+    fun aStoredModelIsNotDroppedBeforeTheCatalogIsRead() =
+        runTest {
+            // A cold start validates against an empty capability snapshot before
+            // the runtime catalog arrives; the stored selection must survive it.
+            val h =
+                harness(
+                    testScheduler,
+                    store =
+                        InMemorySettingsStore(
+                            VoiceSettings(
+                                llmProviderId = KnownProviders.OPENCODE_GO,
+                                llmModelId = VoiceSettings.DEFAULT_MODEL_ID,
+                            ),
+                        ),
+                    capabilities = capabilities(models = emptyList()),
+                )
+            advanceUntilIdle()
+
+            assertEquals(VoiceSettings.DEFAULT_MODEL_ID, h.viewModel.uiState.value.llm.selectedModelId)
+            assertEquals(
+                VoiceSettings.DEFAULT_MODEL_ID,
+                h.store
+                    .observe()
+                    .first()
+                    .llmModelId,
+            )
+            h.scope.cancel()
+        }
+
+    @Test
+    fun aStoredModelAbsentFromAReadCatalogIsDropped() =
+        runTest {
+            val h =
+                harness(
+                    testScheduler,
+                    store =
+                        InMemorySettingsStore(
+                            VoiceSettings(
+                                llmProviderId = KnownProviders.OPENAI,
+                                llmModelId = ModelId("gone-from-catalog"),
+                            ),
+                        ),
+                    // The provider's catalog was read and does not list this model.
+                    capabilities = capabilities(models = listOf(ModelAvailability.Ready(model))),
+                )
+            advanceUntilIdle()
+
+            assertNull(h.viewModel.uiState.value.llm.selectedModelId)
+            h.scope.cancel()
+        }
+
+    @Test
+    fun anUnreadCapabilitySnapshotDoesNotClearOrWarnAboutAStoredSelection() =
+        runTest {
+            // Startup validates before the device reports anything. That must not
+            // be read as "your stored selection is unsupported".
+            val h =
+                harness(
+                    testScheduler,
+                    store =
+                        InMemorySettingsStore(
+                            VoiceSettings(
+                                sttMode = SttMode.ADVANCED,
+                                llmProviderId = KnownProviders.OPENCODE_GO,
+                                llmModelId = VoiceSettings.DEFAULT_MODEL_ID,
+                                smartTurnEnabled = true,
+                            ),
+                        ),
+                    capabilities = SettingsCapabilities.EMPTY,
+                )
+            advanceUntilIdle()
+
+            val state = h.viewModel.uiState.value
+            assertEquals(SttMode.ADVANCED, state.stt.selectedMode)
+            assertEquals(VoiceSettings.DEFAULT_MODEL_ID, state.llm.selectedModelId)
+            assertNull(state.notice)
+            h.scope.cancel()
+        }
+
+    @Test
+    fun anUnselectedSttModePresentsThePreferredReadyModel() =
+        runTest {
+            val h =
+                harness(
+                    testScheduler,
+                    capabilities =
+                        capabilities(
+                            stt =
+                                listOf(
+                                    SttAvailability.DownloadRequired(SttEngine(SttMode.ADVANCED, Locale.US)),
+                                    SttAvailability.Ready(SttEngine(SttMode.BASIC, Locale.US)),
+                                ),
+                        ),
+                )
+            advanceUntilIdle()
+
+            // Advanced is preferred, but only Basic is ready, so Basic is shown.
+            assertEquals(SttMode.BASIC, h.viewModel.uiState.value.stt.selectedMode)
+            h.scope.cancel()
+        }
 
     private fun embeddedVoice() = TtsVoice("voice-on-device", "On-device", Locale.US, requiresNetwork = false)
 

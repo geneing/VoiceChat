@@ -101,14 +101,13 @@ class SettingsScreenUiTest {
                 providers = SettingsOptions.providers(registry, KnownProviders.OPENAI),
                 selectedProviderId = KnownProviders.OPENAI,
                 providerDisplayName = provider.displayName,
-                authMethods = SettingsOptions.authMethods(provider, selected = AuthMethod.API_KEY),
-                selectedAuthMethod = AuthMethod.API_KEY,
                 reasoning = SettingsOptions.reasoningLevels(provider, model = null, selected = null),
             )
         render(baseState().copy(llm = llm))
 
-        composeRule.onNodeWithTag(SettingsTestTags.authOption("API_KEY")).assertExists()
-        composeRule.onNodeWithTag(SettingsTestTags.authOption("OAUTH_PKCE")).assertDoesNotExist()
+        // The Authentication section is gone: no auth method is offered at all.
+        composeRule.onAllNodesWithText("Authentication").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Sign in with browser (PKCE)").assertCountEquals(0)
     }
 
     @Test
@@ -123,8 +122,9 @@ class SettingsScreenUiTest {
             )
         render(baseState().copy(llm = llm))
 
-        composeRule.onNodeWithTag(SettingsTestTags.reasoningOption("HIGH")).assertExists()
-        composeRule.onNodeWithTag(SettingsTestTags.reasoningOption("MEDIUM")).assertDoesNotExist()
+        composeRule.onNodeWithTag(SettingsTestTags.REASONING_DROPDOWN).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTestTags.menuOption("HIGH")).assertExists()
+        composeRule.onNodeWithTag(SettingsTestTags.menuOption("MEDIUM")).assertDoesNotExist()
     }
 
     @Test
@@ -147,9 +147,9 @@ class SettingsScreenUiTest {
             )
         render(baseState().copy(llm = llm))
 
-        composeRule.onNodeWithTag(SettingsTestTags.modelOption("gpt-test")).assertIsEnabled()
-        composeRule.onNodeWithTag(SettingsTestTags.modelOption("blocked")).assertIsNotEnabled()
-        composeRule.onNodeWithTag(SettingsTestTags.modelReason("blocked")).assertExists()
+        composeRule.onNodeWithTag(SettingsTestTags.MODEL_DROPDOWN).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTestTags.menuOption("gpt-test")).assertIsEnabled()
+        composeRule.onNodeWithTag(SettingsTestTags.menuOption("blocked")).assertIsNotEnabled()
         composeRule.onNodeWithText("not enough memory").assertExists()
     }
 
@@ -206,6 +206,75 @@ class SettingsScreenUiTest {
     }
 
     @Test
+    fun aDownloadableSttModelOffersTheDownloadThenShowsProgress() {
+        val engine = SttEngine(SttMode.ADVANCED, Locale.US)
+        val stt =
+            SttSettingsSection(
+                options =
+                    listOf(
+                        com.voicechat.agent.settings.SelectableOption(
+                            value = engine,
+                            label = SttEngine.ADVANCED_MODEL_DISPLAY_NAME,
+                            state =
+                                com.voicechat.agent.settings.OptionState
+                                    .Unavailable("Model download required"),
+                            selected = true,
+                        ),
+                    ),
+                selectedMode = SttMode.ADVANCED,
+                download =
+                    com.voicechat.agent.settings
+                        .SttDownloadProgress(bytesDownloaded = 500, bytesToDownload = 1000),
+            )
+        render(baseState().copy(stt = stt))
+
+        // While downloading, the progress bar replaces the reason and the action.
+        composeRule.onNodeWithTag(SettingsTestTags.STT_DOWNLOAD_PROGRESS).performScrollTo().assertExists()
+        composeRule.onNodeWithTag(SettingsTestTags.STT_DOWNLOAD_ACTION).assertDoesNotExist()
+    }
+
+    @Test
+    fun aDownloadableSttModelCanStartItsDownload() {
+        val engine = SttEngine(SttMode.ADVANCED, Locale.US)
+        val stt =
+            SttSettingsSection(
+                options =
+                    listOf(
+                        com.voicechat.agent.settings.SelectableOption(
+                            value = engine,
+                            label = SttEngine.ADVANCED_MODEL_DISPLAY_NAME,
+                            state =
+                                com.voicechat.agent.settings.OptionState
+                                    .Unavailable("Model download required"),
+                            selected = true,
+                        ),
+                    ),
+                selectedMode = SttMode.ADVANCED,
+            )
+        val actions = RecordingSettingsActions()
+        render(baseState().copy(stt = stt), actions)
+
+        composeRule.onNodeWithTag(SettingsTestTags.STT_DOWNLOAD_ACTION).performScrollTo().performClick()
+        assertEquals(1, actions.downloadSttCount)
+    }
+
+    @Test
+    fun anAvailableSttModelShowsNoDownloadControls() {
+        render(baseState())
+
+        composeRule.onNodeWithTag(SettingsTestTags.STT_DOWNLOAD_ACTION).assertDoesNotExist()
+        composeRule.onNodeWithTag(SettingsTestTags.STT_DOWNLOAD_PROGRESS).assertDoesNotExist()
+    }
+
+    @Test
+    fun theTtsVoicesAreOfferedAsADropdown() {
+        render(baseState())
+
+        composeRule.onNodeWithTag(SettingsTestTags.TTS_DROPDOWN).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTestTags.menuOption("voice-on-device")).assertExists()
+    }
+
+    @Test
     fun smartTurnIsDisabledWithAReasonWhenUnavailable() {
         render(
             baseState().copy(
@@ -242,7 +311,8 @@ class SettingsScreenUiTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag(SettingsTestTags.providerOption("openai")).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTestTags.PROVIDER_DROPDOWN).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTestTags.menuOption("openai")).performClick()
         scheduler.advanceUntilIdle()
         composeRule.waitForIdle()
 
@@ -253,6 +323,9 @@ class SettingsScreenUiTest {
         scheduler.advanceUntilIdle()
 
         assertEquals("ui-entered-key-123456", runBlockingLoad(credentials))
+        // A stored key replaces the entry field with a "stored" line.
+        composeRule.onNodeWithTag(SettingsTestTags.CREDENTIAL_STATUS).assertExists()
+        composeRule.onNodeWithText("Stored for OpenAI.").assertExists()
         composeRule.onNodeWithTag(SettingsTestTags.CREDENTIAL_REMOVE).assertIsEnabled()
 
         composeRule.onNodeWithTag(SettingsTestTags.CREDENTIAL_REMOVE).performScrollTo().performClick()
@@ -286,7 +359,8 @@ class SettingsScreenUiTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag(SettingsTestTags.providerOption("deepseek")).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTestTags.PROVIDER_DROPDOWN).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTestTags.menuOption("deepseek")).performClick()
         scheduler.advanceUntilIdle()
         composeRule.waitForIdle()
 
@@ -306,7 +380,7 @@ class SettingsScreenUiTest {
                         listOf(
                             com.voicechat.agent.settings.SelectableOption(
                                 value = SttEngine(SttMode.ADVANCED, Locale.US),
-                                label = "ML Kit Speech Recognition (Advanced)",
+                                label = SttEngine.ADVANCED_MODEL_DISPLAY_NAME,
                                 state = com.voicechat.agent.settings.OptionState.Available,
                                 selected = true,
                             ),
@@ -360,12 +434,17 @@ private class RecordingSettingsActions : SettingsActions {
     var lastSmartTurn: Boolean? = null
     var lastDestination: String? = null
     var lastCredential: String? = null
+    var downloadSttCount: Int = 0
     var removeCount: Int = 0
     var signInCount: Int = 0
     var refreshCount: Int = 0
 
     override fun onSelectSttMode(mode: SttMode) {
         lastSttMode = mode
+    }
+
+    override fun onDownloadSttModel() {
+        downloadSttCount++
     }
 
     override fun onSelectLlmProvider(providerId: ProviderId) {

@@ -181,13 +181,15 @@ class SettingsValidatorTest {
     }
 
     @Test
-    fun smartTurnIsClearedWhenUnavailable() {
+    fun smartTurnIsClearedWhenUnavailableWithoutAnInvalidSelectionNotice() {
         val settings = VoiceSettings(smartTurnEnabled = true)
         val smartTurn = SmartTurnState.Unavailable("not installed")
 
         val validation = SettingsValidator.validate(settings, registry, capabilities(smartTurn = smartTurn), modelCatalog)
 
-        assertEquals(listOf(InvalidSelection.SMART_TURN), validation.invalid)
+        // Clearing the on-by-default flag is a normal fallback, not a rejected
+        // user selection: the detector is simply not installed on this device.
+        assertTrue(validation.invalid.isEmpty())
         assertFalse(validation.settings.smartTurnEnabled)
     }
 

@@ -60,7 +60,7 @@ The theme follows the neighbouring speech-android (VoxLLM) app: a warm
 orange-on-warm-surface palette in place of the earlier green one (platform
 dynamic colour is off by default; `VoiceAgentTheme(dynamicColor = true)` opts
 back in), sans for conversation text, and the monospace face for machine-ish
-metadata (drawer counts, bubble state labels, disclosure lines). Assistant
+metadata (drawer counts, bubble state labels, notice lines). Assistant
 bubbles are warm surfaces with a hairline border, user bubbles a muted surface,
 both with an asymmetric corner; the voice orb reads its state through intensity
 and colour (idle orange, listening red, working amber, speaking green,

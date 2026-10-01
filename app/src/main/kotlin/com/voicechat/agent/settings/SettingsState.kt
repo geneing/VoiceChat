@@ -62,9 +62,45 @@ data class SttSettingsSection(
     val options: List<SelectableOption<SttEngine>> = emptyList(),
     val selectedMode: SttMode? = null,
     val localeLanguageTag: String = VoiceSettings.DEFAULT_LANGUAGE_TAG,
+    /**
+     * The in-flight download for the currently selected-but-unprovisioned mode,
+     * or `null`. The UI shows a determinate progress bar from this while the
+     * system-managed model provisions; there is nothing to show once the mode is
+     * available.
+     */
+    val download: SttDownloadProgress? = null,
 ) {
     /** True when at least one mode is ready now. */
     val hasReadyMode: Boolean get() = options.any { it.isAvailable }
+
+    /** The option for the currently selected mode, or `null`. */
+    val selectedOption: SelectableOption<SttEngine>?
+        get() = selectedMode?.let { mode -> options.firstOrNull { it.value.mode == mode } }
+}
+
+/**
+ * Progress of the user-approved STT model download shown in settings (M08).
+ *
+ * [bytesToDownload] is the expected size, or 0 when the API did not report one;
+ * [bytesDownloaded] is what has arrived so far. The UI derives a determinate bar
+ * only when [bytesToDownload] is positive, and an indeterminate one otherwise.
+ */
+data class SttDownloadProgress(
+    val bytesDownloaded: Long,
+    val bytesToDownload: Long,
+) {
+    /** The completed fraction in `[0, 1]`, or `null` when the total is unknown. */
+    val fraction: Float?
+        get() = if (bytesToDownload > 0L) (bytesDownloaded.toDouble() / bytesToDownload.toDouble()).toFloat().coerceIn(0f, 1f) else null
+}
+
+/** TTS section: installed embedded voices only. */
+data class TtsSettingsSection(
+    val options: List<SelectableOption<TtsVoice>> = emptyList(),
+    val selectedVoiceId: String? = null,
+) {
+    /** True when no embedded voice is installed; the app stays text-only. */
+    val noOnDeviceVoice: Boolean get() = options.isEmpty()
 }
 
 /** LLM section: provider, model, auth, reasoning, connection, and disclosure. */
@@ -95,16 +131,7 @@ data class LlmSettingsSection(
     val authFlow: AuthorizationUiState = AuthorizationUiState.Idle,
 )
 
-/** TTS section: installed embedded voices only. */
-data class TtsSettingsSection(
-    val options: List<SelectableOption<TtsVoice>> = emptyList(),
-    val selectedVoiceId: String? = null,
-) {
-    /** True when no embedded voice is installed; the app stays text-only. */
-    val noOnDeviceVoice: Boolean get() = options.isEmpty()
-}
-
-/** Smart Turn section: opt-in, default-off. */
+/** Smart Turn section: on by default when the detector is installed. */
 data class SmartTurnSettingsSection(
     val enabled: Boolean = false,
     val state: SmartTurnState = SmartTurnState.Unavailable("Smart Turn is not available"),
@@ -149,6 +176,12 @@ data class SettingsUiState(
 interface SettingsActions {
     /** Selects an STT mode (ignored unless it is available). */
     fun onSelectSttMode(mode: SttMode)
+
+    /**
+     * Starts the user-approved download of the selected, unprovisioned STT model
+     * (M08). A no-op when the mode is already available or already downloading.
+     */
+    fun onDownloadSttModel()
 
     /** Selects the remote provider; clears the model/auth/reasoning selections. */
     fun onSelectLlmProvider(providerId: ProviderId)

@@ -29,9 +29,6 @@ enum class InvalidSelection {
 
     /** The TTS voice is not installed as an on-device voice. */
     TTS_VOICE,
-
-    /** Smart Turn is enabled but not available on this device. */
-    SMART_TURN,
 }
 
 /**
@@ -98,10 +95,17 @@ object SettingsValidator {
                         capabilities.models.firstOrNull {
                             it.model.providerId == providerId && it.model.id == modelId
                         }
-                    if (availability !is ModelAvailability.Ready) {
+                    // An empty catalog means "not read yet", not "the model is
+                    // invalid": dropping a stored model before the runtime reports
+                    // its catalog would silently clear a valid selection on every
+                    // cold start. A catalog that *does* list models and does not
+                    // contain this one, or lists it as unavailable, is a real
+                    // rejection.
+                    val catalogRead = capabilities.models.any { it.model.providerId == providerId }
+                    if (catalogRead && availability !is ModelAvailability.Ready) {
                         result = result.copy(llmModelId = null, reasoningLevel = null)
                         invalid += InvalidSelection.MODEL
-                    } else {
+                    } else if (availability is ModelAvailability.Ready) {
                         val model = modelCatalog.modelCapabilities(providerId, modelId)
                         val effective = LlmCapabilityReconciler.effective(provider, model)
                         val level = result.reasoningLevel
@@ -116,7 +120,7 @@ object SettingsValidator {
 
         // --- STT ----------------------------------------------------------------
         val sttMode = result.sttMode
-        if (sttMode != null) {
+        if (sttMode != null && !capabilities.isUnread) {
             val ready = capabilities.sttAvailability.any { it is SttAvailability.Ready && it.engine.mode == sttMode }
             if (!ready) {
                 result = result.copy(sttMode = null)
@@ -126,10 +130,10 @@ object SettingsValidator {
 
         // --- TTS ----------------------------------------------------------------
         val voiceId = result.ttsVoiceId
-        if (voiceId != null) {
+        if (voiceId != null && !capabilities.isUnread) {
             val installed =
                 OnDeviceVoiceSelector
-                    .onDeviceVoices(capabilities.ttsVoices)
+                    .supportedVoices(capabilities.ttsVoices)
                     .any { it.id == voiceId }
             if (!installed) {
                 result = result.copy(ttsVoiceId = null)
@@ -138,9 +142,13 @@ object SettingsValidator {
         }
 
         // --- Smart Turn ---------------------------------------------------------
-        if (result.smartTurnEnabled && capabilities.smartTurn !is SmartTurnState.Available) {
+        // Smart Turn defaults on, but it is only selectable when the pinned
+        // detector is actually installed. Clearing the *default* here is a
+        // normal fallback, so it is corrected without an invalid-selection
+        // notice; a user's explicit choice is still reported through [validate]
+        // when it can no longer be honoured.
+        if (result.smartTurnEnabled && !capabilities.isUnread && capabilities.smartTurn !is SmartTurnState.Available) {
             result = result.copy(smartTurnEnabled = false)
-            invalid += InvalidSelection.SMART_TURN
         }
 
         return SettingsValidation(settings = result, invalid = invalid)

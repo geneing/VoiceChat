@@ -5,6 +5,7 @@ import com.voicechat.agent.domain.ProviderId
 import com.voicechat.agent.domain.ProviderModelSelection
 import com.voicechat.agent.domain.ReasoningLevel
 import com.voicechat.agent.providers.AuthMethod
+import com.voicechat.agent.providers.KnownProviders
 import com.voicechat.agent.stt.SttEngines
 import com.voicechat.agent.stt.SttMode
 import java.util.Locale
@@ -42,8 +43,8 @@ data class VoiceSettings(
     val llmServerUrl: String? = null,
     /** The selected embedded TTS voice id, or `null`. */
     val ttsVoiceId: String? = null,
-    /** Smart Turn is opt-in and default-off until M25 evidence (decisions §3.3). */
-    val smartTurnEnabled: Boolean = false,
+    /** Smart Turn is on by default when the detector is installed (decisions §3.3). */
+    val smartTurnEnabled: Boolean = true,
     /**
      * The selected **on-device** local model (M20), or `null` for the remote path.
      * A flat, non-sensitive id: it names an allow-listed local model, never a
@@ -79,7 +80,41 @@ data class VoiceSettings(
         /** Default BCP-47 tag matching `SttEngines.DEFAULT_LOCALE`. */
         val DEFAULT_LANGUAGE_TAG: String = SttEngines.DEFAULT_LOCALE.toLanguageTag()
 
-        /** Nothing selected; the only honest starting point. */
-        val EMPTY: VoiceSettings = VoiceSettings(sttLocaleLanguageTag = DEFAULT_LANGUAGE_TAG)
+        /**
+         * The provider the app ships as the initial selection. It is a real,
+         * documented provider with a free model, so a fresh install opens on a
+         * working default that the user can change in Settings. Selecting it
+         * persists through the same validation as any other choice and implies no
+         * credential: a send without a stored key still fails honestly.
+         */
+        val DEFAULT_PROVIDER_ID: ProviderId = KnownProviders.OPENCODE_GO
+
+        /** The model paired with [DEFAULT_PROVIDER_ID]: OpenCode Go's free model. */
+        val DEFAULT_MODEL_ID: ModelId = ModelId("longcat-2.5-preview-free")
+
+        /**
+         * The only honest starting point when nothing is stored: the app's
+         * documented default provider/model, the default STT locale, and Smart
+         * Turn enabled (validation drops it when the detector is not installed).
+         */
+        val EMPTY: VoiceSettings =
+            VoiceSettings(
+                sttLocaleLanguageTag = DEFAULT_LANGUAGE_TAG,
+                llmProviderId = DEFAULT_PROVIDER_ID,
+                llmModelId = DEFAULT_MODEL_ID,
+            )
+
+        /**
+         * The first-run defaults applied when the durable store has **nothing**
+         * persisted for the provider yet.
+         *
+         * It is separate from [EMPTY] because [EMPTY] is also the "nothing
+         * selected" value a caller may construct deliberately; only the store's
+         * read path may seed the documented default, and only when no provider
+         * key exists at all. A user who chose to clear the provider keeps it
+         * cleared: once a provider key is written (even an empty one is not), the
+         * stored value wins.
+         */
+        fun firstRunDefaults(): VoiceSettings = EMPTY
     }
 }
