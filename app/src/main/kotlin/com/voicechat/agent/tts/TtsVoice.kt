@@ -52,6 +52,16 @@ sealed interface TtsEngineAvailability {
         val locale: Locale,
     ) : TtsEngineAvailability
 
+    /**
+     * The persisted voice selection ([voiceId]) is not an installed embedded
+     * voice, so it cannot be used. Reported explicitly rather than silently
+     * falling back to a different voice (R-0181, CODE_REVIEW P2).
+     */
+    data class SelectedVoiceUnavailable(
+        val voiceId: String,
+        val locale: Locale,
+    ) : TtsEngineAvailability
+
     /** The engine could not be initialized; [error] is safe to show. */
     data class Unavailable(
         val error: VoiceAgentError,
@@ -82,4 +92,14 @@ object OnDeviceVoiceSelector {
                     .thenByDescending { it.quality }
                     .thenBy { it.latency },
             ).firstOrNull()
+
+    /**
+     * The installed embedded voice with exactly [voiceId], or `null` when it is
+     * not installed or requires a network connection. A selected voice is never
+     * silently substituted (R-0181).
+     */
+    fun selectPreferred(
+        voices: List<TtsVoice>,
+        voiceId: String,
+    ): TtsVoice? = onDeviceVoices(voices).firstOrNull { it.id == voiceId }
 }

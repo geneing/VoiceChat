@@ -169,6 +169,7 @@ class ConversationViewModel(
         settingsFlow != null && providerRegistry != null && providerFactory != null
 
     /** The latest validated settings; only used when [providerResolutionEnabled]. */
+    @Volatile
     private var latestSettings: VoiceSettings = VoiceSettings.EMPTY
 
     /** What the open dialog discloses about the selected provider; kept current. */
@@ -185,6 +186,8 @@ class ConversationViewModel(
                 settingsFlow!!
                     .catch { failure -> AppLog.w(failure) { "ui: settings observation failed" } }
                     .collect { stored ->
+                        // Reference assignment to a @Volatile field is atomic; the
+                        // turn path reads one snapshot per send (CODE_REVIEW P2).
                         latestSettings = stored
                         applyDisclosure(ProviderDisclosure.from(stored, providerRegistry!!))
                     }
@@ -197,6 +200,12 @@ class ConversationViewModel(
 
     /** The last loaded or saved conversation; the source of truth for the open dialog. */
     private var currentConversation: Conversation? = null
+
+    /** The in-flight conversation load, so navigation can cancel it (CODE_REVIEW P2). */
+    private var conversationLoadJob: Job? = null
+
+    /** Identity token of the newest open; an older load's result must not apply. */
+    private var conversationLoadToken: Any? = null
 
     /** The active generation job, if any. */
     private var generationJob: Job? = null
@@ -223,7 +232,9 @@ class ConversationViewModel(
 
     /**
      * Guards the session lifecycle fields ([voiceController], [voiceJob],
-     * [activeVoiceSession], [generationJob], [closed]) and the shared
+     * [activeVoiceSession], [generationJob], [closed]), the settings snapshot
+     * ([latestSettings]), the conversation-load identity
+     * ([conversationLoadJob]/[conversationLoadToken]), and the shared
      * check-and-start decisions (CODE_REVIEW P1, R-0224).
      *
      * The callbacks arrive on the coordinator's / orchestrator's coroutines, the
@@ -521,20 +532,32 @@ class ConversationViewModel(
     /** Recomputes the disclosure synchronously from the latest observed settings. */
     private fun refreshDisclosure() {
         if (!providerResolutionEnabled) return
-        applyDisclosure(ProviderDisclosure.from(latestSettings, providerRegistry!!))
+        applyDisclosure(ProviderDisclosure.from(snapshotSettings(), providerRegistry!!))
     }
 
+    /** The latest validated settings, read once per send/session (CODE_REVIEW P2). */
+    private fun snapshotSettings(): VoiceSettings = latestSettings
+
+    /** The disclosure for one frozen settings snapshot. */
+    private fun disclosureFor(settings: VoiceSettings): ProviderDisclosure =
+        if (providerResolutionEnabled) ProviderDisclosure.from(settings, providerRegistry!!) else ProviderDisclosure.NONE
+
     /**
-     * Resolves the identity and adapter for a turn in [conversationId].
+     * Resolves the identity and adapter for a turn in [conversationId] from a
+     * frozen [settings] snapshot, so the disclosure shown and the adapter used
+     * for one send cannot diverge if settings change mid-send.
      *
      * With no settings source this returns the fixed constructor
      * `languageModel`/`selection`, preserving the pre-M23 behavior that the M06
      * tests exercise.
      */
-    private fun activeProvider(conversationId: ConversationId): ActiveProviderTurn =
+    private fun activeProvider(
+        conversationId: ConversationId,
+        settings: VoiceSettings = snapshotSettings(),
+    ): ActiveProviderTurn =
         if (providerResolutionEnabled) {
             ProviderTurnResolver.resolve(
-                settings = latestSettings,
+                settings = settings,
                 conversationId = conversationId,
                 registry = providerRegistry!!,
                 factory = providerFactory!!,
@@ -556,6 +579,7 @@ class ConversationViewModel(
     override fun onNewConversation() {
         discardActiveGeneration()
         discardVoiceSession()
+        cancelConversationLoad()
         AppLog.d { "ui: new conversation" }
         currentConversation = null
         refreshDisclosure()
@@ -570,9 +594,14 @@ class ConversationViewModel(
     override fun onOpenConversation(id: ConversationId) {
         discardActiveGeneration()
         discardVoiceSession()
+        cancelConversationLoad()
         AppLog.d { "ui: open conversation" }
         currentConversation = null
         refreshDisclosure()
+        // A newer navigation owns the dialog; an older load's late result must be
+        // dropped, and its job cancelled on the next navigation (CODE_REVIEW P2).
+        val token = Any()
+        synchronized(voiceLock) { conversationLoadToken = token }
         _uiState.update { state ->
             state.copy(
                 dialog =
@@ -585,43 +614,76 @@ class ConversationViewModel(
                 pendingDeletion = null,
             )
         }
-        coroutineScope().launch(dispatcher) {
-            val loaded =
-                try {
-                    repository.load(id)
-                } catch (failure: Throwable) {
-                    AppLog.w(failure) { "ui: open conversation failed" }
-                    _uiState.update { it.openFailed(failure.toNotice()) }
+        val job =
+            coroutineScope().launch(dispatcher) {
+                val loaded =
+                    try {
+                        repository.load(id)
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (failure: Throwable) {
+                        AppLog.w(failure) { "ui: open conversation failed" }
+                        applyOpenFailure(token, failure.toNotice())
+                        return@launch
+                    }
+                if (loaded == null) {
+                    AppLog.w { "ui: open conversation not found" }
+                    applyOpenFailure(token, ConversationNotice.Failure(ErrorCode.PERSISTENCE_FAILED, retryable = true))
                     return@launch
                 }
-            if (loaded == null) {
-                AppLog.w { "ui: open conversation not found" }
-                _uiState.update { it.openFailed(ConversationNotice.Failure(ErrorCode.PERSISTENCE_FAILED, retryable = true)) }
-                return@launch
+                // A reopen is where mid-turn state from a dead process is reconciled so
+                // the conversation never claims work a restart could not finish.
+                val reconciled = loaded.reconcileAfterProcessDeath()
+                if (reconciled != loaded) {
+                    AppLog.i { "ui: reconciled conversation after process death turns=${reconciled.turns.size}" }
+                    saveQuietly(reconciled)
+                }
+                if (!isCurrentConversationLoad(token)) return@launch
+                currentConversation = reconciled
+                _uiState.update { state ->
+                    state.copy(
+                        dialog =
+                            reconciled.toDialogState(currentDisclosure).copy(
+                                voiceAvailable =
+                                    voiceFactory != null,
+                            ),
+                    )
+                }
             }
-            // A reopen is where mid-turn state from a dead process is reconciled so
-            // the conversation never claims work a restart could not finish.
-            val reconciled = loaded.reconcileAfterProcessDeath()
-            if (reconciled != loaded) {
-                AppLog.i { "ui: reconciled conversation after process death turns=${reconciled.turns.size}" }
-                saveQuietly(reconciled)
-            }
-            currentConversation = reconciled
-            _uiState.update { state ->
-                state.copy(
-                    dialog =
-                        reconciled.toDialogState(currentDisclosure).copy(
-                            voiceAvailable =
-                                voiceFactory != null,
-                        ),
-                )
+        synchronized(voiceLock) {
+            // Only track the job while this navigation still owns the dialog; a
+            // newer open (which clears the token) must not be overwritten.
+            if (conversationLoadToken === token) {
+                conversationLoadToken = token
+                conversationLoadJob = job
             }
         }
     }
 
+    private fun applyOpenFailure(
+        token: Any,
+        notice: ConversationNotice,
+    ) {
+        if (!isCurrentConversationLoad(token)) return
+        _uiState.update { it.openFailed(notice) }
+    }
+
+    /** Cancels the in-flight conversation load; a newer navigation owns the dialog. */
+    private fun cancelConversationLoad() {
+        val job =
+            synchronized(voiceLock) {
+                conversationLoadToken = null
+                conversationLoadJob.also { conversationLoadJob = null }
+            }
+        job?.cancel()
+    }
+
+    private fun isCurrentConversationLoad(token: Any): Boolean = synchronized(voiceLock) { conversationLoadToken === token }
+
     override fun onBackToList() {
         discardActiveGeneration()
         discardVoiceSession()
+        cancelConversationLoad()
         _uiState.update { it.copy(dialog = null, pendingDeletion = null) }
     }
 
@@ -663,7 +725,9 @@ class ConversationViewModel(
         if (lastUserIndex < 0) return
         val lastUser = conversation.turns[lastUserIndex] as UserTurn
         AppLog.d { "ui: retry" }
-        refreshDisclosure()
+        val settings = snapshotSettings()
+        val disclosure = disclosureFor(settings)
+        applyDisclosure(disclosure)
         val marker = beginGeneration()
         _uiState.update { state ->
             state.copy(
@@ -672,10 +736,11 @@ class ConversationViewModel(
                         phase = TurnPhase.GENERATING,
                         liveAssistantText = "",
                         notice = null,
-                        provider = currentDisclosure,
+                        provider = disclosure,
                     ),
             )
         }
+        val active = activeProvider(conversation.id, settings)
         val job =
             coroutineScope().launch(dispatcher) {
                 // Drop the failed/cancelled reply (and any later turns) before re-running;
@@ -685,7 +750,7 @@ class ConversationViewModel(
                         updatedAtEpochMillis = wallClock(),
                         turns = conversation.turns.take(lastUserIndex),
                     )
-                runOrchestratedTurn(truncated, lastUser, lastUser.transcript.text, marker)
+                runOrchestratedTurn(truncated, lastUser, lastUser.transcript.text, marker, active)
             }
         synchronized(voiceLock) { generationJob = job }
     }
@@ -711,6 +776,9 @@ class ConversationViewModel(
         coroutineScope().launch(dispatcher) {
             try {
                 repository.delete(pending.id)
+            } catch (cancellation: CancellationException) {
+                // Teardown cancellation is not a delete failure (CODE_REVIEW P2).
+                throw cancellation
             } catch (failure: Throwable) {
                 AppLog.e(failure) { "ui: delete conversation failed" }
                 _uiState.update { state -> state.copy(list = state.list.copy(notice = failure.toNotice())) }
@@ -778,7 +846,11 @@ class ConversationViewModel(
         // send cannot both pass their guards and run at once (CODE REVIEW P1, R-0224).
         if (!claimGeneration()) return
         AppLog.d { "ui: submit turn source=$source chars=${committed.length}" }
-        refreshDisclosure()
+        // Freeze one settings snapshot for this send: the disclosure shown and the
+        // adapter used must come from the same validated selection (CODE_REVIEW P2).
+        val settings = snapshotSettings()
+        val disclosure = disclosureFor(settings)
+        applyDisclosure(disclosure)
         val marker = beginGeneration()
         _uiState.update { state ->
             state.copy(
@@ -789,7 +861,7 @@ class ConversationViewModel(
                         liveAssistantText = "",
                         phase = TurnPhase.GENERATING,
                         notice = null,
-                        provider = currentDisclosure,
+                        provider = disclosure,
                     ),
             )
         }
@@ -809,9 +881,10 @@ class ConversationViewModel(
                 source = source,
             )
         val titled = base.copy(title = title, updatedAtEpochMillis = now)
+        val active = activeProvider(base.id, settings)
         val job =
             coroutineScope().launch(dispatcher) {
-                runOrchestratedTurn(titled, userTurn, committed, marker)
+                runOrchestratedTurn(titled, userTurn, committed, marker, active)
             }
         synchronized(voiceLock) { generationJob = job }
     }
@@ -822,6 +895,7 @@ class ConversationViewModel(
         userTurn: UserTurn,
         originalText: String,
         marker: Any,
+        active: ActiveProviderTurn,
     ) {
         val observer =
             object : TurnObserver {
@@ -851,7 +925,6 @@ class ConversationViewModel(
                     applyTurnResult(marker, result, originalText)
                 }
             }
-        val active = activeProvider(conversation.id)
         if (providerResolutionEnabled && !active.configured) {
             AppLog.w { "ui: no provider/model configured; the turn will report LLM_NOT_CONFIGURED" }
         }
@@ -1017,6 +1090,7 @@ class ConversationViewModel(
         activeGeneration = null
         listJob.cancel()
         settingsJob?.cancel()
+        cancelConversationLoad()
         discardActiveGeneration()
         discardVoiceSession()
     }

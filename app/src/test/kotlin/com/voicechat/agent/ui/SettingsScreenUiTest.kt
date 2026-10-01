@@ -195,7 +195,7 @@ class SettingsScreenUiTest {
         render(baseState().copy(llm = llm))
 
         composeRule.onNodeWithTag(SettingsTestTags.MODEL_CATALOG_NOTICE).assertExists()
-        composeRule.onNodeWithText("Refresh catalog").assertExists()
+        composeRule.onNodeWithText("Recheck capabilities").assertExists()
         composeRule.onNodeWithTag(SettingsTestTags.RETENTION_NOTICE).assertDoesNotExist()
     }
 

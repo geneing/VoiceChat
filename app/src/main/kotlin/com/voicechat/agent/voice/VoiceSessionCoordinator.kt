@@ -113,9 +113,24 @@ class VoiceSessionCoordinator(
     @Volatile
     private var detectorJob: Job? = null
 
-    private var generationJob: Job? = null
-    private var generationTurnId: TurnId? = null
-    private var activeOrchestrator: TurnOrchestrator? = null
+    /**
+     * The most recent endpoint's STT finalization, tracked separately from the
+     * detector collector so finalizing one turn never blocks detection of the
+     * next (CODE_REVIEW P1, R-0225). Each finalization joins the previous one
+     * before committing, so turns persist in spoken order even if a stalled
+     * recognizer's timeout fires out of order.
+     */
+    @Volatile
+    private var finalizationJob: Job? = null
+
+    /**
+     * The single pending/running generation, carrying the turn id, its job, and
+     * the orchestrator once one is attached (CODE_REVIEW P1, R-0226). A job may
+     * be active before its orchestrator exists (it is queued behind the previous
+     * turn), so "job active" is not by itself proof of an interruptible provider
+     * request.
+     */
+    private var activeGeneration: ActiveGeneration? = null
 
     @Volatile
     private var stopped = false
@@ -123,9 +138,9 @@ class VoiceSessionCoordinator(
     private val bargeInRecords = mutableListOf<MutableBargeIn>()
 
     /**
-     * Guards the generation identity fields ([generationJob], [generationTurnId],
-     * [activeOrchestrator], [conversation]) and the listening-turn handoff. Those
-     * fields are written by the generation coroutine and read by the
+     * Guards the generation identity fields ([activeGeneration], [conversation])
+     * and the listening-turn/finalization handoff. Those fields are written by
+     * the generation and finalization coroutines and read by the
      * detection/capture coroutines, so a plain field read is a data race. The
      * lock is held only for short field reads/writes — never across a suspension
      * or a listener callback — so it cannot stall the onset/barge-in path.
@@ -166,15 +181,13 @@ class VoiceSessionCoordinator(
                     turn.job?.cancel()
                 }
                 activeListening = null
+                finalizationJob?.cancel()
+                finalizationJob = null
                 val inFlightGeneration =
                     synchronized(stateLock) {
-                        generationJob.also {
-                            generationJob = null
-                            activeOrchestrator = null
-                            generationTurnId = null
-                        }
+                        activeGeneration.also { activeGeneration = null }
                     }
-                inFlightGeneration?.cancel()
+                inFlightGeneration?.job?.cancel()
                 sessionScope = null
                 setState(if (stopped) VoiceSessionState.STOPPED else VoiceSessionState.IDLE)
             }
@@ -186,10 +199,11 @@ class VoiceSessionCoordinator(
         detectorJob?.cancel()
         detectInput?.close()
         captureJob?.cancel()
+        finalizationJob?.cancel()
         activeListening?.let { it.input.close() }
-        val (orchestrator, generation) = synchronized(stateLock) { activeOrchestrator to generationJob }
-        orchestrator?.interrupt(onsetAtNanos = null)
-        generation?.cancel()
+        val generation = synchronized(stateLock) { activeGeneration }
+        generation?.orchestrator?.interrupt(onsetAtNanos = null)
+        generation?.job?.cancel()
     }
 
     // region capture
@@ -256,7 +270,12 @@ class VoiceSessionCoordinator(
         }
     }
 
-    private suspend fun onEndpointed(event: TurnDetectionEvent.Endpointed) {
+    /**
+     * Ends the active listening turn and hands its completion to an owned
+     * finalization job, so the detector collector keeps draining audio and
+     * events while the recognizer finishes (CODE_REVIEW P1, R-0225).
+     */
+    private fun onEndpointed(event: TurnDetectionEvent.Endpointed) {
         val turn = activeListening
         if (turn == null) {
             if (event.reason == EndpointReason.EMPTY_NO_SPEECH) listener.onNoSpeech()
@@ -264,10 +283,25 @@ class VoiceSessionCoordinator(
         }
         activeListening = null
         turn.input.close()
-        // Bound the wait for the recognizer to finish after its input closes: a
-        // stalled engine must not hold the session in listening state forever
-        // (`docs/risks-and-decisions.md` R-0082, CODE_REVIEW P1). The bound is
-        // separate from the VAD maximum-silence cap.
+        val scope = sessionScope ?: return
+        val previous = synchronized(stateLock) { finalizationJob }
+        val job =
+            scope.launch(dispatcher) {
+                // Commit in spoken order: a later endpoint waits for the earlier
+                // finalization to settle, so two overlapping turns cannot persist
+                // out of order when one recognizer stalls.
+                previous?.join()
+                finalizeTurn(turn)
+            }
+        synchronized(stateLock) { finalizationJob = job }
+    }
+
+    /**
+     * Waits, bounded, for the recognizer to finish after its input closed, then
+     * commits, rejects, or fails the turn. The bound is a final cap on the STT
+     * job — never time spent blocking detection.
+     */
+    private suspend fun finalizeTurn(turn: ListeningTurn) {
         val completed =
             withTimeoutOrNull(STT_COMPLETION_TIMEOUT_MILLIS) {
                 turn.job?.join()
@@ -293,7 +327,7 @@ class VoiceSessionCoordinator(
         finishTurn(turn)
     }
 
-    private fun isGenerating(): Boolean = synchronized(stateLock) { generationJob?.isActive == true }
+    private fun isGenerating(): Boolean = synchronized(stateLock) { activeGeneration?.job?.isActive == true }
 
     // endregion
 
@@ -397,14 +431,14 @@ class VoiceSessionCoordinator(
         listener.onInterruptionRecovered(VoiceInterruptionRecovery.COMMITTED)
         listener.onUtteranceCommitted(turnId, transcript)
         setState(VoiceSessionState.WORKING)
-        val previous = synchronized(stateLock) { generationJob }
+        val previous = synchronized(stateLock) { activeGeneration }
+        val generation = ActiveGeneration(turnId)
         val job =
             scope.launch(dispatcher) {
-                var orchestrator: TurnOrchestrator? = null
                 try {
                     // Serialize persistence: the new turn's context must include the
                     // interrupted turn's stored truth, and two saves must not race.
-                    previous?.join()
+                    previous?.job?.join()
                     val convo = synchronized(stateLock) { conversation } ?: return@launch
                     val request =
                         TurnRequest(
@@ -413,11 +447,11 @@ class VoiceSessionCoordinator(
                             selection = provider.selection,
                             reasoning = provider.reasoning,
                         )
-                    orchestrator = orchestratorFactory()
-                    synchronized(stateLock) {
-                        activeOrchestrator = orchestrator
-                        generationTurnId = turnId
-                    }
+                    val orchestrator = orchestratorFactory()
+                    // Attach the interruptible request atomically: a barge-in in the
+                    // window before this point finds no orchestrator and cancels the
+                    // queued job instead (CODE_REVIEW P1, R-0226).
+                    generation.orchestrator = orchestrator
                     orchestrator.run(
                         request = request,
                         observer = coordinatorObserver(turnId),
@@ -429,12 +463,12 @@ class VoiceSessionCoordinator(
                     fail(failure.toVoiceAgentError())
                 } finally {
                     synchronized(stateLock) {
-                        if (activeOrchestrator === orchestrator) activeOrchestrator = null
-                        if (generationTurnId == turnId) generationTurnId = null
+                        if (activeGeneration === generation) activeGeneration = null
                     }
                 }
             }
-        synchronized(stateLock) { generationJob = job }
+        generation.job = job
+        synchronized(stateLock) { activeGeneration = generation }
     }
 
     private fun coordinatorObserver(turnId: TurnId): TurnObserver =
@@ -455,7 +489,6 @@ class VoiceSessionCoordinator(
             override fun onTurnFinished(result: TurnResult) {
                 synchronized(stateLock) {
                     this@VoiceSessionCoordinator.conversation = result.conversation
-                    if (generationTurnId == turnId) generationTurnId = null
                 }
                 settleBargeIn(turnId)
                 listener.onTurnFinished(result)
@@ -468,19 +501,30 @@ class VoiceSessionCoordinator(
             }
         }
 
-    private fun currentGenerationTurnId(): TurnId? = synchronized(stateLock) { generationTurnId }
+    private fun currentGenerationTurnId(): TurnId? = synchronized(stateLock) { activeGeneration?.turnId }
 
     // endregion
 
     // region barge-in
 
     private fun bargeIn(): MutableBargeIn? {
-        val (orchestrator, interruptedTurnId) =
-            synchronized(stateLock) { activeOrchestrator to generationTurnId }
+        // One atomic read of the pending/running generation, so the onset cannot
+        // observe a job and an orchestrator from different turns (CODE_REVIEW P1).
+        val generation = synchronized(stateLock) { activeGeneration }
         val onset = clock.nanoTime()
-        orchestrator?.interrupt(onset)
+        val orchestrator = generation?.orchestrator
+        if (orchestrator == null) {
+            // A job can be active before a provider request exists (it is queued
+            // behind the previous turn). "Job active" is not proof of an
+            // interruptible request: the superseded queued turn is replaced by
+            // the new utterance without a false barge-in record. There is no
+            // audible playback to stop yet.
+            generation?.job?.cancel()
+            return null
+        }
+        orchestrator.interrupt(onset)
         val stopIssued = clock.nanoTime()
-        if (interruptedTurnId == null) return null
+        val interruptedTurnId = generation.turnId
         val record =
             MutableBargeIn(
                 interruptedTurnId = interruptedTurnId,
@@ -573,6 +617,22 @@ class VoiceSessionCoordinator(
         var provisional: Transcript? = null
         var final: Transcript? = null
         var failure: VoiceAgentError? = null
+    }
+
+    /**
+     * One pending or running generation: its turn, its job, and — once attached —
+     * the orchestrator that owns the interruptible provider request. The
+     * orchestrator is `@Volatile` because it is attached by the generation
+     * coroutine and read by the onset path.
+     */
+    private class ActiveGeneration(
+        val turnId: TurnId,
+    ) {
+        @Volatile
+        var job: Job? = null
+
+        @Volatile
+        var orchestrator: TurnOrchestrator? = null
     }
 
     private class MutableBargeIn(

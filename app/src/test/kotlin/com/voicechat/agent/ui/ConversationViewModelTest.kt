@@ -11,6 +11,7 @@ import com.voicechat.agent.contracts.NoOpDiagnosticsSink
 import com.voicechat.agent.contracts.TtsEvent
 import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.domain.AssistantTurn
+import com.voicechat.agent.domain.Conversation
 import com.voicechat.agent.domain.ConversationId
 import com.voicechat.agent.domain.DeliveryState
 import com.voicechat.agent.domain.ErrorCode
@@ -410,6 +411,31 @@ class ConversationViewModelTest {
         }
 
     @Test
+    fun aSlowOpenDoesNotOverwriteANewerNavigationAndCancellationIsNotAnError() =
+        runTest {
+            val backing = InMemoryConversationRepository()
+            backing.save(testConversation("c1", updatedAt = 100L, title = "First", turns = listOf(testUserTurn("u1", "alpha"))))
+            backing.save(testConversation("c2", updatedAt = 200L, title = "Second", turns = listOf(testUserTurn("u2", "beta"))))
+            val repository = GatedLoadRepository(backing)
+            val model = FakeLanguageModel(providerId = selection.providerId, script = listOf(LlmStreamEvent.Completed()))
+            val viewModel = newViewModel(repository, model)
+            advanceUntilIdle()
+
+            // c1 starts loading and blocks; the user then opens c2.
+            viewModel.onOpenConversation(ConversationId("c1"))
+            runCurrent()
+            viewModel.onOpenConversation(ConversationId("c2"))
+            repository.release.complete(Unit)
+            advanceUntilIdle()
+
+            val dialog = viewModel.uiState.value.dialog!!
+            assertEquals("the newer navigation owns the dialog", ConversationId("c2"), dialog.conversationId)
+            assertEquals("beta", (dialog.turns.single() as UserTurn).transcript.text)
+            assertNull("a superseded/cancelled load must not surface an error", dialog.notice)
+            viewModel.shutdown()
+        }
+
+    @Test
     fun deletingAConversationRemovesItAndClosesTheOpenDialog() =
         runTest {
             val repository = InMemoryConversationRepository()
@@ -762,5 +788,20 @@ class ConversationViewModelTest {
     private companion object {
         const val NOW_EPOCH_MILLIS = 1_000L
         const val DELTA_DELAY_MILLIS = 10L
+    }
+}
+
+/**
+ * A [ConversationRepository] whose [load] blocks until [release] completes, so a
+ * test can hold one open in flight while it navigates elsewhere (CODE_REVIEW P2).
+ */
+private class GatedLoadRepository(
+    private val delegate: ConversationRepository,
+) : ConversationRepository by delegate {
+    val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    override suspend fun load(id: ConversationId): Conversation? {
+        release.await()
+        return delegate.load(id)
     }
 }

@@ -393,7 +393,7 @@ class SettingsViewModel(
             } else {
                 ModelCatalogState.of(
                     models = providerModels,
-                    emptyReason = "No models are wired for this provider yet. Refresh, or choose another provider.",
+                    emptyReason = "No models are wired for this provider yet. Recheck the device, or choose another provider.",
                 )
             }
 

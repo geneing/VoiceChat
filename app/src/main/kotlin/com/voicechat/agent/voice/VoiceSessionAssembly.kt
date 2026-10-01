@@ -118,7 +118,13 @@ private class PlatformVoiceSession(
         val audioInput = MicrophoneAudioCapture.create(context = context, diagnostics = diagnostics, clock = clock)
         val textToSpeech: TextToSpeech? =
             try {
-                OnDeviceTts.create(context = context, locale = selection.locale, diagnostics = diagnostics, clock = clock)
+                OnDeviceTts.create(
+                    context = context,
+                    locale = selection.locale,
+                    voiceId = selection.ttsVoiceId,
+                    diagnostics = diagnostics,
+                    clock = clock,
+                )
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Throwable) {

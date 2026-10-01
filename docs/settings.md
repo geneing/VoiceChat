@@ -41,10 +41,13 @@ Not implemented (owned elsewhere):
   bare "no models" line: `ModelCatalogState` distinguishes `Loading`,
   `Available`, `Empty`, `Unavailable`, `Stale`, and `Failed`, carries the reason,
   and sets `needsAttention` whenever nothing is selectable. `SettingsScreen`
-  renders the reason plus a **Refresh catalog** action in every non-selectable
-  state, so a provider with no wired catalog is never presented as configured
-  (`SettingsViewModelTest.anEmptyModelCatalogIsAFirstClassEmptyStateNotAConfiguredProvider`,
+  renders the reason plus a **Recheck capabilities** action in every
+  non-selectable state, so a provider with no wired catalog is never presented as
+  configured (`SettingsViewModelTest.anEmptyModelCatalogIsAFirstClassEmptyStateNotAConfiguredProvider`,
   `SettingsScreenUiTest.anEmptyModelCatalogShowsAnExplicitReasonAndARefreshAction`).
+  Because there is still no live provider `/models` fetch (R-0102/R-0160), the
+  action is labeled as a **device capability recheck**, not a catalog refresh, and
+  a one-line note says the provider model list is not connected yet.
 - The OpenRouter browser redirect and token exchange. The app refuses honestly
   (`AuthorizationRejection.NOT_IMPLEMENTED`) rather than faking a pairing; the
   session/security invariants are already enforced and tested.

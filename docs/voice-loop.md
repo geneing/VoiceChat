@@ -73,6 +73,12 @@ Barge-in and end-of-turn are separate, as the architecture requires:
    (semantic complete, silence cap, capture end, or empty/no-speech). Only then is
    the finalized transcript committed as a user turn.
 
+Endpoint finalization is an **owned per-turn job**, not work done inside the
+detector collector. The detector keeps draining audio/events while the recognizer
+finishes (bounded by the completion timeout), and each finalization joins the
+previous one before committing, so turns persist in spoken order and a new onset
+is never blocked behind a slow recognizer (R-0225).
+
 `VoiceTurnDetector` is the seam: production uses `PolicyVoiceTurnDetector` over
 the real bounded policy, and tests drive a deterministic script. The coordinator
 receives both signals from one event stream and keeps the two decisions distinct.
@@ -83,7 +89,11 @@ On a speech onset while a generation is active, the coordinator:
 
 1. calls `TurnOrchestrator.interrupt(onsetAtNanos)`, which cancels the in-flight
    provider request and all TTS jobs and settles the turn as `Interrupted` with
-   only the delivered prefix;
+   only the delivered prefix. The pending/running generation is one explicit state
+   (turn id, job, optional orchestrator): if a newer turn is still queued behind
+   the interrupted one and has **no orchestrator attached yet**, there is no
+   provider request to interrupt, so the queued job is replaced by the new
+   utterance instead of being mistaken for an interruptible request (R-0226);
 2. stops audible playback at once from a separate coroutine (`TextToSpeech.stop`,
    which also clears queued audio) and does **not** join it;
 3. begins the next capture/recognition turn immediately.
@@ -119,8 +129,8 @@ The coordinator adds a layer of turn-ID gating above the M21 machine:
 - a late interim that arrives after the turn's endpoint (while the recognizer is
   finalizing) is recorded on the turn but never shown;
 - live assistant text is delivered only while its turn is the *active generation*
-  turn (`generationTurnId`), so a straggler from an interrupted/superseded turn
-  cannot update the dialog;
+  turn (the explicit active-generation state), so a straggler from an
+  interrupted/superseded turn cannot update the dialog;
 - a turn that settles after a newer generation started does not overwrite the
   newer turn's session state.
 
