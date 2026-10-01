@@ -43,6 +43,7 @@ import com.voicechat.agent.settings.SettingsStore
 import com.voicechat.agent.settings.SettingsUiState
 import com.voicechat.agent.settings.SettingsValidator
 import com.voicechat.agent.settings.SmartTurnSettingsSection
+import com.voicechat.agent.settings.SmartTurnState
 import com.voicechat.agent.settings.SttDownloadProgress
 import com.voicechat.agent.settings.SttSettingsSection
 import com.voicechat.agent.settings.TtsSettingsSection
@@ -91,6 +92,7 @@ class SettingsViewModel(
     private val modelCatalog: ModelCapabilityCatalog = EmptyModelCapabilityCatalog,
     private val authFlow: ProviderAuthFlow = UnimplementedProviderAuthFlow,
     private val sttDownloader: SttModelDownloader = NoOpSttModelDownloader,
+    private val smartTurnInstaller: SmartTurnModelInstaller = UnavailableSmartTurnModelInstaller,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     scope: CoroutineScope? = null,
 ) : ViewModel(),
@@ -110,6 +112,8 @@ class SettingsViewModel(
     private var authFlowState: AuthorizationUiState = AuthorizationUiState.Idle
     private var sttDownload: SttDownloadProgress? = null
     private var sttDownloadJob: Job? = null
+    private var smartTurnInstalling: Boolean = false
+    private var smartTurnInstallJob: Job? = null
     private var closed: Boolean = false
 
     private val startupJob: Job =
@@ -230,6 +234,47 @@ class SettingsViewModel(
 
     override fun onSetSmartTurnEnabled(enabled: Boolean) {
         update(current.copy(smartTurnEnabled = enabled))
+    }
+
+    override fun onDownloadSmartTurnModel() {
+        if (smartTurnInstallJob?.isActive == true) return
+        if (capabilities.smartTurn is SmartTurnState.Available) return
+        smartTurnInstalling = true
+        rebuild()
+        smartTurnInstallJob =
+            coroutineScope().launch(dispatcher) {
+                try {
+                    smartTurnInstaller.install().collect { status ->
+                        when (status) {
+                            is SmartTurnInstallStatus.Started -> {
+                                Unit
+                            }
+
+                            SmartTurnInstallStatus.Completed -> {
+                                smartTurnInstalling = false
+                                capabilities = readCapabilities()
+                                // The artifact is now installed, so enable Smart Turn:
+                                // it is on by default, and the validator only cleared
+                                // it because the model was missing.
+                                if (!current.smartTurnEnabled) update(current.copy(smartTurnEnabled = true))
+                            }
+
+                            is SmartTurnInstallStatus.Failed -> {
+                                smartTurnInstalling = false
+                                notice = SettingsNotice.Failure(ErrorCode.MODEL_DOWNLOAD_FAILED, status.message)
+                            }
+                        }
+                        rebuild()
+                    }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Throwable) {
+                    AppLog.w(failure) { "settings: smart turn install failed" }
+                    smartTurnInstalling = false
+                    notice = SettingsNotice.Failure(ErrorCode.MODEL_DOWNLOAD_FAILED, "The Smart Turn model could not be installed.")
+                    rebuild()
+                }
+            }
     }
 
     override fun onDestinationChanged(text: String) {
@@ -505,7 +550,12 @@ class SettingsViewModel(
                 selectedVoiceId = current.ttsVoiceId,
             )
 
-        val smartTurn = SmartTurnSettingsSection(enabled = current.smartTurnEnabled, state = capabilities.smartTurn)
+        val smartTurn =
+            SmartTurnSettingsSection(
+                enabled = current.smartTurnEnabled,
+                state = capabilities.smartTurn,
+                installing = smartTurnInstalling,
+            )
 
         _uiState.value =
             SettingsUiState(
@@ -530,6 +580,7 @@ class SettingsViewModel(
         closed = true
         startupJob.cancel()
         sttDownloadJob?.cancel()
+        smartTurnInstallJob?.cancel()
     }
 
     override fun onCleared() {
@@ -579,6 +630,7 @@ fun settingsViewModelFactory(
     modelCatalog: ModelCapabilityCatalog = EmptyModelCapabilityCatalog,
     authFlow: ProviderAuthFlow = UnimplementedProviderAuthFlow,
     sttDownloader: SttModelDownloader = MlKitSttModelDownloader,
+    smartTurnInstaller: SmartTurnModelInstaller = UnavailableSmartTurnModelInstaller,
 ): ViewModelProvider.Factory =
     viewModelFactory {
         initializer {
@@ -590,6 +642,7 @@ fun settingsViewModelFactory(
                 modelCatalog = modelCatalog,
                 authFlow = authFlow,
                 sttDownloader = sttDownloader,
+                smartTurnInstaller = smartTurnInstaller,
             )
         }
     }

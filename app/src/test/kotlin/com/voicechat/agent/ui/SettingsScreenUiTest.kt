@@ -275,6 +275,33 @@ class SettingsScreenUiTest {
     }
 
     @Test
+    fun aMissingSmartTurnModelOffersADownload() {
+        val actions = RecordingSettingsActions()
+        render(
+            baseState().copy(
+                smartTurn = SmartTurnSettingsSection(enabled = false, state = SmartTurnState.DownloadRequired),
+            ),
+            actions,
+        )
+
+        composeRule.onNodeWithTag(SettingsTestTags.SMART_TURN_DOWNLOAD).performScrollTo().performClick()
+        assertEquals(1, actions.downloadSmartTurnCount)
+        composeRule.onNodeWithTag(SettingsTestTags.SMART_TURN_PROGRESS).assertDoesNotExist()
+    }
+
+    @Test
+    fun anInstallingSmartTurnModelShowsProgressAndHidesTheAction() {
+        render(
+            baseState().copy(
+                smartTurn = SmartTurnSettingsSection(enabled = false, state = SmartTurnState.DownloadRequired, installing = true),
+            ),
+        )
+
+        composeRule.onNodeWithTag(SettingsTestTags.SMART_TURN_PROGRESS).performScrollTo().assertExists()
+        composeRule.onNodeWithTag(SettingsTestTags.SMART_TURN_DOWNLOAD).assertDoesNotExist()
+    }
+
+    @Test
     fun smartTurnIsDisabledWithAReasonWhenUnavailable() {
         render(
             baseState().copy(
@@ -435,6 +462,7 @@ private class RecordingSettingsActions : SettingsActions {
     var lastDestination: String? = null
     var lastCredential: String? = null
     var downloadSttCount: Int = 0
+    var downloadSmartTurnCount: Int = 0
     var removeCount: Int = 0
     var signInCount: Int = 0
     var refreshCount: Int = 0
@@ -469,6 +497,10 @@ private class RecordingSettingsActions : SettingsActions {
 
     override fun onSetSmartTurnEnabled(enabled: Boolean) {
         lastSmartTurn = enabled
+    }
+
+    override fun onDownloadSmartTurnModel() {
+        downloadSmartTurnCount++
     }
 
     override fun onDestinationChanged(text: String) {

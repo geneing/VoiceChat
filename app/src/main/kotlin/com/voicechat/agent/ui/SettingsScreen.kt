@@ -77,6 +77,12 @@ object SettingsTestTags {
     const val SMART_TURN_TOGGLE = "settings-smart-turn-toggle"
     const val SMART_TURN_REASON = "settings-smart-turn-reason"
 
+    /** The action that downloads/installs the pinned Smart Turn artifact. */
+    const val SMART_TURN_DOWNLOAD = "settings-smart-turn-download"
+
+    /** The progress row shown while the Smart Turn artifact installs. */
+    const val SMART_TURN_PROGRESS = "settings-smart-turn-progress"
+
     /** The selectable dropdown for an STT model. */
     const val STT_DROPDOWN = "settings-stt-dropdown"
 
@@ -433,13 +439,34 @@ private fun SmartTurnSection(
             modifier = Modifier.testTag(SettingsTestTags.SMART_TURN_TOGGLE),
         )
     }
-    state.smartTurn.unavailableReason?.let { reason ->
+    if (state.smartTurn.installing) {
+        Column(modifier = Modifier.testTag(SettingsTestTags.SMART_TURN_PROGRESS)) {
+            Text("Downloading Smart Turn model…", style = MaterialTheme.typography.bodySmall)
+            Spacer(modifier = Modifier.height(6.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+    } else if (state.smartTurn.needsDownload) {
         Text(
-            text = reason,
-            modifier = Modifier.testTag(SettingsTestTags.SMART_TURN_REASON),
+            text = "The Smart Turn model is not installed on this device.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.testTag(SettingsTestTags.SMART_TURN_REASON),
         )
+        Button(
+            onClick = actions::onDownloadSmartTurnModel,
+            modifier = Modifier.testTag(SettingsTestTags.SMART_TURN_DOWNLOAD),
+        ) {
+            Text("Download Smart Turn model")
+        }
+    } else {
+        state.smartTurn.unavailableReason?.let { reason ->
+            Text(
+                text = reason,
+                modifier = Modifier.testTag(SettingsTestTags.SMART_TURN_REASON),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 }
 

@@ -97,7 +97,7 @@ the start of each voice session:
 | State | Result |
 | --- | --- |
 | Disabled | `null`; the detector is **never constructed**, the engine is never opened, and the M09 bounded VAD-only policy is used. |
-| Enabled, model missing | `null`, typed `MODEL_UNAVAILABLE`, recorded; the settings surface reports `DownloadRequired` and disables the toggle. |
+| Enabled, model missing | `null`, typed `MODEL_UNAVAILABLE`, recorded; the settings surface offers a **Download Smart Turn model** action. |
 | Enabled, model corrupt (wrong size/hash) | `null`, typed `MODEL_CORRUPT`, a user-visible reason, recorded; the VAD-only policy applies. |
 | Enabled, verified, graph fails to load | `null`, typed `MODEL_UNAVAILABLE`, recorded; the VAD-only policy applies. |
 | Enabled and verified | A `SmartTurnCompletionDetector` is built and evaluated once per candidate pause. |
@@ -105,10 +105,13 @@ the start of each voice session:
 Availability is exposed through the M02 `ModelAvailability` contract
 (`ModelTask.TURN_COMPLETION`, `ModelRuntime.ONNX_RUNTIME`) and mapped to the
 existing `SmartTurnState` in the settings model, so the settings screen disables
-the toggle with a reason when the model is not installed. Clearing the on-by-default
-flag because this device lacks the artifact is a normal fallback, not a rejected
-user choice, so the validator does **not** record an `InvalidSelection` for it
-(R-0233).
+the toggle with a reason when the model is not installed. The artifact is
+**not bundled in the APK**: Settings installs it on the user's explicit action
+through `SmartTurnModelInstaller` → `SmartTurnModelStore.install`, which verifies
+the exact byte size and SHA-256 before an atomic move into app-private storage.
+Clearing the on-by-default flag because this device lacks the artifact is a normal
+fallback, not a rejected user choice, so the validator does **not** record an
+`InvalidSelection` for it.
 
 **No per-frame inference.** The detector is invoked only from
 `BoundedTurnEndpointPolicy` at a `CANDIDATE_PAUSE` transition, over the
@@ -217,9 +220,9 @@ proven by the JVM suite.** Everything numeric about the model on Pixel 10 is
   **not** this app's performance and must not be quoted as such.
 
 M25 owns calibration, the acceptance evidence, and any decision to change the
-default. The settings default is now **on** (the product owner's direction), but
-the detector still only runs when its verified artifact is installed, so a device
-without it behaves exactly as the VAD-only default did (R-0190, R-0233).
+default. The settings default is now **on** (the product owner's direction), and
+Settings installs the pinned artifact on demand, so a device without it behaves
+exactly as the VAD-only default did until the user downloads it (R-0190).
 
 ## Sources
 

@@ -135,9 +135,17 @@ data class LlmSettingsSection(
 data class SmartTurnSettingsSection(
     val enabled: Boolean = false,
     val state: SmartTurnState = SmartTurnState.Unavailable("Smart Turn is not available"),
+    /**
+     * True while the pinned artifact is downloading/installing from Settings.
+     * The UI shows a progress row and disables the toggle until it settles.
+     */
+    val installing: Boolean = false,
 ) {
     /** True only when the detector is actually installed and selectable. */
     val selectable: Boolean get() = state is SmartTurnState.Available
+
+    /** True when the pinned artifact is not installed but can be downloaded here. */
+    val needsDownload: Boolean get() = state is SmartTurnState.DownloadRequired
 
     /** The reason the toggle is disabled, or `null` when selectable. */
     val unavailableReason: String?
@@ -200,6 +208,12 @@ interface SettingsActions {
 
     /** Enables or disables Smart Turn (only persisted when it is available). */
     fun onSetSmartTurnEnabled(enabled: Boolean)
+
+    /**
+     * Downloads and installs the pinned Smart Turn artifact (M10, user-approved).
+     * A no-op when it is already installed or an install is already running.
+     */
+    fun onDownloadSmartTurnModel()
 
     /** Updates the configurable destination draft; validated before it is stored. */
     fun onDestinationChanged(text: String)

@@ -17,6 +17,7 @@ import com.voicechat.agent.turn.SmartTurnEngineFactory
 import com.voicechat.agent.turn.SmartTurnModelStore
 import com.voicechat.agent.ui.AndroidSettingsCapabilityProvider
 import com.voicechat.agent.ui.ConversationDefaults
+import com.voicechat.agent.ui.DefaultSmartTurnModelInstaller
 import com.voicechat.agent.ui.settingsViewModelFactory
 import com.voicechat.agent.voice.VoiceRuntimeSelection
 import com.voicechat.agent.voice.VoiceSessionAssembly
@@ -73,6 +74,7 @@ class AppContainer(
             registry = registry,
             credentials = credentials,
             capabilityProvider = AndroidSettingsCapabilityProvider(appContext),
+            smartTurnInstaller = DefaultSmartTurnModelInstaller(File(appContext.filesDir, SmartTurnModelStore.DIRECTORY_NAME)),
         )
     }
 
