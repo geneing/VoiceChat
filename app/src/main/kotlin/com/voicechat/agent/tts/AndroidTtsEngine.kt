@@ -30,9 +30,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * package is platform-free.
  *
  * **On-device only.** [initialize] enumerates `getVoices()` and selects a voice
- * only when `isNetworkConnectionRequired()` is `false`. When the requested
- * locale has no embedded voice it returns [TtsEngineAvailability.NoOnDeviceVoice]
- * and the adapter surfaces it; a network voice is never used.
+ * only when `isNetworkConnectionRequired()` is `false`. When [preferredVoiceId]
+ * is set, that exact embedded voice is required and a missing/network-only id
+ * yields [TtsEngineAvailability.SelectedVoiceUnavailable]; otherwise the requested
+ * locale has no embedded voice and it returns
+ * [TtsEngineAvailability.NoOnDeviceVoice]. A network voice is never used.
  *
  * **Queued chunking.** [speak] enqueues with `QUEUE_ADD`, so incremental chunks
  * play in order. Each call returns a cold flow backed by a `callbackFlow`
@@ -51,6 +53,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class AndroidTtsEngine(
     context: Context,
     private val locale: Locale = Locale.getDefault(),
+    private val preferredVoiceId: String? = null,
     private val focusController: AudioFocusController = AndroidAudioFocusController(context.applicationContext),
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : TtsEngine {
@@ -100,7 +103,20 @@ class AndroidTtsEngine(
             }
 
             val voices = installedVoices()
-            val selected = OnDeviceVoiceSelector.select(voices, locale)
+            val selected =
+                if (preferredVoiceId != null) {
+                    val preferred = OnDeviceVoiceSelector.selectPreferred(voices, preferredVoiceId)
+                    if (preferred == null) {
+                        AppLog.w {
+                            "tts: selected voice not installed voice=$preferredVoiceId " +
+                                "engine=${engineId.value} voices=${voices.size}"
+                        }
+                        return@withContext TtsEngineAvailability.SelectedVoiceUnavailable(preferredVoiceId, locale)
+                    }
+                    preferred
+                } else {
+                    OnDeviceVoiceSelector.select(voices, locale)
+                }
             AppLog.i {
                 "tts: availability engine=${engineId.value} voices=${voices.size} " +
                     "onDevice=${OnDeviceVoiceSelector.onDeviceVoices(voices).size} selected=${selected?.id ?: "none"}"

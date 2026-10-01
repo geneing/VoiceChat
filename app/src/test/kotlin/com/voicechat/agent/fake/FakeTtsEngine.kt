@@ -45,6 +45,7 @@ class FakeTtsEngine(
     private val autoComplete: Boolean = true,
     private val failFirst: Boolean = false,
     private val locale: Locale = Locale.US,
+    private val preferredVoiceId: String? = null,
 ) : TtsEngine {
     override val engineId: EngineId = EngineId("fake-tts")
 
@@ -67,6 +68,12 @@ class FakeTtsEngine(
     private var speakCount = 0
 
     override suspend fun initialize(): TtsEngineAvailability {
+        if (preferredVoiceId != null) {
+            val preferred = OnDeviceVoiceSelector.selectPreferred(voices, preferredVoiceId)
+            selectedVoice = preferred
+            return preferred?.let { TtsEngineAvailability.Ready(it) }
+                ?: TtsEngineAvailability.SelectedVoiceUnavailable(preferredVoiceId, locale)
+        }
         val selected = OnDeviceVoiceSelector.select(voices, locale)
         selectedVoice = selected
         return selected?.let { TtsEngineAvailability.Ready(it) }

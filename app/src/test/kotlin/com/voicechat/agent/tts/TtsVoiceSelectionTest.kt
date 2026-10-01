@@ -60,4 +60,29 @@ class TtsVoiceSelectionTest {
 
         assertEquals("fast-good", OnDeviceVoiceSelector.select(voices, Locale.US)?.id)
     }
+
+    @Test
+    fun selectPreferredReturnsTheExactInstalledEmbeddedVoice() {
+        val voices =
+            listOf(
+                ttsVoice("voice-a", quality = 100),
+                ttsVoice("voice-b", quality = 900),
+            )
+
+        assertEquals("voice-a", OnDeviceVoiceSelector.selectPreferred(voices, "voice-a")?.id)
+    }
+
+    @Test
+    fun selectPreferredNeverReturnsANetworkVoice() {
+        val voices = listOf(ttsVoice("cloud", requiresNetwork = true))
+
+        assertNull(OnDeviceVoiceSelector.selectPreferred(voices, "cloud"))
+    }
+
+    @Test
+    fun selectPreferredIsNullWhenTheVoiceIsNotInstalled() {
+        val voices = listOf(ttsVoice("voice-a"))
+
+        assertNull(OnDeviceVoiceSelector.selectPreferred(voices, "voice-missing"))
+    }
 }

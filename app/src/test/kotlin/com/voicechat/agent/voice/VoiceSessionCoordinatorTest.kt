@@ -677,6 +677,42 @@ class VoiceSessionCoordinatorTest {
             job.cancelAndJoin()
         }
 
+    @Test
+    fun endpointFinalizationDoesNotBlockDetectionOfTheNextOnset() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val repository = InMemoryConversationRepository()
+            val detector = ManualVoiceTurnDetector()
+            // A recognizer that never finishes after its input closes: the first
+            // turn's finalization is still pending when the next onset arrives.
+            val speechToText = StallingSpeechToText()
+            val listener = RecordingVoiceSessionListener()
+            val coordinator =
+                coordinatorFor(
+                    repository,
+                    detector,
+                    speechToText,
+                    FakeLanguageModel(),
+                    listener = listener,
+                    dispatcher = dispatcher,
+                )
+
+            val job = launch(dispatcher) { coordinator.run(conversation) }
+            detector.speech(SpeechActivity.SPEECH_STARTED)
+            runCurrent()
+            assertEquals(1, listener.listeningCount)
+            detector.endpoint(EndpointReason.SILENCE_CAP)
+            runCurrent()
+
+            // Detection keeps draining while the first turn finalizes: the next
+            // onset starts a second listening turn without waiting for STT
+            // (CODE_REVIEW P1, R-0225).
+            detector.speech(SpeechActivity.SPEECH_RESUMED)
+            runCurrent()
+            assertEquals(2, listener.listeningCount)
+            job.cancelAndJoin()
+        }
+
     private class SequentialTurnIds : () -> TurnId {
         private var count = 0
 

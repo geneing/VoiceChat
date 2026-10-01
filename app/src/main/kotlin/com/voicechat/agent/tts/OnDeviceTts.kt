@@ -23,11 +23,14 @@ import java.util.Locale
 object OnDeviceTts {
     /**
      * Builds the platform TTS path. [locale] selects the embedded voice;
-     * [diagnostics] receives privacy-safe `TTS_SYNTHESIS`/`TTS_PLAYBACK` events.
+     * [voiceId], when non-null, requires that exact installed embedded voice
+     * (R-0181). [diagnostics] receives privacy-safe
+     * `TTS_SYNTHESIS`/`TTS_PLAYBACK` events.
      */
     fun create(
         context: Context,
         locale: Locale = Locale.getDefault(),
+        voiceId: String? = null,
         diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
         clock: MonotonicClock = SystemMonotonicClock,
         dispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -36,6 +39,7 @@ object OnDeviceTts {
             AndroidTtsEngine(
                 context = context.applicationContext,
                 locale = locale,
+                preferredVoiceId = voiceId,
                 dispatcher = dispatcher,
             )
         return EngineTextToSpeech(engine = engine, diagnostics = diagnostics, clock = clock)

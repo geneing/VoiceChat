@@ -1,6 +1,7 @@
 package com.voicechat.agent.ui
 
 import android.content.Context
+import com.voicechat.agent.log.AppLog
 import com.voicechat.agent.providers.DocumentedModelCatalog
 import com.voicechat.agent.settings.SettingsCapabilities
 import com.voicechat.agent.settings.SettingsCapabilityProvider
@@ -10,6 +11,7 @@ import com.voicechat.agent.tts.AndroidTtsEngine
 import com.voicechat.agent.tts.TtsVoice
 import com.voicechat.agent.turn.SmartTurnCatalog
 import com.voicechat.agent.turn.SmartTurnModelStore
+import kotlinx.coroutines.CancellationException
 import java.io.File
 
 /**
@@ -57,9 +59,16 @@ class AndroidSettingsCapabilityProvider(
             // returns the full list (the settings screen keeps only embedded ones).
             engine.initialize()
             engine.installedVoices()
+        } catch (cancellation: CancellationException) {
+            // A cancelled refresh must stay cancelled, not become a successful
+            // "no voices" snapshot (CODE_REVIEW P2, R-0225).
+            throw cancellation
         } catch (failure: Throwable) {
             // An engine that cannot initialize reports no voices rather than a
             // fabricated list; the screen shows the explicit no-voice state.
+            // (A distinct init-failure state is part of the settings-state
+            // simplification still tracked as R-0164/R-0221.)
+            AppLog.w(failure) { "settings: TTS voice discovery failed" }
             emptyList()
         } finally {
             runCatching { engine.close() }

@@ -215,6 +215,13 @@ class EngineTextToSpeech(
                 )
             }
 
+            is TtsEngineAvailability.SelectedVoiceUnavailable -> {
+                VoiceAgentError(
+                    code = ErrorCode.TTS_NO_ON_DEVICE_VOICE,
+                    detail = "the selected embedded voice \"$voiceId\" is not installed for locale ${locale.toLanguageTag()}",
+                )
+            }
+
             is TtsEngineAvailability.Unavailable -> {
                 error
             }

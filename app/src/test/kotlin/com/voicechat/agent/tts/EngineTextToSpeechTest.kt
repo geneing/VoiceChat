@@ -73,6 +73,41 @@ class EngineTextToSpeechTest {
         }
 
     @Test
+    fun aSelectedEmbeddedVoiceIsUsedForPlayback() =
+        runTest {
+            val engine =
+                FakeTtsEngine(
+                    voices = listOf(ttsVoice("voice-a"), ttsVoice("voice-b")),
+                    preferredVoiceId = "voice-b",
+                )
+            val tts = EngineTextToSpeech(engine)
+
+            val events = tts.speak("hello", first).toList()
+
+            assertEquals("voice-b", engine.selectedVoice?.id)
+            assertEquals(TtsEvent.Queued(first, "hello"), events.first())
+            assertEquals(listOf("hello"), engine.spokenTexts)
+        }
+
+    @Test
+    fun aSelectedVoiceThatIsNotInstalledIsAnExplicitTypedFailure() =
+        runTest {
+            val engine =
+                FakeTtsEngine(
+                    voices = listOf(ttsVoice("voice-a")),
+                    preferredVoiceId = "voice-missing",
+                )
+            val tts = EngineTextToSpeech(engine)
+
+            val events = tts.speak("hello", first).toList()
+
+            assertEquals(1, events.size)
+            val failure = events.single() as TtsEvent.Failed
+            assertEquals(ErrorCode.TTS_NO_ON_DEVICE_VOICE, failure.error.code)
+            assertTrue("no other voice may be substituted", engine.spokenTexts.isEmpty())
+        }
+
+    @Test
     fun incrementalChunksAreQueuedInOrder() =
         runTest {
             val engine = FakeTtsEngine()

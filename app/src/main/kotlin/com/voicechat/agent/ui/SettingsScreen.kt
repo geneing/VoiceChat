@@ -138,7 +138,7 @@ fun SettingsScreen(
                 },
                 actions = {
                     TextButton(onClick = actions::onRefresh, modifier = Modifier.testTag(SettingsTestTags.REFRESH)) {
-                        Text("Refresh")
+                        Text("Recheck device")
                     }
                 },
             )
@@ -508,7 +508,10 @@ private fun DisabledReason(
 /**
  * The catalog-level state shown when the provider lists no selectable model
  * (M27, R-0102). It names the reason and, for an empty/failed/unavailable
- * catalog, offers a refresh instead of presenting a provider as configured.
+ * catalog, offers a device recheck instead of presenting a provider as
+ * configured. There is no live provider `/models` fetch yet, so the action
+ * explicitly rechecks on-device capabilities rather than implying it can
+ * recover a provider catalog the app cannot query (CODE_REVIEW P2, R-0160).
  */
 @Composable
 private fun ModelCatalogNotice(
@@ -540,7 +543,7 @@ private fun ModelCatalogNotice(
             }
 
             is ModelCatalogState.Stale -> {
-                "Showing cached $name models; refresh to revalidate."
+                "Showing cached $name models; recheck the device to revalidate."
             }
 
             is ModelCatalogState.Available -> {
@@ -557,8 +560,14 @@ private fun ModelCatalogNotice(
             onClick = onRefresh,
             modifier = Modifier.padding(top = 4.dp),
         ) {
-            Text("Refresh catalog")
+            Text("Recheck capabilities")
         }
+        Text(
+            text = "The live provider model list is not connected yet; this only rechecks what this device currently reports.",
+            modifier = Modifier.padding(start = 0.dp, top = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
