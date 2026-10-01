@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.voicechat.agent.contracts.ModelAvailability
+import com.voicechat.agent.contracts.ModelCatalogState
 import com.voicechat.agent.credentials.Credential
 import com.voicechat.agent.credentials.CredentialKind
 import com.voicechat.agent.credentials.CredentialStatus
@@ -381,20 +383,27 @@ class SettingsViewModel(
                 localeLanguageTag = current.sttLocaleLanguageTag ?: VoiceSettings.DEFAULT_LANGUAGE_TAG,
             )
 
+        val providerModels =
+            provider
+                ?.let { selected -> capabilities.models.filter { it.model.providerId == selected.providerId } }
+                ?: emptyList()
+        val catalogState =
+            if (provider == null) {
+                ModelCatalogState.Empty("Choose a provider to list its models.")
+            } else {
+                ModelCatalogState.of(
+                    models = providerModels,
+                    emptyReason = "No models are wired for this provider yet. Refresh, or choose another provider.",
+                )
+            }
+
         val llm =
             LlmSettingsSection(
                 providers = SettingsOptions.providers(registry, current.llmProviderId),
                 selectedProviderId = current.llmProviderId,
                 providerDisplayName = provider?.displayName,
-                models =
-                    provider
-                        ?.let { selected ->
-                            SettingsOptions.models(
-                                capabilities.models.filter { it.model.providerId == selected.providerId },
-                                current.llmModelId,
-                            )
-                        }
-                        ?: emptyList(),
+                models = SettingsOptions.models(providerModels, current.llmModelId),
+                modelCatalogState = catalogState,
                 selectedModelId = current.llmModelId,
                 authMethods = provider?.let { SettingsOptions.authMethods(it, current.llmAuthMethod) } ?: emptyList(),
                 selectedAuthMethod = current.llmAuthMethod,

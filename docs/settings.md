@@ -36,7 +36,15 @@ Not implemented (owned elsewhere):
 - The **live** `/models` catalog and per-model reasoning capability (M14–M19).
   The M23 slice feeds the picker a **documented static** list (OpenCode Go's
   dated model table), so a Go model is selectable and validated; other providers
-  still show no models, and nothing is fabricated (R-0102, R-0160).
+  show no models, and nothing is fabricated (R-0102, R-0160).
+- **Catalog state is first-class (M27, R-0102).** The picker no longer shows a
+  bare "no models" line: `ModelCatalogState` distinguishes `Loading`,
+  `Available`, `Empty`, `Unavailable`, `Stale`, and `Failed`, carries the reason,
+  and sets `needsAttention` whenever nothing is selectable. `SettingsScreen`
+  renders the reason plus a **Refresh catalog** action in every non-selectable
+  state, so a provider with no wired catalog is never presented as configured
+  (`SettingsViewModelTest.anEmptyModelCatalogIsAFirstClassEmptyStateNotAConfiguredProvider`,
+  `SettingsScreenUiTest.anEmptyModelCatalogShowsAnExplicitReasonAndARefreshAction`).
 - The OpenRouter browser redirect and token exchange. The app refuses honestly
   (`AuthorizationRejection.NOT_IMPLEMENTED`) rather than faking a pairing; the
   session/security invariants are already enforced and tested.
