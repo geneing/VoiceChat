@@ -1,62 +1,107 @@
 package com.voicechat.agent.ui
 
+import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.ListItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.error
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.voicechat.agent.R
 import com.voicechat.agent.domain.AssistantTurn
 import com.voicechat.agent.domain.ConversationId
+import com.voicechat.agent.domain.ConversationSummary
 import com.voicechat.agent.domain.DeliveryState
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.GenerationState
 import com.voicechat.agent.domain.TurnPhase
 import com.voicechat.agent.domain.UserTurn
 import com.voicechat.agent.providers.ProviderDisclosure
+import com.voicechat.agent.ui.theme.OrbIdle
+import com.voicechat.agent.ui.theme.OrbListening
+import com.voicechat.agent.ui.theme.OrbSpeaking
+import com.voicechat.agent.ui.theme.OrbUnavailable
+import com.voicechat.agent.ui.theme.OrbWorking
 import com.voicechat.agent.ui.theme.VoiceAgentTheme
 import com.voicechat.agent.voice.VoiceSessionState
+import kotlinx.coroutines.launch
 
 /**
  * Test tags for the conversation surface.
@@ -65,12 +110,13 @@ import com.voicechat.agent.voice.VoiceSessionState
  * copy that may change. Every interactive control also has an accessible label.
  */
 object ConversationTestTags {
+    const val DRAWER = "open-drawer"
+    const val DRAWER_NEW_CONVERSATION = "drawer-new-conversation"
     const val NEW_CONVERSATION = "new-conversation"
     const val COMPOSER = "composer"
     const val SEND = "send"
     const val CANCEL = "cancel"
     const val RETRY = "retry"
-    const val BACK = "back"
     const val DELETE_CONVERSATION = "delete-conversation"
     const val CONFIRM_DELETE = "confirm-delete"
     const val CANCEL_DELETE = "cancel-delete"
@@ -84,14 +130,21 @@ object ConversationTestTags {
     const val TOOL_EXECUTION_NOTICE = "conversation-tool-execution"
     const val VOICE_TOGGLE = "voice-toggle"
 
-    /** Row for [id] in the conversation list. */
+    /** Row for [id] in the conversation history drawer. */
     fun conversationRow(id: String): String = "conversation-row-$id"
 
-    /** Delete control for [id] in the conversation list. */
+    /** Delete control for [id] in the conversation history drawer. */
     fun deleteRow(id: String): String = "delete-row-$id"
 }
 
-/** Root of the conversation surface: list, dialog, and the shared delete confirmation. */
+/**
+ * Root of the conversation surface.
+ *
+ * The main content is the chat window — the home surface with the talk control
+ * when nothing is open, the open dialog otherwise. History and Settings live in
+ * a modal navigation drawer behind the hamburger, so the chat stays the primary
+ * surface (the ChatGPT/Gemini pattern) instead of a separate list screen.
+ */
 @Composable
 fun ConversationApp(
     state: ConversationUiState,
@@ -100,23 +153,54 @@ fun ConversationApp(
     onOpenSettings: (() -> Unit)? = null,
     onVoiceToggle: (() -> Unit)? = null,
 ) {
-    when (state.screen) {
-        ConversationScreen.LIST -> {
-            ConversationListScreen(
-                list = state.list,
-                actions = actions,
-                onOpenSettings = onOpenSettings,
-                modifier = modifier,
-            )
-        }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    val openDrawer: () -> Unit = { scope.launch { drawerState.open() } }
+    val closeDrawer: () -> Unit = { scope.launch { drawerState.close() } }
 
-        ConversationScreen.DIALOG -> {
-            ConversationDialogScreen(
-                dialog = requireNotNull(state.dialog),
-                actions = actions,
-                modifier = modifier,
-                onVoiceToggle = onVoiceToggle,
+    ModalNavigationDrawer(
+        modifier = modifier.fillMaxSize(),
+        drawerState = drawerState,
+        drawerContent = {
+            ConversationDrawer(
+                list = state.list,
+                onNewConversation = {
+                    closeDrawer()
+                    actions.onNewConversation()
+                },
+                onOpenConversation = { id ->
+                    closeDrawer()
+                    actions.onOpenConversation(id)
+                },
+                onRequestDelete = actions::onRequestDelete,
+                onOpenSettings =
+                    onOpenSettings?.let { open ->
+                        {
+                            closeDrawer()
+                            open()
+                        }
+                    },
             )
+        },
+    ) {
+        when (state.screen) {
+            ConversationScreen.LIST -> {
+                ConversationHomeScreen(
+                    list = state.list,
+                    actions = actions,
+                    onOpenDrawer = openDrawer,
+                    onVoiceToggle = onVoiceToggle,
+                )
+            }
+
+            ConversationScreen.DIALOG -> {
+                ConversationDialogScreen(
+                    dialog = requireNotNull(state.dialog),
+                    actions = actions,
+                    onOpenDrawer = openDrawer,
+                    onVoiceToggle = onVoiceToggle,
+                )
+            }
         }
     }
 
@@ -129,38 +213,245 @@ fun ConversationApp(
     }
 }
 
-/** History list: new conversation, reopen, and delete. */
-@OptIn(ExperimentalMaterial3Api::class)
+// region drawer
+
+/**
+ * History and settings drawer: a new-chat action, the persisted conversations
+ * (newest first) with a per-row delete, and the settings entry pinned at the
+ * bottom.
+ */
 @Composable
-fun ConversationListScreen(
+private fun ConversationDrawer(
     list: ConversationListState,
-    actions: ConversationActions,
-    modifier: Modifier = Modifier,
-    onOpenSettings: (() -> Unit)? = null,
+    onNewConversation: () -> Unit,
+    onOpenConversation: (ConversationId) -> Unit,
+    onRequestDelete: (ConversationId) -> Unit,
+    onOpenSettings: (() -> Unit)?,
 ) {
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.conversations_title)) },
-                actions = {
-                    if (onOpenSettings != null) {
-                        TextButton(
-                            onClick = onOpenSettings,
-                            modifier = Modifier.testTag(ConversationTestTags.OPEN_SETTINGS),
+    ModalDrawerSheet(
+        modifier = Modifier.fillMaxWidth(0.88f),
+        drawerContainerColor = MaterialTheme.colorScheme.surface,
+        drawerContentColor = MaterialTheme.colorScheme.onSurface,
+        drawerTonalElevation = 0.dp,
+    ) {
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+            Wordmark(
+                modifier = Modifier.padding(start = 12.dp, top = 24.dp, bottom = 16.dp),
+            )
+            DrawerAction(
+                label = stringResource(R.string.drawer_new_chat),
+                icon = R.drawable.ic_add,
+                tag = ConversationTestTags.DRAWER_NEW_CONVERSATION,
+                onClick = onNewConversation,
+            )
+            ListLabel(text = stringResource(R.string.drawer_recent))
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                when {
+                    list.isLoading -> {
+                        // No test tag or accessibility label here: the main
+                        // surface owns the single LOADING tag, and the drawer is
+                        // composed even while it is closed.
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(20.dp),
+                            horizontalArrangement = Arrangement.Center,
                         ) {
-                            Text(stringResource(R.string.settings))
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         }
                     }
-                },
+
+                    list.isEmpty -> {
+                        Text(
+                            text = stringResource(R.string.empty_conversations),
+                            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    else -> {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(items = list.summaries, key = { it.id.value }) { summary ->
+                                HistoryRow(
+                                    summary = summary,
+                                    onOpen = { onOpenConversation(summary.id) },
+                                    onDelete = { onRequestDelete(summary.id) },
+                                    rowTag = ConversationTestTags.conversationRow(summary.id.value),
+                                    deleteTag = ConversationTestTags.deleteRow(summary.id.value),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            if (onOpenSettings != null) {
+                DrawerAction(
+                    label = stringResource(R.string.settings),
+                    icon = R.drawable.ic_settings,
+                    tag = ConversationTestTags.OPEN_SETTINGS,
+                    onClick = onOpenSettings,
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun Wordmark(modifier: Modifier = Modifier) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = stringResource(R.string.brand_wordmark_top),
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+            letterSpacing = 3.sp,
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = stringResource(R.string.brand_wordmark_accent),
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+            letterSpacing = 3.sp,
+        )
+    }
+}
+
+@Composable
+private fun ListLabel(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.padding(start = 12.dp, top = 18.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
+private fun DrawerAction(
+    label: String,
+    @DrawableRes icon: Int,
+    tag: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 14.dp)
+                .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painter = painterResource(id = icon),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(text = label, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+@Composable
+private fun HistoryRow(
+    summary: ConversationSummary,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit,
+    rowTag: String,
+    deleteTag: String,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .clickable(onClick = onOpen)
+                .padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp)
+                .testTag(rowTag),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = summary.title ?: stringResource(R.string.untitled_conversation),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = stringResource(R.string.turn_count, summary.turnCount),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onDelete, modifier = Modifier.testTag(deleteTag)) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_delete),
+                contentDescription = stringResource(R.string.delete_conversation),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+// endregion
+
+// region home
+
+/**
+ * The empty chat surface: the wordmark, the drawer, the talk control, and the
+ * hint that text and speech are both available. This is what the app shows on
+ * launch and after deleting the open conversation.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConversationHomeScreen(
+    list: ConversationListState,
+    actions: ConversationActions,
+    onOpenDrawer: () -> Unit,
+    onVoiceToggle: (() -> Unit)?,
+) {
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                title = { Wordmark() },
+                navigationIcon = { DrawerButton(onOpenDrawer) },
             )
         },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = actions::onNewConversation,
-                modifier = Modifier.testTag(ConversationTestTags.NEW_CONVERSATION),
+        bottomBar = {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        // One bottom inset: the keyboard when it is up, otherwise
+                        // the navigation bar (the Scaffold's body padding does not
+                        // cover the bottom bar itself).
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                        .padding(bottom = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(stringResource(R.string.new_conversation))
+                if (onVoiceToggle != null) {
+                    VoiceOrb(
+                        state = VoiceSessionState.IDLE,
+                        onClick = onVoiceToggle,
+                        size = 104.dp,
+                        caption = stringResource(R.string.voice_talk_caption),
+                        tag = ConversationTestTags.VOICE_TOGGLE,
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = actions::onNewConversation,
+                    modifier = Modifier.testTag(ConversationTestTags.NEW_CONVERSATION),
+                ) {
+                    Text(stringResource(R.string.home_new_chat))
+                }
             }
         },
     ) { innerPadding ->
@@ -173,32 +464,14 @@ fun ConversationListScreen(
             list.notice?.let { notice ->
                 NoticeBanner(notice = notice, onDismiss = actions::onDismissNotice)
             }
-            when {
-                list.isLoading -> {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (list.isLoading) {
                     LoadingRow(label = stringResource(R.string.loading_conversations))
-                }
-
-                list.isEmpty -> {
-                    EmptyHint(
-                        text = stringResource(R.string.empty_conversations),
-                        modifier = Modifier.padding(24.dp),
-                    )
-                }
-
-                else -> {
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(items = list.summaries, key = { it.id.value }) { summary ->
-                            ConversationRow(
-                                title = summary.title ?: stringResource(R.string.untitled_conversation),
-                                turnCount = summary.turnCount,
-                                onOpen = { actions.onOpenConversation(summary.id) },
-                                onDelete = { actions.onRequestDelete(summary.id) },
-                                rowTag = ConversationTestTags.conversationRow(summary.id.value),
-                                deleteTag = ConversationTestTags.deleteRow(summary.id.value),
-                            )
-                            HorizontalDivider()
-                        }
-                    }
+                } else {
+                    WelcomeHint()
                 }
             }
         }
@@ -206,31 +479,31 @@ fun ConversationListScreen(
 }
 
 @Composable
-private fun ConversationRow(
-    title: String,
-    turnCount: Int,
-    onOpen: () -> Unit,
-    onDelete: () -> Unit,
-    rowTag: String,
-    deleteTag: String,
-) {
-    ListItem(
-        headlineContent = {
-            Text(text = title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        },
-        supportingContent = { Text(stringResource(R.string.turn_count, turnCount)) },
-        trailingContent = {
-            TextButton(onClick = onDelete, modifier = Modifier.testTag(deleteTag)) {
-                Text(stringResource(R.string.delete))
-            }
-        },
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onOpen)
-                .testTag(rowTag),
-    )
+private fun WelcomeHint() {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = stringResource(R.string.home_greeting),
+            style = MaterialTheme.typography.headlineSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.home_hint),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = stringResource(R.string.home_examples),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+        )
+    }
 }
+
+// endregion
 
 /** One dialog: transcript plus the always-available manual composer. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -239,6 +512,7 @@ fun ConversationDialogScreen(
     dialog: ConversationDialogState,
     actions: ConversationActions,
     modifier: Modifier = Modifier,
+    onOpenDrawer: () -> Unit = {},
     onVoiceToggle: (() -> Unit)? = null,
 ) {
     val listState = rememberLazyListState()
@@ -260,6 +534,7 @@ fun ConversationDialogScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
@@ -269,23 +544,29 @@ fun ConversationDialogScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                 },
-                navigationIcon = {
-                    TextButton(onClick = actions::onBackToList, modifier = Modifier.testTag(ConversationTestTags.BACK)) {
-                        Text(stringResource(R.string.back))
-                    }
-                },
+                navigationIcon = { DrawerButton(onOpenDrawer) },
                 actions = {
-                    TextButton(
+                    IconButton(
                         onClick = { dialog.conversationId?.let(actions::onRequestDelete) },
                         enabled = dialog.conversationId != null,
                         modifier = Modifier.testTag(ConversationTestTags.DELETE_CONVERSATION),
                     ) {
-                        Text(stringResource(R.string.delete))
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_delete),
+                            contentDescription = stringResource(R.string.delete_conversation),
+                        )
                     }
                 },
             )
         },
-        bottomBar = { Composer(dialog = dialog, actions = actions, focusRequester = focusRequester, onVoiceToggle = onVoiceToggle) },
+        bottomBar = {
+            Composer(
+                dialog = dialog,
+                actions = actions,
+                focusRequester = focusRequester,
+                onVoiceToggle = onVoiceToggle,
+            )
+        },
     ) { innerPadding ->
         Column(
             modifier =
@@ -303,10 +584,17 @@ fun ConversationDialogScreen(
                 }
 
                 bubbles.isEmpty() -> {
-                    EmptyHint(
-                        text = stringResource(R.string.empty_dialog),
-                        modifier = Modifier.padding(24.dp),
-                    )
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.empty_dialog),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
 
                 else -> {
@@ -316,9 +604,20 @@ fun ConversationDialogScreen(
                             Modifier
                                 .fillMaxSize()
                                 .testTag(ConversationTestTags.TRANSCRIPT),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         items(items = bubbles, key = { it.key }) { bubble ->
-                            BubbleRow(bubble)
+                            val visibleState =
+                                remember(bubble.key) {
+                                    MutableTransitionState(false).apply { targetState = true }
+                                }
+                            AnimatedVisibility(
+                                visibleState = visibleState,
+                                enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { it / 4 },
+                            ) {
+                                BubbleRow(bubble)
+                            }
                         }
                     }
                 }
@@ -328,22 +627,38 @@ fun ConversationDialogScreen(
 }
 
 @Composable
+private fun DrawerButton(onOpenDrawer: () -> Unit) {
+    val label = stringResource(R.string.drawer_open)
+    IconButton(
+        onClick = onOpenDrawer,
+        modifier =
+            Modifier
+                .testTag(ConversationTestTags.DRAWER)
+                .semantics { contentDescription = label },
+    ) {
+        Icon(painter = painterResource(id = R.drawable.ic_menu), contentDescription = null)
+    }
+}
+
+// region composer
+
+@Composable
 private fun Composer(
     dialog: ConversationDialogState,
     actions: ConversationActions,
     focusRequester: FocusRequester,
     onVoiceToggle: (() -> Unit)? = null,
 ) {
-    Surface(tonalElevation = 3.dp) {
+    Surface(color = MaterialTheme.colorScheme.surface) {
         Column(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .imePadding()
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             if (onVoiceToggle != null && dialog.voiceAvailable) {
-                VoiceRow(dialog = dialog, onVoiceToggle = onVoiceToggle)
+                VoiceStatusRow(dialog = dialog, onVoiceToggle = onVoiceToggle)
             }
             if (dialog.isGenerating) {
                 val generatingLabel = stringResource(R.string.generating)
@@ -354,9 +669,14 @@ private fun Composer(
                                 .size(16.dp)
                                 .semantics { contentDescription = generatingLabel },
                         strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = generatingLabel, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        text = generatingLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Spacer(modifier = Modifier.weight(1f))
                     TextButton(onClick = actions::onCancel, modifier = Modifier.testTag(ConversationTestTags.CANCEL)) {
                         Text(stringResource(R.string.cancel))
@@ -376,16 +696,43 @@ private fun Composer(
                             .weight(1f)
                             .focusRequester(focusRequester)
                             .testTag(ConversationTestTags.COMPOSER),
-                    label = { Text(stringResource(R.string.message_label)) },
+                    placeholder = {
+                        Text(
+                            text = stringResource(R.string.message_label),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    shape = RoundedCornerShape(22.dp),
                     maxLines = 4,
                 )
+                if (onVoiceToggle != null && dialog.voiceAvailable) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    VoiceOrb(
+                        state = dialog.voiceState,
+                        onClick = onVoiceToggle,
+                        size = 52.dp,
+                        caption = null,
+                        tag = ConversationTestTags.VOICE_TOGGLE,
+                    )
+                }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = actions::onSend,
                     enabled = dialog.canSend,
-                    modifier = Modifier.testTag(ConversationTestTags.SEND),
+                    shape = CircleShape,
+                    contentPadding = PaddingValues(0.dp),
+                    modifier =
+                        Modifier
+                            .size(52.dp)
+                            .testTag(ConversationTestTags.SEND),
                 ) {
-                    Text(stringResource(R.string.send))
+                    val sendLabel = stringResource(R.string.send_message)
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_send),
+                        contentDescription = sendLabel,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
             }
         }
@@ -393,24 +740,32 @@ private fun Composer(
 }
 
 /**
- * Voice control row (M24): shows the live voice-session state and starts/stops
- * the loop. It is rendered only when the app attached a voice session factory, so
- * the text-only path is unchanged.
+ * Live voice state (M24) for the open dialog: the orb caption states what the
+ * loop is doing while the orb itself starts/stops hands-free capture.
  */
 @Composable
-private fun VoiceRow(
+private fun VoiceStatusRow(
     dialog: ConversationDialogState,
     onVoiceToggle: () -> Unit,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
             text = stringResource(dialog.voiceState.voiceStatusRes()),
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(modifier = Modifier.weight(1f))
-        TextButton(onClick = onVoiceToggle, modifier = Modifier.testTag(ConversationTestTags.VOICE_TOGGLE)) {
-            Text(stringResource(if (dialog.isVoiceActive) R.string.stop_voice else R.string.start_voice))
+        TextButton(onClick = onVoiceToggle) {
+            Text(
+                text =
+                    stringResource(
+                        if (dialog.isVoiceActive) R.string.stop_voice else R.string.start_voice,
+                    ),
+                style = MaterialTheme.typography.labelMedium,
+            )
         }
     }
 }
@@ -424,49 +779,164 @@ private fun VoiceSessionState.voiceStatusRes(): Int =
         VoiceSessionState.IDLE, VoiceSessionState.STOPPED -> R.string.voice_ready
     }
 
+/**
+ * Voice orb: the talk control, in the brand orange, reading the live session
+ * state through intensity and colour. Tapping starts/stops the voice loop.
+ */
+@Composable
+private fun VoiceOrb(
+    state: VoiceSessionState,
+    onClick: () -> Unit,
+    size: Dp,
+    caption: String?,
+    tag: String,
+) {
+    val (core, glow) = orbColors(state)
+    val transition = rememberInfiniteTransition(label = "orb")
+    val breath by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(3200), RepeatMode.Reverse),
+        label = "orb-breath",
+    )
+    val active = state != VoiceSessionState.IDLE && state != VoiceSessionState.STOPPED
+    val bloom = if (active) 1f else 0.5f + breath * 0.14f
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier =
+                Modifier
+                    .size(size)
+                    .clip(CircleShape)
+                    .clickable(onClick = onClick)
+                    .testTag(tag),
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val center = Offset(this.size.width / 2f, this.size.height / 2f)
+                val maxRadius = this.size.minDimension / 2f
+                drawCircle(
+                    brush =
+                        Brush.radialGradient(
+                            colors = listOf(core.copy(alpha = 0.22f), Color.Transparent),
+                            center = center,
+                            radius = maxRadius,
+                        ),
+                    radius = maxRadius,
+                    center = center,
+                )
+                val coreRadius = maxRadius * 0.52f * bloom + maxRadius * 0.24f
+                drawCircle(
+                    brush =
+                        Brush.radialGradient(
+                            colors = listOf(glow.copy(alpha = 0.95f), core.copy(alpha = 0.7f)),
+                            center = center,
+                            radius = coreRadius,
+                        ),
+                    radius = coreRadius,
+                    center = center,
+                )
+                val ringRadius = maxRadius * 0.78f
+                drawCircle(
+                    color = core.copy(alpha = 0.8f),
+                    radius = ringRadius,
+                    center = center,
+                    style = Stroke(width = maxRadius * 0.045f),
+                )
+            }
+        }
+        caption?.let { text ->
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private fun orbColors(state: VoiceSessionState): Pair<Color, Color> =
+    when (state) {
+        VoiceSessionState.IDLE, VoiceSessionState.STOPPED -> OrbIdle
+        VoiceSessionState.LISTENING -> OrbListening
+        VoiceSessionState.WORKING -> OrbWorking
+        VoiceSessionState.SPEAKING -> OrbSpeaking
+        VoiceSessionState.FAILED -> OrbUnavailable
+    }
+
+// endregion
+
+// region transcript
+
 @Composable
 private fun BubbleRow(bubble: Bubble) {
     val isUser = bubble.role == BubbleRole.USER
     Column(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
     ) {
         Surface(
-            shape = MaterialTheme.shapes.medium,
+            shape =
+                if (isUser) {
+                    RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp)
+                } else {
+                    RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp)
+                },
             color =
                 if (isUser) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
                     MaterialTheme.colorScheme.surfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
+            // A muted bubble surface must not mute the text with it: the bubble
+            // body keeps full contrast in both roles.
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border =
+                if (isUser) {
+                    null
+                } else {
+                    BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                 },
             modifier = Modifier.widthIn(max = 320.dp),
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
                 if (bubble.provisional) {
                     Text(
                         text = stringResource(R.string.provisional_label),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
                 }
                 if (bubble.text.isNotEmpty()) {
-                    Text(text = bubble.text, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = bubble.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = if (isUser) FontWeight.Medium else FontWeight.Normal,
+                    )
                 }
                 bubble.status?.let { status ->
-                    Spacer(modifier = Modifier.size(4.dp))
+                    if (bubble.text.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
                     Text(
                         text = dialogStatusText(status),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = statusColor(status),
                     )
                 }
             }
         }
     }
 }
+
+@Composable
+private fun statusColor(status: BubbleStatus): Color =
+    when (status) {
+        BubbleStatus.FAILED -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.primary
+    }
 
 @Composable
 private fun NoticeBanner(
@@ -508,11 +978,15 @@ private fun NoticeBanner(
  */
 @Composable
 private fun ProviderDisclosureBanner(provider: ProviderDisclosure) {
+    val shape = RoundedCornerShape(12.dp)
     Column(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .clip(shape)
+                .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         if (!provider.hasSelection) {
             Text(
@@ -526,9 +1000,11 @@ private fun ProviderDisclosureBanner(provider: ProviderDisclosure) {
         Text(
             text = stringResource(R.string.disclosure_provider_model, provider.providerDisplayName!!, provider.modelId!!),
             style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.testTag(ConversationTestTags.PROVIDER_DISCLOSURE),
         )
         if (provider.destination != null) {
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = stringResource(R.string.disclosure_requests_go_to, provider.destination),
                 style = MaterialTheme.typography.bodySmall,
@@ -536,6 +1012,7 @@ private fun ProviderDisclosureBanner(provider: ProviderDisclosure) {
             )
         }
         if (provider.remoteTransfer) {
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = stringResource(R.string.disclosure_remote_transfer),
                 style = MaterialTheme.typography.bodySmall,
@@ -544,6 +1021,7 @@ private fun ProviderDisclosureBanner(provider: ProviderDisclosure) {
             )
         }
         provider.retentionNotice?.let { note ->
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = stringResource(R.string.disclosure_retention, note),
                 style = MaterialTheme.typography.bodySmall,
@@ -552,6 +1030,7 @@ private fun ProviderDisclosureBanner(provider: ProviderDisclosure) {
             )
         }
         if (provider.toolExecutionOnServer) {
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = stringResource(R.string.disclosure_tool_execution),
                 style = MaterialTheme.typography.bodySmall,
@@ -576,21 +1055,8 @@ private fun LoadingRow(label: String) {
     ) {
         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
         Spacer(modifier = Modifier.width(12.dp))
-        Text(text = label)
+        Text(text = label, style = MaterialTheme.typography.bodyMedium)
     }
-}
-
-@Composable
-private fun EmptyHint(
-    text: String,
-    modifier: Modifier = Modifier,
-) {
-    Text(
-        text = text,
-        modifier = modifier.fillMaxWidth(),
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
 }
 
 @Composable
@@ -601,6 +1067,7 @@ private fun DeleteConversationDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
         title = { Text(stringResource(R.string.delete_dialog_title)) },
         text = {
             Text(
@@ -613,7 +1080,7 @@ private fun DeleteConversationDialog(
         },
         confirmButton = {
             TextButton(onClick = onConfirm, modifier = Modifier.testTag(ConversationTestTags.CONFIRM_DELETE)) {
-                Text(stringResource(R.string.delete))
+                Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
             }
         },
         dismissButton = {
@@ -623,6 +1090,8 @@ private fun DeleteConversationDialog(
         },
     )
 }
+
+// endregion
 
 // region bubble model
 
@@ -720,7 +1189,7 @@ private fun ErrorCode.messageRes(): Int =
 
 @Preview(showBackground = true)
 @Composable
-private fun ConversationListPreview() {
+private fun ConversationHomePreview() {
     VoiceAgentTheme {
         ConversationApp(
             state =

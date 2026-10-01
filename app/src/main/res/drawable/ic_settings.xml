@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings glyph: three sliders with handles (the Material "tune" shape,
+     drawn with rectangles only so the path data stays exact). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3,6h18v2H3z M14,4h4v6h-4z M3,11h18v2H3z M7,9h4v6h-4z M3,16h18v2H3z M14,14h4v6h-4z" />
+</vector>

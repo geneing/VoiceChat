@@ -35,11 +35,37 @@ fallback. See [text-first-slice.md](./text-first-slice.md).
 
 ## Screens
 
-- **Conversation list** (`ConversationListScreen`): a new-conversation control,
-  the persisted summaries (newest first), reopen, and a per-row delete control.
+The chat window is the primary surface; history and Settings live in a modal
+navigation drawer behind the hamburger (`ModalNavigationDrawer`), the
+ChatGPT/Gemini pattern, instead of on a separate list screen. Both are still
+driven only by `ConversationUiState`/`ConversationActions`: the drawer is
+rendering, not a new navigation state.
+
+- **Home** (`ConversationHomeScreen`): the empty chat shown on launch and after
+  deleting the open conversation — the wordmark, the voice orb when the app
+  attached a voice factory, the "start a conversation" control, and the hint
+  that text and speech are both available.
 - **Dialog** (`ConversationDialogScreen`): the transcript plus the
-  always-available manual composer, with a back control and a delete action.
-- **Delete confirmation** (`DeleteConversationDialog`): shared by both screens.
+  always-available manual composer and a delete action; the orb sits in the
+  composer and reports the live voice state.
+- **Drawer** (`ConversationDrawer`): "New chat", the persisted summaries
+  (newest first) with a reopen target and a per-row delete control, and the
+  Settings entry pinned at the bottom. Selecting an entry closes the drawer.
+- **Delete confirmation** (`DeleteConversationDialog`): shared by the drawer and
+  the dialog.
+
+## Visual language
+
+The theme follows the neighbouring speech-android (VoxLLM) app: a warm
+orange-on-warm-surface palette in place of the earlier green one (platform
+dynamic colour is off by default; `VoiceAgentTheme(dynamicColor = true)` opts
+back in), sans for conversation text, and the monospace face for machine-ish
+metadata (drawer counts, bubble state labels, disclosure lines). Assistant
+bubbles are warm surfaces with a hairline border, user bubbles a muted surface,
+both with an asymmetric corner; the voice orb reads its state through intensity
+and colour (idle orange, listening red, working amber, speaking green,
+unavailable grey). The launcher icon and the pre-Compose window theme use the
+same palette.
 
 Opening a conversation loads it, runs
 `Conversation.reconcileAfterProcessDeath()` (M05), writes the reconciled state
@@ -135,9 +161,11 @@ credentials):
   switching, deletion, process-restored history, the shared text/voice path,
   trace routing, and blank-input rejection.
 - `ConversationAppUiTest` runs Compose under **Robolectric** and covers text
-  send, correction, streaming render, conversation switching, deletion (list and
-  dialog), process-restored history across a state-holder restart, accessible
-  loading, the unconfigured-model error state, and composer enablement.
+  send, correction, streaming render, conversation switching and deletion
+  through the history drawer, process-restored history across a state-holder
+  restart, accessible loading, the unconfigured-model error state, and composer
+  enablement. The drawer is composed while it is closed, so it deliberately
+  carries no test tag the main surface also uses.
 - `ConversationViewModelTest` additionally covers the M12 stream-consumer
   behavior: a terminal-less stream persists as a failure, a failed partial keeps
   its delivered prefix and typed reason, and usage/end-reason reach the trace

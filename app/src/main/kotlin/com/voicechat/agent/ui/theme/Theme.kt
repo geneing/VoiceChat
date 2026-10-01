@@ -11,44 +11,57 @@ import androidx.compose.ui.platform.LocalContext
 
 private val LightColors =
     lightColorScheme(
-        primary = Green40,
-        secondary = GreenGrey40,
-        tertiary = Sand40,
+        primary = PrimaryLight,
+        onPrimary = SurfaceLight,
+        primaryContainer = PrimaryContainerLight,
+        onPrimaryContainer = OnPrimaryContainerLight,
+        background = BackgroundLight,
+        onBackground = OnBackgroundLight,
+        surface = SurfaceLight,
+        onSurface = OnBackgroundLight,
+        surfaceVariant = SurfaceVariantLight,
+        onSurfaceVariant = OnSurfaceVariantLight,
+        outline = OutlineLight,
+        error = ErrorLight,
     )
 
 private val DarkColors =
     darkColorScheme(
-        primary = Green80,
-        secondary = GreenGrey80,
-        tertiary = Sand80,
+        primary = PrimaryDark,
+        onPrimary = BackgroundDark,
+        primaryContainer = PrimaryContainerDark,
+        onPrimaryContainer = OnPrimaryContainerDark,
+        background = BackgroundDark,
+        onBackground = OnBackgroundDark,
+        surface = SurfaceDark,
+        onSurface = OnBackgroundDark,
+        surfaceVariant = SurfaceVariantDark,
+        onSurfaceVariant = OnSurfaceVariantDark,
+        outline = OutlineDark,
+        error = ErrorDark,
     )
 
 /**
- * Material 3 theme for the app.
+ * Brand theme for the app: a warm orange-on-warm-surface scheme in place of the
+ * earlier green one, following the speech-android (VoxLLM) visual language.
  *
- * Dynamic color is on by default; `minSdk` is 31, so the platform dynamic-color
- * APIs are always available and no version gate is needed.
+ * Platform dynamic colour is off by default so the brand scheme is what ships;
+ * pass `dynamicColor = true` to opt a build (or a preview) back into the
+ * wallpaper-derived colours. `minSdk` is 31, so the dynamic-colour APIs need no
+ * version gate.
  */
 @Composable
 fun VoiceAgentTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val colorScheme =
         when {
-            dynamicColor -> {
-                val context = LocalContext.current
-                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-            }
-
-            darkTheme -> {
-                DarkColors
-            }
-
-            else -> {
-                LightColors
-            }
+            dynamicColor && darkTheme -> dynamicDarkColorScheme(LocalContext.current)
+            dynamicColor -> dynamicLightColorScheme(LocalContext.current)
+            darkTheme -> DarkColors
+            else -> LightColors
         }
 
     MaterialTheme(

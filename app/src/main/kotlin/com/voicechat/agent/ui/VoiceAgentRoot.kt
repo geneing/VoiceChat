@@ -28,7 +28,7 @@ import kotlinx.coroutines.flow.Flow
  * depends on Room, a speech SDK, or a specific LLM provider.
  *
  * When a [settingsFactory] is supplied the root also hosts the M22
- * [SettingsScreen], reachable from the conversation list. The factory is built at
+ * [SettingsScreen], reachable from the navigation drawer. The factory is built at
  * the app boundary from the settings store, the provider capability registry, and
  * the credential store, so no platform type leaks into the screens.
  */

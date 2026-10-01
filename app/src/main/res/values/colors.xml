@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Warm brand surfaces shared by the window theme and the launcher icon,
+         matching the Compose colour scheme in ui/theme/Color.kt. -->
+    <color name="brand_background">#141210</color>
+    <!-- The launcher card behind the orange mark: the brand's warm off-white,
+         so the orange reads as the brand in both system light and dark themes. -->
+    <color name="ic_launcher_background">#F7F4EF</color>
+</resources>

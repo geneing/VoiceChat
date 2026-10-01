@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Placeholder launcher glyph: a simple microphone silhouette drawn inside the
-    adaptive-icon safe zone. Replace with the final brand asset before release.
+    Launcher mark: a warm five-bar voice waveform in the brand orange, drawn
+    inside the adaptive-icon safe zone. Replaces the earlier green
+    microphone-on-green placeholder.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -9,9 +10,18 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,32a8,8 0 0,1 8,8v12a8,8 0 0,1 -16,0v-12a8,8 0 0,1 8,-8z" />
+        android:fillColor="#F1862C"
+        android:pathData="M30,48h6v12h-6z" />
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M40,52h4v2a10,10 0 0,0 20,0v-2h4v2a14,14 0 0,1 -12,13.85v6.15h8v4h-20v-4h8v-6.15a14,14 0 0,1 -12,-13.85z" />
+        android:fillColor="#F49B54"
+        android:pathData="M42,40h6v28h-6z" />
+    <path
+        android:fillColor="#F1862C"
+        android:pathData="M54,32h6v44h-6z" />
+    <path
+        android:fillColor="#F49B54"
+        android:pathData="M66,40h6v28h-6z" />
+    <path
+        android:fillColor="#F1862C"
+        android:pathData="M78,48h6v12h-6z" />
 </vector>

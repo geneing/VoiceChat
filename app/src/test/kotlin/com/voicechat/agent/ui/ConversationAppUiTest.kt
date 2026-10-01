@@ -30,11 +30,11 @@ import com.voicechat.agent.domain.TurnPhase
 import com.voicechat.agent.domain.UserTurn
 import com.voicechat.agent.fake.FakeLanguageModel
 import com.voicechat.agent.fake.InMemoryConversationRepository
-import com.voicechat.agent.ui.ConversationTestTags.BACK
 import com.voicechat.agent.ui.ConversationTestTags.CANCEL
 import com.voicechat.agent.ui.ConversationTestTags.COMPOSER
 import com.voicechat.agent.ui.ConversationTestTags.CONFIRM_DELETE
 import com.voicechat.agent.ui.ConversationTestTags.DELETE_CONVERSATION
+import com.voicechat.agent.ui.ConversationTestTags.DRAWER
 import com.voicechat.agent.ui.ConversationTestTags.LOADING
 import com.voicechat.agent.ui.ConversationTestTags.NEW_CONVERSATION
 import com.voicechat.agent.ui.ConversationTestTags.RETRY
@@ -127,6 +127,12 @@ class ConversationAppUiTest {
         composeRule.waitForIdle()
     }
 
+    /** Opens the history/settings drawer, which is where persisted conversations live. */
+    private fun openDrawer() {
+        composeRule.onNodeWithTag(DRAWER).performClick()
+        composeRule.waitForIdle()
+    }
+
     private fun typeMessage(text: String) {
         composeRule.onNodeWithTag(COMPOSER).performClick()
         composeRule.onNodeWithTag(COMPOSER).performTextInput(text)
@@ -202,19 +208,20 @@ class ConversationAppUiTest {
     }
 
     @Test
-    fun switchingConversationsShowsEachHistoryAndBackReturnsToTheList() {
+    fun switchingConversationsFromTheDrawerShowsEachHistory() {
         runBlocking {
             repository.save(testConversation("c1", updatedAt = 100L, title = "First talk", turns = listOf(testUserTurn("u1", "alpha"))))
             repository.save(testConversation("c2", updatedAt = 200L, title = "Second talk", turns = listOf(testUserTurn("u2", "beta"))))
         }
         setConversationApp()
 
+        openDrawer()
         composeRule.onNodeWithTag(conversationRow("c1")).performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("alpha").assertIsDisplayed()
 
-        composeRule.onNodeWithTag(BACK).performClick()
-        composeRule.waitForIdle()
+        // The drawer closes on selection, so the second switch reopens it.
+        openDrawer()
         composeRule.onNodeWithTag(conversationRow("c2")).performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("beta").assertIsDisplayed()
@@ -227,6 +234,7 @@ class ConversationAppUiTest {
         }
         setConversationApp()
 
+        openDrawer()
         composeRule.onNodeWithTag(deleteRow("c1")).performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Delete conversation?").assertIsDisplayed()
@@ -255,6 +263,7 @@ class ConversationAppUiTest {
         }
         setConversationApp()
 
+        openDrawer()
         composeRule.onNodeWithTag(conversationRow("c1")).performClick()
         composeRule.waitForIdle()
 
@@ -277,6 +286,7 @@ class ConversationAppUiTest {
 
         // A fresh state holder over the same repository stands in for a restart.
         restartWithANewViewModel()
+        openDrawer()
         composeRule.onNodeWithTag(conversationRow(conversationId.value)).performClick()
         composeRule.waitForIdle()
 
@@ -322,6 +332,7 @@ class ConversationAppUiTest {
             repository.save(testConversation("c1", updatedAt = 100L, title = "Open talk", turns = listOf(testUserTurn("u1", "hello"))))
         }
         setConversationApp()
+        openDrawer()
         composeRule.onNodeWithTag(conversationRow("c1")).performClick()
         composeRule.waitForIdle()
 
