@@ -27,6 +27,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -120,6 +121,64 @@ class VoiceLoopUiIntegrationTest {
         }
 
     @Test
+    fun aStoppedSessionsLateCallbackIsIgnored() =
+        runTest {
+            val viewModel = newViewModel(InMemoryConversationRepository(), testScheduler)
+            lateinit var controller: FakeVoiceSessionController
+            viewModel.attachVoiceSession(
+                VoiceSessionFactory { listener, _ ->
+                    FakeVoiceSessionController(listener).also { controller = it }
+                },
+            )
+            viewModel.onNewConversation()
+            viewModel.onStartVoice()
+            advanceUntilIdle()
+
+            viewModel.onStopVoice()
+            // A callback that arrives after the session ended must not mutate the
+            // dialog for a newer state (no stale events, CODE_REVIEW P1, R-0224).
+            controller.provisional("late text")
+            controller.assistantText("late reply")
+            assertNull(
+                viewModel.uiState.value.dialog!!
+                    .provisionalUserText,
+            )
+            assertEquals(
+                "",
+                viewModel.uiState.value.dialog!!
+                    .liveAssistantText,
+            )
+
+            // A late session-state callback from the stopped session must also be
+            // dropped instead of resurrecting a stale voice state.
+            controller.sessionState(VoiceSessionState.SPEAKING)
+            assertEquals(
+                VoiceSessionState.IDLE,
+                viewModel.uiState.value.dialog!!
+                    .voiceState,
+            )
+        }
+
+    @Test
+    fun aSecondVoiceStartIsRefusedWhileOneIsActive() =
+        runTest {
+            val viewModel = newViewModel(InMemoryConversationRepository(), testScheduler)
+            val controllers = mutableListOf<FakeVoiceSessionController>()
+            viewModel.attachVoiceSession(
+                VoiceSessionFactory { listener, _ ->
+                    FakeVoiceSessionController(listener).also { controllers += it }
+                },
+            )
+            viewModel.onNewConversation()
+            viewModel.onStartVoice()
+            advanceUntilIdle()
+            viewModel.onStartVoice()
+            advanceUntilIdle()
+
+            assertEquals(1, controllers.size)
+        }
+
+    @Test
     fun withoutAFactoryVoiceStaysUnavailableAndStartIsANoOp() =
         runTest {
             val viewModel = newViewModel(InMemoryConversationRepository(), testScheduler)
@@ -162,6 +221,8 @@ class VoiceLoopUiIntegrationTest {
         }
 
         fun provisional(text: String) = listener.onProvisionalTranscript(TurnId("v1"), text)
+
+        fun sessionState(state: VoiceSessionState) = listener.onSessionState(state)
 
         fun assistantText(text: String) = listener.onAssistantText(TurnId("v1"), text)
 
