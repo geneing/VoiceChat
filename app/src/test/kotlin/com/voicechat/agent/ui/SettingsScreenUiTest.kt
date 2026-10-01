@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.voicechat.agent.contracts.ModelAvailability
+import com.voicechat.agent.contracts.ModelCatalogState
 import com.voicechat.agent.contracts.ModelDescriptor
 import com.voicechat.agent.contracts.ModelRuntime
 import com.voicechat.agent.contracts.ModelTask
@@ -180,6 +181,22 @@ class SettingsScreenUiTest {
 
         composeRule.onNodeWithTag(SettingsTestTags.DESTINATION_FIELD).assertExists()
         composeRule.onNodeWithTag(SettingsTestTags.DESTINATION_ERROR).assertExists()
+    }
+
+    @Test
+    fun anEmptyModelCatalogShowsAnExplicitReasonAndARefreshAction() {
+        val llm =
+            LlmSettingsSection(
+                selectedProviderId = KnownProviders.OPENAI,
+                providerDisplayName = "OpenAI",
+                models = emptyList(),
+                modelCatalogState = ModelCatalogState.Empty("No models are wired for this provider yet."),
+            )
+        render(baseState().copy(llm = llm))
+
+        composeRule.onNodeWithTag(SettingsTestTags.MODEL_CATALOG_NOTICE).assertExists()
+        composeRule.onNodeWithText("Refresh catalog").assertExists()
+        composeRule.onNodeWithTag(SettingsTestTags.RETENTION_NOTICE).assertDoesNotExist()
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.voicechat.agent.settings
 
 import com.voicechat.agent.contracts.ModelAvailability
+import com.voicechat.agent.contracts.ModelCatalogState
 import com.voicechat.agent.credentials.CredentialStatus
 import com.voicechat.agent.domain.ConnectionState
 import com.voicechat.agent.domain.ErrorCode
@@ -72,6 +73,13 @@ data class LlmSettingsSection(
     val selectedProviderId: ProviderId? = null,
     val providerDisplayName: String? = null,
     val models: List<SelectableOption<ModelAvailability>> = emptyList(),
+    /**
+     * The catalog state for [models] (M27, R-0102). [ModelCatalogState.Available]
+     * means a model can be selected; [ModelCatalogState.Empty]/[Failed] carry the
+     * reason and recovery action the UI shows instead of a falsely "configured"
+     * provider.
+     */
+    val modelCatalogState: ModelCatalogState = ModelCatalogState.INITIAL,
     val selectedModelId: ModelId? = null,
     val authMethods: List<SelectableOption<AuthMethod>> = emptyList(),
     val selectedAuthMethod: AuthMethod? = null,

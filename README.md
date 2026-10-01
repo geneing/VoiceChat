@@ -192,7 +192,12 @@ and no performance budget is fixed. M26 (release hardening) is in progress: the
 voice loop bounds a stalled recognizer, surfaces a typed text-only state when TTS
 is unavailable, and honors the persisted STT mode; the transport bounds
 in-flight provider calls; and app-scoped dependencies live in an `AppContainer`
-owned by the `Application` instead of being rebuilt per activity.
+owned by the `Application` instead of being rebuilt per activity. M27 closes the
+code-review follow-ups: the ViewModel serializes voice-session and generation
+state, model-catalog availability is a first-class state with a refresh path, and
+the settled/committed turn is appended or updated instead of rewriting the whole
+transcript. Tests pass as `:app:testDebugUnitTest`; the exact count is in the
+test report, not hand-maintained here.
 
 **Status vocabulary.** "Implemented in source" ≠ "host-tested" ≠ "compiled for
 device" ≠ "executed on Pixel 10". The `androidTest` sources compile but the

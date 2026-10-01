@@ -339,7 +339,7 @@ class TurnOrchestrator(
             )
         val span = trace.start(DiagnosticStage.PERSISTENCE)
         return try {
-            repository.save(withUser)
+            repository.saveTurn(withUser, request.userTurn)
             span.succeed()
             observer.onUserTurnCommitted(withUser)
             withUser
@@ -374,7 +374,7 @@ class TurnOrchestrator(
             )
         val span = trace.start(DiagnosticStage.PERSISTENCE)
         return try {
-            repository.save(updated)
+            repository.saveTurn(updated, assistant)
             span.succeed()
             TurnResult(
                 conversation = updated,

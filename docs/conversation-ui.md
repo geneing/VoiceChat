@@ -164,5 +164,16 @@ are recorded in `gradle/libs.versions.toml`.
   consumption, late-event rejection, delivery accounting, and persistence into
   `orchestration.TurnOrchestrator`/`TurnStateMachine`, and this holder only maps
   the terminal result to UI state. See [orchestration.md](./orchestration.md).
+- **Session/generation state is serialized (M27, CODE_REVIEW P1/R-0224).** The
+  voice-session lifecycle fields and the one-generation slot are written from the
+  coordinator's, the orchestrator's, and the UI's coroutines, so they are guarded
+  by a single lock and claimed/checked/released together (`claimGeneration`,
+  `discardActiveGeneration`, the voice-session token). Each voice callback carries
+  its session token through `SessionVoiceListener`, so a late callback from a
+  stopped session never updates the dialog for a newer one. A long-lived actor
+  would remove the lock entirely; the lock is the smaller, testable step that
+  closes the check-and-start and stale-callback races now
+  (`VoiceLoopUiIntegrationTest.aStoppedSessionsLateCallbackIsIgnored`,
+  `aSecondVoiceStartIsRefusedWhileOneIsActive`).
 - No voice: STT/TTS and barge-in arrive in M07–M11 and M21–M24. The provisional
   transcript seam and the single turn path are in place for them.

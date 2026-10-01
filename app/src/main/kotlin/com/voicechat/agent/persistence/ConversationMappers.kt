@@ -34,7 +34,7 @@ internal fun Conversation.toEntity(): ConversationEntity =
 internal fun Conversation.toTurnEntities(): List<TurnEntity> =
     turns.mapIndexed { position, turn -> turn.toEntity(conversationId = id.value, position = position) }
 
-private fun Turn.toEntity(
+internal fun Turn.toEntity(
     conversationId: String,
     position: Int,
 ): TurnEntity =

@@ -218,6 +218,22 @@ class ConversationViewModel(
     /** The job running the active voice session. */
     private var voiceJob: Job? = null
 
+    /** Identity token of the active voice session; stale callbacks carry an old token. */
+    private var activeVoiceSession: Any? = null
+
+    /**
+     * Guards the session lifecycle fields ([voiceController], [voiceJob],
+     * [activeVoiceSession], [generationJob], [closed]) and the shared
+     * check-and-start decisions (CODE_REVIEW P1, R-0224).
+     *
+     * The callbacks arrive on the coordinator's / orchestrator's coroutines, the
+     * UI actions on the main thread, and the teardown on the ViewModel scope, so a
+     * plain field read there is a data race. The lock is held only for short
+     * field reads/writes and the deterministic state decisions they protect —
+     * never across a suspension or a UI/dialog callback.
+     */
+    private val voiceLock = Any()
+
     /**
      * Attaches the app-boundary [VoiceSessionFactory].
      *
@@ -237,7 +253,15 @@ class ConversationViewModel(
     /** Starts a voice session over the open conversation (or a fresh one). */
     fun onStartVoice() {
         val factory = voiceFactory ?: return
-        if (voiceJob?.isActive == true || generationJob?.isActive == true) return
+        // One serialized decision: a voice session must not start while another
+        // session or a generation is active. Checking and claiming under the same
+        // lock removes the check-and-start race between the text and voice entry
+        // points (CODE_REVIEW P1, R-0224).
+        val sessionToken =
+            synchronized(voiceLock) {
+                if (activeVoiceSession != null || generationJob?.isActive == true) return
+                Any().also { activeVoiceSession = it }
+            }
         refreshDisclosure()
         val now = wallClock()
         val base =
@@ -263,9 +287,9 @@ class ConversationViewModel(
                     ),
             )
         }
-        val controller = factory.create(this, this)
-        voiceController = controller
-        voiceJob =
+        val controller = factory.create(SessionVoiceListener(sessionToken, this), this)
+        synchronized(voiceLock) { voiceController = controller }
+        val job =
             coroutineScope().launch(dispatcher) {
                 try {
                     controller.run(base)
@@ -277,18 +301,33 @@ class ConversationViewModel(
                         state.copy(dialog = state.dialog?.copy(notice = failure.toNotice()))
                     }
                 } finally {
-                    voiceController = null
-                    _uiState.update { state ->
-                        state.copy(
-                            dialog =
-                                state.dialog?.copy(
-                                    voiceState = VoiceSessionState.IDLE,
-                                    provisionalUserText = null,
-                                ),
-                        )
+                    // Only the session that still owns the token may clear it; a
+                    // superseded session's late completion is ignored.
+                    val wasActive =
+                        synchronized(voiceLock) {
+                            if (activeVoiceSession !== sessionToken) {
+                                false
+                            } else {
+                                activeVoiceSession = null
+                                voiceController = null
+                                voiceJob = null
+                                true
+                            }
+                        }
+                    if (wasActive) {
+                        _uiState.update { state ->
+                            state.copy(
+                                dialog =
+                                    state.dialog?.copy(
+                                        voiceState = VoiceSessionState.IDLE,
+                                        provisionalUserText = null,
+                                    ),
+                            )
+                        }
                     }
                 }
             }
+        synchronized(voiceLock) { voiceJob = job }
     }
 
     /** Stops the active voice session and returns the dialog to the idle state. */
@@ -308,10 +347,19 @@ class ConversationViewModel(
     }
 
     private fun discardVoiceSession() {
-        voiceController?.stop()
-        voiceController = null
-        voiceJob?.cancel()
-        voiceJob = null
+        // Detach the session identity first so an in-flight callback for the old
+        // token is ignored before the controller is stopped (no stale events).
+        val (controller, job) =
+            synchronized(voiceLock) {
+                activeVoiceSession = null
+                val c = voiceController
+                voiceController = null
+                val j = voiceJob
+                voiceJob = null
+                c to j
+            }
+        controller?.stop()
+        job?.cancel()
     }
 
     /** Resolves the adapter/identity for the next voice turn from the persisted selection. */
@@ -587,8 +635,16 @@ class ConversationViewModel(
     }
 
     override fun onCancel() {
-        val job = generationJob ?: return
-        if (!job.isActive) return
+        val job =
+            synchronized(voiceLock) {
+                val current = generationJob
+                if (current?.isActive == true) {
+                    generationJob = null
+                    current
+                } else {
+                    null
+                }
+            } ?: return
         AppLog.d { "ui: cancel requested" }
         // Optimistic feedback; the orchestration persists the interrupted turn and
         // then finalizes the state with the persisted turns.
@@ -597,12 +653,11 @@ class ConversationViewModel(
                 dialog = state.dialog?.copy(phase = TurnPhase.CANCELLED, notice = ConversationNotice.RequestCancelled),
             )
         }
-        generationJob = null
         job.cancel()
     }
 
     override fun onRetry() {
-        if (generationJob?.isActive == true) return
+        if (!claimGeneration()) return
         val conversation = currentConversation ?: return
         val lastUserIndex = conversation.turns.indexOfLast { it is UserTurn }
         if (lastUserIndex < 0) return
@@ -621,7 +676,7 @@ class ConversationViewModel(
                     ),
             )
         }
-        generationJob =
+        val job =
             coroutineScope().launch(dispatcher) {
                 // Drop the failed/cancelled reply (and any later turns) before re-running;
                 // orchestration re-appends and re-persists the same user turn.
@@ -632,6 +687,7 @@ class ConversationViewModel(
                     )
                 runOrchestratedTurn(truncated, lastUser, lastUser.transcript.text, marker)
             }
+        synchronized(voiceLock) { generationJob = job }
     }
 
     override fun onRequestDelete(id: ConversationId) {
@@ -718,7 +774,9 @@ class ConversationViewModel(
     ) {
         val committed = text.trim()
         if (committed.isEmpty()) return
-        if (generationJob?.isActive == true) return
+        // Claim the generation slot under the lock, so a voice start and a text
+        // send cannot both pass their guards and run at once (CODE REVIEW P1, R-0224).
+        if (!claimGeneration()) return
         AppLog.d { "ui: submit turn source=$source chars=${committed.length}" }
         refreshDisclosure()
         val marker = beginGeneration()
@@ -751,10 +809,11 @@ class ConversationViewModel(
                 source = source,
             )
         val titled = base.copy(title = title, updatedAtEpochMillis = now)
-        generationJob =
+        val job =
             coroutineScope().launch(dispatcher) {
                 runOrchestratedTurn(titled, userTurn, committed, marker)
             }
+        synchronized(voiceLock) { generationJob = job }
     }
 
     /** Hands one turn to the orchestrator and maps each callback to UI state. */
@@ -796,16 +855,21 @@ class ConversationViewModel(
         if (providerResolutionEnabled && !active.configured) {
             AppLog.w { "ui: no provider/model configured; the turn will report LLM_NOT_CONFIGURED" }
         }
-        orchestrator.run(
-            TurnRequest(
-                conversation = conversation,
-                userTurn = userTurn,
-                selection = active.selection,
-                reasoning = active.reasoning,
-            ),
-            observer,
-            languageModel = active.languageModel,
-        )
+        try {
+            orchestrator.run(
+                TurnRequest(
+                    conversation = conversation,
+                    userTurn = userTurn,
+                    selection = active.selection,
+                    reasoning = active.reasoning,
+                ),
+                observer,
+                languageModel = active.languageModel,
+            )
+        } finally {
+            // Release the generation slot so the next turn (text or voice) can start.
+            releaseGeneration()
+        }
     }
 
     /**
@@ -899,6 +963,27 @@ class ConversationViewModel(
         }
     }
 
+    /**
+     * Claims the single generation slot ([generationJob]) for the calling thread.
+     *
+     * Returns false when a generation is already active or the holder is closed,
+     * so the text and voice entry points cannot both start a turn (CODE_REVIEW P1,
+     * R-0224). The slot is released by [releaseGeneration].
+     */
+    private fun claimGeneration(): Boolean =
+        synchronized(voiceLock) {
+            if (closed || generationJob?.isActive == true) {
+                false
+            } else {
+                generationJob = null
+                true
+            }
+        }
+
+    private fun releaseGeneration() {
+        synchronized(voiceLock) { generationJob = null }
+    }
+
     private fun beginGeneration(): Any {
         val marker = Any()
         activeGeneration = marker
@@ -906,9 +991,14 @@ class ConversationViewModel(
     }
 
     private fun discardActiveGeneration() {
-        activeGeneration = null
-        generationJob?.cancel()
-        generationJob = null
+        val job =
+            synchronized(voiceLock) {
+                activeGeneration = null
+                val j = generationJob
+                generationJob = null
+                j
+            }
+        job?.cancel()
     }
 
     private suspend fun saveQuietly(conversation: Conversation) {
@@ -923,13 +1013,84 @@ class ConversationViewModel(
 
     /** Cancels in-flight work; called by [onCleared] and by tests. Idempotent. */
     fun shutdown() {
-        closed = true
+        synchronized(voiceLock) { closed = true }
         activeGeneration = null
         listJob.cancel()
         settingsJob?.cancel()
-        generationJob?.cancel()
-        generationJob = null
+        discardActiveGeneration()
         discardVoiceSession()
+    }
+
+    /**
+     * Adapts the coordinator's [VoiceSessionListener] callbacks to the ViewModel,
+     * dropping every event that belongs to a superseded session (CODE_REVIEW P1,
+     * R-0224).
+     *
+     * A late callback from a stopped session must never update the dialog for a
+     * newer one, so each callback re-checks the session token it was created with.
+     */
+    private class SessionVoiceListener(
+        private val token: Any,
+        private val delegate: ConversationViewModel,
+    ) : VoiceSessionListener {
+        private fun isCurrent(): Boolean = synchronized(delegate.voiceLock) { delegate.activeVoiceSession === token }
+
+        override fun onSessionState(state: VoiceSessionState) {
+            if (isCurrent()) delegate.onSessionState(state)
+        }
+
+        override fun onListeningStarted(turnId: TurnId) {
+            if (isCurrent()) delegate.onListeningStarted(turnId)
+        }
+
+        override fun onProvisionalTranscript(
+            turnId: TurnId,
+            text: String,
+        ) {
+            if (isCurrent()) delegate.onProvisionalTranscript(turnId, text)
+        }
+
+        override fun onUtteranceCommitted(
+            turnId: TurnId,
+            transcript: Transcript,
+        ) {
+            if (isCurrent()) delegate.onUtteranceCommitted(turnId, transcript)
+        }
+
+        override fun onAssistantText(
+            turnId: TurnId,
+            text: String,
+        ) {
+            if (isCurrent()) delegate.onAssistantText(turnId, text)
+        }
+
+        override fun onConversationChanged(conversation: Conversation) {
+            if (isCurrent()) delegate.onConversationChanged(conversation)
+        }
+
+        override fun onTurnFinished(result: TurnResult) {
+            if (isCurrent()) delegate.onTurnFinished(result)
+        }
+
+        override fun onBargeIn(timing: BargeInTiming) {
+            if (isCurrent()) delegate.onBargeIn(timing)
+        }
+
+        override fun onInterruptionRecovered(recovery: VoiceInterruptionRecovery) {
+            if (isCurrent()) delegate.onInterruptionRecovered(recovery)
+        }
+
+        override fun onNoSpeech() {
+            if (isCurrent()) delegate.onNoSpeech()
+        }
+
+        override fun onError(error: VoiceAgentError) {
+            if (isCurrent()) delegate.onError(error)
+        }
+
+        override fun onTextToSpeechUnavailable(error: VoiceAgentError) {
+            if (isCurrent()) delegate.onTextToSpeechUnavailable(error)
+        }
     }
 
     override fun onCleared() {

@@ -5,6 +5,7 @@ import com.voicechat.agent.domain.Conversation
 import com.voicechat.agent.domain.ConversationId
 import com.voicechat.agent.domain.ConversationSummary
 import com.voicechat.agent.domain.ErrorCode
+import com.voicechat.agent.domain.Turn
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
 import com.voicechat.agent.log.AppLog
@@ -51,6 +52,25 @@ internal class RoomConversationRepository(
             }
             dao.replaceConversation(conversation.toEntity(), conversation.toTurnEntities())
         }
+
+    /**
+     * Appends or updates one turn without rewriting the conversation's other
+     * turns (CODE_REVIEW P2, R-0222). The whole conversation is still passed so
+     * the row's title/update time stay current, but only [turn]'s row is written.
+     */
+    override suspend fun saveTurn(
+        conversation: Conversation,
+        turn: Turn,
+    ) = persistenceCall("save turn") {
+        val position = conversation.turns.indexOfFirst { it.id == turn.id }
+        require(position >= 0) {
+            "turn ${turn.id.value} is not part of conversation ${conversation.id.value}"
+        }
+        dao.upsertTurnAndConversation(
+            conversation = conversation.toEntity(),
+            turn = turn.toEntity(conversationId = conversation.id.value, position = position),
+        )
+    }
 
     override suspend fun delete(id: ConversationId) =
         persistenceCall("delete") {

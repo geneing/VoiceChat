@@ -166,6 +166,74 @@ class SettingsViewModelTest {
         }
 
     @Test
+    fun anEmptyModelCatalogIsAFirstClassEmptyStateNotAConfiguredProvider() =
+        runTest {
+            val h = harness(testScheduler, capabilities = capabilities(models = emptyList()))
+            h.viewModel.onSelectLlmProvider(KnownProviders.OPENAI)
+            advanceUntilIdle()
+
+            val llm = h.viewModel.uiState.value.llm
+            assertTrue(llm.models.isEmpty())
+            val state = llm.modelCatalogState
+            assertTrue(state is com.voicechat.agent.contracts.ModelCatalogState.Empty)
+            assertFalse(state.hasSelectableModel)
+            assertTrue(state.needsAttention)
+            assertNull(
+                h.store
+                    .observe()
+                    .first()
+                    .llmModelId,
+            )
+            h.scope.cancel()
+        }
+
+    @Test
+    fun aProviderWithOnlyUnavailableModelsIsReportedAsUnavailableNotConfigured() =
+        runTest {
+            val blocked = descriptor(ModelId("blocked"), "Blocked Model")
+            val h =
+                harness(
+                    testScheduler,
+                    capabilities =
+                        capabilities(
+                            models =
+                                listOf(
+                                    ModelAvailability.Unavailable(
+                                        blocked,
+                                        VoiceAgentError(ErrorCode.MODEL_UNAVAILABLE, detail = "device lacks memory"),
+                                    ),
+                                ),
+                        ),
+                )
+            h.viewModel.onSelectLlmProvider(KnownProviders.OPENAI)
+            advanceUntilIdle()
+
+            val state = h.viewModel.uiState.value.llm.modelCatalogState
+            assertTrue(state is com.voicechat.agent.contracts.ModelCatalogState.Unavailable)
+            assertFalse(state.hasSelectableModel)
+            assertTrue(state.needsAttention)
+            h.scope.cancel()
+        }
+
+    @Test
+    fun aProviderNeverAppearsListableBeforeItsCatalogIsRead() =
+        runTest {
+            val h = harness(testScheduler)
+            advanceUntilIdle()
+
+            // No provider chosen: the catalogs carry an explicit "choose a provider" state.
+            val beforeSelect = h.viewModel.uiState.value.llm.modelCatalogState
+            assertTrue(beforeSelect is com.voicechat.agent.contracts.ModelCatalogState.Empty)
+
+            h.viewModel.onSelectLlmProvider(KnownProviders.OPENAI)
+            advanceUntilIdle()
+            val afterSelect = h.viewModel.uiState.value.llm.modelCatalogState
+            assertTrue(afterSelect is com.voicechat.agent.contracts.ModelCatalogState.Available)
+            assertTrue(afterSelect.hasSelectableModel)
+            h.scope.cancel()
+        }
+
+    @Test
     fun unavailableModelsAreShownDisabledWithAReason() =
         runTest {
             val blocked = descriptor(ModelId("blocked"), "Blocked Model")

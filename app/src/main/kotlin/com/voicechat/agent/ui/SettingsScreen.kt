@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.voicechat.agent.R
 import com.voicechat.agent.contracts.ModelAvailability
+import com.voicechat.agent.contracts.ModelCatalogState
 import com.voicechat.agent.domain.ConnectionState
 import com.voicechat.agent.domain.ReasoningLevel
 import com.voicechat.agent.providers.AuthMethod
@@ -95,6 +96,9 @@ object SettingsTestTags {
 
     /** Disabled reason for a model. */
     fun modelReason(id: String): String = "settings-model-reason-$id"
+
+    /** The catalog-level notice shown when no model is listed (M27, R-0102). */
+    const val MODEL_CATALOG_NOTICE: String = "settings-model-catalog-notice"
 
     /** Radio option for an auth method. */
     fun authOption(method: String): String = "settings-auth-$method"
@@ -223,9 +227,10 @@ private fun LlmSection(
 
     Text("Model", style = MaterialTheme.typography.labelLarge)
     if (llm.models.isEmpty()) {
-        Text(
-            "No verifiable model catalog is available for this provider yet.",
-            style = MaterialTheme.typography.bodyMedium,
+        ModelCatalogNotice(
+            state = llm.modelCatalogState,
+            providerName = llm.providerDisplayName,
+            onRefresh = actions::onRefresh,
         )
     } else {
         llm.models.forEach { option: SelectableOption<ModelAvailability> ->
@@ -498,6 +503,63 @@ private fun DisabledReason(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         style = MaterialTheme.typography.bodySmall,
     )
+}
+
+/**
+ * The catalog-level state shown when the provider lists no selectable model
+ * (M27, R-0102). It names the reason and, for an empty/failed/unavailable
+ * catalog, offers a refresh instead of presenting a provider as configured.
+ */
+@Composable
+private fun ModelCatalogNotice(
+    state: ModelCatalogState,
+    providerName: String?,
+    onRefresh: () -> Unit,
+) {
+    val name = providerName ?: "this provider"
+    val message =
+        when (state) {
+            is ModelCatalogState.Loading -> {
+                "Loading the $name model catalog…"
+            }
+
+            is ModelCatalogState.Empty -> {
+                "No models are available for $name. ${state.reason}"
+            }
+
+            is ModelCatalogState.Unavailable -> {
+                "No model for $name is selectable yet. ${state.models.firstOrNull()?.let {
+                    (it as? ModelAvailability.Unavailable)
+                        ?.error
+                        ?.detail
+                } ?: ""}".trim()
+            }
+
+            is ModelCatalogState.Failed -> {
+                "The $name model catalog could not be read. ${state.error.detail ?: state.error.code.name}"
+            }
+
+            is ModelCatalogState.Stale -> {
+                "Showing cached $name models; refresh to revalidate."
+            }
+
+            is ModelCatalogState.Available -> {
+                "No model is selectable."
+            }
+        }
+    Text(
+        text = message,
+        modifier = Modifier.testTag(SettingsTestTags.MODEL_CATALOG_NOTICE),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    if (state !is ModelCatalogState.Loading && state !is ModelCatalogState.Available) {
+        OutlinedButton(
+            onClick = onRefresh,
+            modifier = Modifier.padding(top = 4.dp),
+        ) {
+            Text("Refresh catalog")
+        }
+    }
 }
 
 @Composable

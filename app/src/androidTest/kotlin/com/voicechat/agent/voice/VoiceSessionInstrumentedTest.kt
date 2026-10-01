@@ -24,6 +24,7 @@ import com.voicechat.agent.domain.ModelId
 import com.voicechat.agent.domain.ProviderId
 import com.voicechat.agent.domain.ProviderModelSelection
 import com.voicechat.agent.domain.Transcript
+import com.voicechat.agent.domain.Turn
 import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.orchestration.TurnOrchestrator
 import com.voicechat.agent.vad.EndpointReason
@@ -178,6 +179,22 @@ class VoiceSessionInstrumentedTest {
 
         override suspend fun save(conversation: Conversation) {
             conversations.value = conversations.value + (conversation.id to conversation)
+        }
+
+        override suspend fun saveTurn(
+            conversation: Conversation,
+            turn: Turn,
+        ) {
+            conversations.value =
+                conversations.value +
+                (
+                    conversation.id to
+                        (
+                            conversations.value[conversation.id]?.let { existing ->
+                                conversation.copy(turns = existing.turns.filterNot { it.id == turn.id } + turn)
+                            } ?: conversation
+                        )
+                )
         }
 
         override suspend fun delete(id: ConversationId) {
