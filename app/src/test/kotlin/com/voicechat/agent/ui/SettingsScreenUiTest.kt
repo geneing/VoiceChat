@@ -3,10 +3,12 @@ package com.voicechat.agent.ui
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -152,19 +154,17 @@ class SettingsScreenUiTest {
     }
 
     @Test
-    fun theDestinationAndRemoteTransferNoticeAreShown() {
+    fun theSettingsScreenShowsNoTransferOrRetentionNotice() {
         val llm =
             LlmSettingsSection(
                 selectedProviderId = KnownProviders.OPENROUTER,
                 providerDisplayName = "OpenRouter",
-                destinationDisclosure = "https://openrouter.ai/api/v1",
-                remoteTransfer = true,
             )
         render(baseState().copy(llm = llm))
 
-        composeRule.onNodeWithTag(SettingsTestTags.DESTINATION_DISCLOSURE).assertExists()
-        composeRule.onNodeWithText("Requests go to https://openrouter.ai/api/v1.").assertExists()
-        composeRule.onNodeWithTag(SettingsTestTags.REMOTE_TRANSFER_NOTICE).assertExists()
+        composeRule.onAllNodesWithText("Data transfer").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Requests go to", substring = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Retention", substring = true).assertCountEquals(0)
     }
 
     @Test
@@ -196,7 +196,6 @@ class SettingsScreenUiTest {
 
         composeRule.onNodeWithTag(SettingsTestTags.MODEL_CATALOG_NOTICE).assertExists()
         composeRule.onNodeWithText("Recheck capabilities").assertExists()
-        composeRule.onNodeWithTag(SettingsTestTags.RETENTION_NOTICE).assertDoesNotExist()
     }
 
     @Test

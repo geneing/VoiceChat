@@ -362,15 +362,13 @@ class SettingsViewModelTest {
         }
 
     @Test
-    fun theRemoteDestinationAndTransferNoticeAreExposedBeforeSending() =
+    fun theDestinationIsValidatedButNotExposedAsASettingsNotice() =
         runTest {
             val h = harness(testScheduler)
             h.viewModel.onSelectLlmProvider(KnownProviders.OPENROUTER)
             advanceUntilIdle()
 
             val llm = h.viewModel.uiState.value.llm
-            assertEquals("https://openrouter.ai/api/v1", llm.destinationDisclosure)
-            assertTrue(llm.remoteTransfer)
             assertFalse(llm.needsConfiguredDestination)
             h.scope.cancel()
         }
@@ -382,7 +380,6 @@ class SettingsViewModelTest {
             h.viewModel.onSelectLlmProvider(KnownProviders.HERMES)
             advanceUntilIdle()
             assertTrue(h.viewModel.uiState.value.llm.needsConfiguredDestination)
-            assertNull(h.viewModel.uiState.value.llm.destinationDisclosure)
 
             // Insecure non-local http is refused and not persisted.
             h.viewModel.onDestinationChanged("http://hermes.example.com/v1")
@@ -395,7 +392,7 @@ class SettingsViewModelTest {
                     .llmServerUrl,
             )
 
-            // A valid https destination is persisted and disclosed.
+            // A valid https destination is persisted.
             h.viewModel.onDestinationChanged("https://hermes.example.com/v1")
             advanceUntilIdle()
             assertEquals(
@@ -405,7 +402,6 @@ class SettingsViewModelTest {
                     .first()
                     .llmServerUrl,
             )
-            assertEquals("https://hermes.example.com/v1", h.viewModel.uiState.value.llm.destinationDisclosure)
             h.scope.cancel()
         }
 

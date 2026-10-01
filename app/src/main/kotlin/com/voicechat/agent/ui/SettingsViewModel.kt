@@ -72,9 +72,9 @@ import kotlinx.coroutines.launch
  *   method or an unsupported reasoning level is absent, while a known but
  *   currently unavailable mode/model/voice is disabled with a reason;
  * - stores/replaces/removes the provider credential through the M13
- *   [CredentialStore] and never puts a secret in [SettingsUiState];
- * - exposes the validated destination and the remote-transfer disclosure before
- *   any text leaves the device.
+ *   [CredentialStore] and never puts a secret in [SettingsUiState]. Selecting a
+ *   provider and storing its credential is the user's consent step; the screen
+ *   shows provider facts, not a transfer/retention notice.
  *
  * Credential values never appear in the UI state, log lines, or persisted
  * settings; only the redacted [CredentialStatus] does.
@@ -174,7 +174,8 @@ class SettingsViewModel(
         when (val validated = ServerDestinationValidator.validate(text, EndpointSource.USER_ENTERED)) {
             is EndpointValidation.Valid -> {
                 destinationError = null
-                // Persist the trimmed, validated text; the disclosure is derived from it.
+                // Persist the trimmed, validated text; the turn path resolves the
+                // endpoint from it.
                 update(current.copy(llmServerUrl = text.trim()))
             }
 
@@ -373,8 +374,6 @@ class SettingsViewModel(
     private fun rebuild() {
         val provider = current.llmProviderId?.let { registry.capabilities(it) }
         val modelCapabilities = readModelCapabilities(current)
-        val endpoint = provider?.let { ProviderEndpointPolicy.destinationFor(it, current.llmServerUrl) }
-        val disclosure = (endpoint as? EndpointValidation.Valid)?.destination?.disclosure()
 
         val stt =
             SttSettingsSection(
@@ -411,10 +410,6 @@ class SettingsViewModel(
                 selectedReasoning = current.effectiveReasoningLevel,
                 connection = provider?.let { ProviderConnectionState.derive(it, credentialStatus) } ?: ConnectionState.Disconnected,
                 credentialStatus = credentialStatus,
-                destinationDisclosure = disclosure,
-                remoteTransfer = provider != null,
-                toolExecutionOnServer = provider?.toolExecutionOnServer == true,
-                retentionNotice = provider?.dataRetentionNote,
                 destinationDraft = destinationDraft,
                 destinationError = destinationError,
                 needsConfiguredDestination = provider?.transport?.configurable == true,

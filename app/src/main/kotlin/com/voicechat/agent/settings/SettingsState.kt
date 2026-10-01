@@ -87,17 +87,6 @@ data class LlmSettingsSection(
     val selectedReasoning: ReasoningLevel = ReasoningLevel.NONE,
     val connection: ConnectionState = ConnectionState.Disconnected,
     val credentialStatus: CredentialStatus = CredentialStatus.NotStored,
-    /** The validated destination shown before text leaves the device, or `null`. */
-    val destinationDisclosure: String? = null,
-    /** True for an external provider: transcript text and context are sent off-device. */
-    val remoteTransfer: Boolean = false,
-    /** True when the provider runs tools on its own host (Hermes). */
-    val toolExecutionOnServer: Boolean = false,
-    /**
-     * The selected provider's verified retention/training note, shown before
-     * sending text (M23, R-0139). `null` when the registry has not verified one.
-     */
-    val retentionNotice: String? = null,
     /** The configurable server address, for a provider that has one (Hermes). */
     val destinationDraft: String = "",
     val destinationError: String? = null,

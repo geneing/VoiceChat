@@ -92,10 +92,9 @@ class TextFirstSliceTest {
 
             val dialog = viewModel.uiState.value.dialog!!
             assertEquals(TurnPhase.COMPLETED, dialog.phase)
-            // The disclosure names the selected provider/model before/at send.
+            // The active selection is carried as the turn identity (no warning card).
             assertEquals("OpenCode Go", dialog.provider.providerDisplayName)
             assertEquals(goModel, dialog.provider.modelId)
-            assertTrue(dialog.provider.remoteTransfer)
 
             val assistant = dialog.turns.last() as AssistantTurn
             assertEquals("Hello, world", assistant.generated.text)

@@ -113,7 +113,7 @@ class ProviderLanguageModelFactoryTest {
     }
 
     @Test
-    fun theDisclosureNamesProviderModelDestinationAndRetention() {
+    fun theDisclosureNamesTheSelectedProviderAndModel() {
         val settings =
             VoiceSettings(
                 llmProviderId = KnownProviders.OPENCODE_GO,
@@ -125,10 +125,6 @@ class ProviderLanguageModelFactoryTest {
         assertTrue(disclosure.hasSelection)
         assertEquals("OpenCode Go", disclosure.providerDisplayName)
         assertEquals("glm-5.3-flash", disclosure.modelId)
-        assertEquals("https://opencode.ai/zen/go/v1", disclosure.destination)
-        assertTrue(disclosure.remoteTransfer)
-        // R-0139: where the registry records a retention/training note it is surfaced.
-        assertNotNull(disclosure.retentionNotice)
     }
 
     @Test

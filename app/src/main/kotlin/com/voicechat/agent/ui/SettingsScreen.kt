@@ -73,10 +73,6 @@ object SettingsTestTags {
     const val CREDENTIAL_SAVE = "settings-credential-save"
     const val CREDENTIAL_REMOVE = "settings-credential-remove"
     const val CREDENTIAL_STATUS = "settings-credential-status"
-    const val DESTINATION_DISCLOSURE = "settings-destination-disclosure"
-    const val REMOTE_TRANSFER_NOTICE = "settings-remote-transfer"
-    const val TOOL_EXECUTION_NOTICE = "settings-tool-execution"
-    const val RETENTION_NOTICE = "settings-retention-notice"
     const val DESTINATION_FIELD = "settings-destination-field"
     const val DESTINATION_ERROR = "settings-destination-error"
     const val CONNECTION_STATE = "settings-connection-state"
@@ -313,8 +309,6 @@ private fun LlmSection(
             onSelect = { actions.onSelectReasoningLevel(option.value) },
         )
     }
-
-    RemoteTransferDisclosure(state = llm)
 }
 
 @Composable
@@ -384,40 +378,6 @@ private fun ConnectionLine(state: ConnectionState) {
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.testTag(SettingsTestTags.CONNECTION_STATE),
     )
-}
-
-@Composable
-private fun RemoteTransferDisclosure(state: com.voicechat.agent.settings.LlmSettingsSection) {
-    Text("Data transfer", style = MaterialTheme.typography.labelLarge)
-    Text(
-        text =
-            state.destinationDisclosure
-                ?.let { stringResource(R.string.disclosure_requests_go_to, it) }
-                ?: stringResource(R.string.disclosure_no_destination),
-        style = MaterialTheme.typography.bodySmall,
-        modifier = Modifier.testTag(SettingsTestTags.DESTINATION_DISCLOSURE),
-    )
-    if (state.remoteTransfer) {
-        Text(
-            text = stringResource(R.string.disclosure_remote_transfer),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.testTag(SettingsTestTags.REMOTE_TRANSFER_NOTICE),
-        )
-    }
-    state.retentionNotice?.let { note ->
-        Text(
-            text = stringResource(R.string.disclosure_retention, note),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.testTag(SettingsTestTags.RETENTION_NOTICE),
-        )
-    }
-    if (state.toolExecutionOnServer) {
-        Text(
-            text = stringResource(R.string.disclosure_tool_execution),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.testTag(SettingsTestTags.TOOL_EXECUTION_NOTICE),
-        )
-    }
 }
 
 @Composable
