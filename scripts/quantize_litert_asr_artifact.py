@@ -474,6 +474,14 @@ def _prepare_calibration_data(
     import torch
     from ai_edge_litert import interpreter
 
+    if model_name == "parakeet-ctc":
+        # The downloaded sample's ParakeetCTCEncoder predates the transformers
+        # 5.18 CTC-head contract. patch() is tracked in scripts/ and never edits
+        # the sample checkout.
+        from litert_asr_parakeet_compat import patch as _patch_parakeet_ctc
+
+        _patch_parakeet_ctc()
+
     model = _load_sample_model(
         model_name, override_transformers=override_transformers
     )
