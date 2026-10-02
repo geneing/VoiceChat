@@ -25,10 +25,13 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -57,6 +60,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -69,6 +73,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -425,10 +432,10 @@ private fun ConversationHomeScreen(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        // One bottom inset: the keyboard when it is up, otherwise
-                        // the navigation bar (the Scaffold's body padding does not
-                        // cover the bottom bar itself).
-                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                        // Keep the controls clear of the navigation bar: the
+                        // Scaffold's body padding does not cover the bottom bar
+                        // itself.
+                        .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Bottom))
                         .padding(bottom = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -529,7 +536,15 @@ fun ConversationDialogScreen(
     }
 
     Scaffold(
-        modifier = modifier.fillMaxSize(),
+        modifier =
+            modifier
+                .fillMaxSize()
+                // Keep the chat surface clear of the status bar and display cutout.
+                // This consumes the top safe inset before the top app bar is measured.
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                .onGloballyPositioned {
+                    android.util.Log.d("VCLAYOUT", "scaffold pos=${it.positionInWindow()} size=${it.size}")
+                },
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
@@ -644,12 +659,28 @@ private fun Composer(
     focusRequester: FocusRequester,
     onVoiceToggle: (() -> Unit)? = null,
 ) {
-    Surface(color = MaterialTheme.colorScheme.surface) {
+    val density = LocalDensity.current
+    val imeInset = WindowInsets.ime
+    val navInset = WindowInsets.navigationBars
+    val barsInset = WindowInsets.systemBars
+    SideEffect {
+        android.util.Log.d(
+            "VCLAYOUT",
+            "insets ime=${imeInset.getBottom(density)} nav=${navInset.getBottom(density)} bars=${barsInset.getBottom(density)}",
+        )
+    }
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        modifier =
+            Modifier.onGloballyPositioned {
+                android.util.Log.d("VCLAYOUT", "composer pos=${it.positionInWindow()} size=${it.size}")
+            },
+    ) {
         Column(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                    .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Bottom))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             if (onVoiceToggle != null && dialog.voiceAvailable) {
