@@ -261,7 +261,8 @@ class MoonshineSpeechToText internal constructor(
     }
 
     companion object {
-        const val DEFAULT_UPDATE_INTERVAL_SECONDS = 0.5
+        /** Candidate cadence for reducing partial delay; compare against the 500 ms baseline. */
+        const val DEFAULT_UPDATE_INTERVAL_SECONDS = 0.1
     }
 
     private class MoonshineTerminalResponse : RuntimeException()
