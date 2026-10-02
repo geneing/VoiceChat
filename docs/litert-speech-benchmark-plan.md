@@ -88,6 +88,46 @@ Every Candidate cell remains unavailable until conversion succeeds, the app buil
 5. For each transformed model, repeat host parity checks and a target-device load/inference gate. Keep FP32, FP16, and INT8 files separate and Git-ignored. Export checksums and a small tracked manifest; never package large weights in the APK by default.
 6. Treat Whisper Small as its own conversion and compatibility milestone; validate its encoder/decoder signatures, memory, decode length, and parity independently from Tiny.
 
+#### Quantization wrapper status (2026-10-02)
+
+Added `scripts/quantize-litert-asr-artifact.sh` and
+`scripts/quantize_litert_asr_artifact.py`. The wrapper enforces the pinned
+sample revision, accepts only source/output artifacts under ignored `models/`,
+and keeps the FP32 source intact. `fp16` uses AI Edge Quantizer's
+`FLOAT_CASTING` weight-only recipe: FP16 constants are explicitly
+dequantized, so the arithmetic remains FP32. This is an FP16-weight artifact
+for later GPU evaluation, not evidence of FP16 GPU execution. `int8` uses
+`static_wi8_ai8()` and builds per-sample calibration dictionaries by calling
+the pinned sample's audio processor, encoder, and decoder input builder. It
+checks exact names, dtypes, and shapes for every exported signature, including
+`decode_1` when present for stateful TDT. Its graph audit reports integer
+versus floating-point internal operator outputs and refuses to label partial
+graphs as full INT8 candidates. Named signatures are compared with CPU
+inference and explicit public I/O quantization; this is a numeric graph check,
+not a transcript accuracy score.
+
+The preparation helper
+`scripts/prepare-litert-asr-calibration.sh` makes private temporary 16 kHz
+mono PCM copies of only the user-described `Walking*.m4a` recordings under
+`/tmp/voicechat-litert-asr-calibration/`; it does not alter the originals or
+send audio to a service. The two local WAV fixtures previously tried for a
+calibration probe are not used as final evidence: the repo has no manifest for
+those top-level files, and R-0037 leaves their exact provenance/license/
+consent unverified. The final calibration attempt uses two user-recorded
+Walking clips with source and derivative hashes saved in the ignored local
+quantization sidecar. No license or redistribution right is claimed. No
+device placement is established by these host-side transformations.
+
+For backend claims, treat these outputs conservatively. The FP16 output contains
+half-precision constants but runs FP32 operations behind dequantization; no GPU
+execution or GPU speedup is established. The Moonshine static INT8 output has
+floating-point operator outputs remaining and is marked partial, not a
+full-INT8 NPU artifact. The pinned sample README lists Moonshine CPU/GPU only.
+Although its metadata contains an NPU URL pattern, no compatible AOT artifact
+or Tensor runtime was verified for this output. The sample's NPU path also uses
+device-specific runtime packaging and a separate model file; requesting the
+NPU accelerator alone would not confirm execution.
+
 References: [sample converter](https://github.com/google-ai-edge/litert-samples/blob/main/samples/litert/speech_recognition/convert/convert_to_tflite.py), [accuracy-safe quantization guidance](https://github.com/google-ai-edge/litert-samples/blob/main/skills/accuracy-safe-quantization/SKILL.md), [AI Edge Quantizer README](https://github.com/google-ai-edge/ai-edge-quantizer), [static recipe](https://github.com/google-ai-edge/ai-edge-quantizer/blob/main/ai_edge_quantizer/recipe.py), and [calibration example](https://github.com/google-ai-edge/ai-edge-quantizer/blob/main/ai_edge_quantizer/examples/mnist/quantize_toy_model.py).
 
 ## Harness and instrumentation milestones
