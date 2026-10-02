@@ -86,3 +86,40 @@ copy_private "$audio" "eng-000001-000081dd.wav"
 if [[ "$fp16_present" == true ]]; then
   copy_private "$fp16_model" "moonshine-tiny-fp16-5s.tflite"
 fi
+
+copy_validated() {
+  local path="$1" expected_sha="$2" expected_bytes="$3" dest="$4"
+  if [[ ! -f "$path" ]]; then
+    echo "Missing staged artifact: $path" >&2
+    exit 1
+  fi
+  local actual_sha actual_bytes
+  actual_sha="$(sha256sum "$path" | awk '{print $1}')"
+  actual_bytes="$(stat -c '%s' "$path")"
+  if [[ "$actual_sha" != "$expected_sha" || "$actual_bytes" != "$expected_bytes" ]]; then
+    echo "Unexpected artifact $path: size=$actual_bytes sha256=$actual_sha" >&2
+    exit 1
+  fi
+  copy_private "$path" "$dest"
+}
+
+# Parakeet TDT/CTC comparison: official litert-community INT8 artifacts plus the
+# host-extracted sample features for each family.
+if [[ "${STAGE_PARAKEET:-0}" == "1" ]]; then
+  copy_validated \
+    "$repo_root/models/litert-asr/parakeet-tdt-0.6b-v3-5s-i8-stateful.tflite" \
+    "334745b8bc7fd372b1c213516f0b6338bb827b1a2abb3e77ad35fe6fea5cd16b" \
+    614261072 "parakeet-tdt-0.6b-v3-5s-i8-stateful.tflite"
+  copy_validated \
+    "$repo_root/models/litert-asr/parakeet-ctc-0.6b-5s-i8.tflite" \
+    "3d0799f625842fded4580c9b51d321667f0bd5f334cb325fb1b9051c6534e102" \
+    596365072 "parakeet-ctc-0.6b-5s-i8.tflite"
+  copy_validated \
+    "$repo_root/models/litert-asr/parakeet-tdt-features-5s.f32" \
+    "8434cd7f5cdfd562de7cb777b908ec07fa1307946b25fa7b095d13baeb1fd441" \
+    256000 "parakeet-tdt-features-5s.f32"
+  copy_validated \
+    "$repo_root/models/litert-asr/parakeet-ctc-features-5s.f32" \
+    "647222dfb72e123aedbd8a4244079b779af94a4184d6aa3c63ab1ec506b8c460" \
+    160000 "parakeet-ctc-features-5s.f32"
+fi
