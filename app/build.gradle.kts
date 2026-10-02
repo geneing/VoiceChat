@@ -89,15 +89,16 @@ if (litertNpuDispatchDir.isDirectory) {
         .getByName("debug")
         .jniLibs.directories
         .add(litertNpuDispatchDir.absolutePath)
-}
 
-// The LiteRT NPU dispatch library must be extracted to the app's native library
-// directory for the runtime to dlopen it by name. Scope legacy packaging to the
-// debug build only so release packaging is unchanged.
-androidComponents {
-    onVariants(selector().withBuildType("debug")) { variant ->
-        variant.packaging.jniLibs.useLegacyPackaging
-            .set(true)
+    // The NPU dispatch library must be extracted to the app's native library
+    // directory for the runtime to dlopen it by name. This is scoped to the
+    // debug variant and only applies while the local spike is present, so a
+    // clean checkout keeps the default packaging.
+    androidComponents {
+        onVariants(selector().withBuildType("debug")) { variant ->
+            variant.packaging.jniLibs.useLegacyPackaging
+                .set(true)
+        }
     }
 }
 
