@@ -32,6 +32,7 @@ drafts are separate, local, Git-ignored files and are not ground truth.
 | `d652cdcfc3adcf763466e0af6c46278e57f205d9` | Changed Moonshine's debug update cadence to 100 ms for a controlled replay comparison. | Pixel replay completed; full measurements and outcome are below. |
 | `711769bbc2afe9f9e44e74090c6de84d41f06baf` | Restored the 500 ms Moonshine default after the 100 ms comparison showed no material first-partial gain. | `:app:testDebugUnitTest` and `spotlessCheck` passed. The behavior matches the earlier 500 ms device baseline; no separate device pass was run. |
 | `f4cb3d8979b453754bff18705766cb71529b06ab` | Consolidated run outcomes, hashes, and model progress into this single file; left `Tests.md` with replay instructions only. | Documentation checkpoint. |
+| `0edf380` (`0edf380c138601ad4f92b7af3e390a80d8edb051`) | Added opt-in sherpa-onnx 1.13.8 / Parakeet TDT-CTC 110M offline replay, SHA-256-pinned local artifacts, debug-only AAR packaging, model staging, batch latency rows, and unverified draft-label export. | `:app:testDebugUnitTest`, `:app:assembleDebugAndroidTest`, and `spotlessCheck` passed. APK inspection found sherpa JNI and one app-pinned ONNX Runtime library per ABI. Pixel inference and accuracy review remain pending. |
 
 ## Run log
 
@@ -73,8 +74,10 @@ Review/edits are still required before measuring WER/CER.
 
 The 100 ms Moonshine update interval did not improve first-partial latency enough
 to justify the changed hypotheses and extra callbacks; the debug candidate is
-being restored to 500 ms. Next evaluate Parakeet TDT-CTC 110M as an offline
-final-result and accuracy comparison, while investigating the ML Kit Advanced
+restored to 500 ms. The Parakeet offline benchmark is now runnable on-device at
+source commit `0edf380c138601ad4f92b7af3e390a80d8edb051`; it has no native partial
+timing, so use full-phrase decode latency only. Next run the 12-file corpus and
+review its locally exported draft labels, while investigating ML Kit Advanced
 failure and Basic model availability. Do not move to TTS latency optimization
 until a streaming STT candidate has a materially lower first-partial latency
 without an unacceptable accuracy or resource regression. Continue to record
