@@ -204,8 +204,6 @@ class TurnOrchestrator(
             request.selection.modelId.value,
             request.reasoning?.name,
         )
-        trace.markStreamStarted()
-
         val llmRequest = buildRequest(request, conversation)
         AppLog.d {
             "orchestration: request messages=${llmRequest.messages.size} chars=${llmRequest.characterCount} " +
@@ -231,6 +229,11 @@ class TurnOrchestrator(
                     )
                 val job =
                     launch {
+                        // Start provider timing after local request construction
+                        // and immediately before entering the selected adapter.
+                        // First-text latency therefore includes adapter,
+                        // network, and server wait, not local context building.
+                        trace.markStreamStarted()
                         streamResult = languageModel.consume(llmRequest, streamTrace)
                     }
                 activeStreamJob = job

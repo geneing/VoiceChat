@@ -35,6 +35,10 @@ ktlint = "1.8.0"
 # https://dl.google.com/dl/android/maven2/com/google/mlkit/genai-speech-recognition/1.0.0-alpha1/genai-speech-recognition-1.0.0-alpha1.pom
 mlkitGenaiSpeech = "1.0.0-alpha1"
 
+# Debug-only STT candidate for on-device model comparison. Keep the runtime out
+# of release APKs until the Pixel 10 benchmark and quality review are complete.
+moonshineVoice = "0.1.5"
+
 # On-device LLM runtime discovery (M20). ML Kit GenAI Prompt API is the supported
 # AICore/Gemini Nano surface; its status API (checkStatus) is the runtime
 # discovery gate. Beta release, verified on Google Maven 2026-09-29:
@@ -111,6 +115,8 @@ androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref =
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 # ML Kit GenAI Speech Recognition: the single on-device STT engine (M08).
 mlkit-genai-speech-recognition = { module = "com.google.mlkit:genai-speech-recognition", version.ref = "mlkitGenaiSpeech" }
+# Moonshine Voice Android binding, wired only with debugImplementation below.
+moonshine-voice = { module = "ai.moonshine:moonshine-voice", version.ref = "moonshineVoice" }
 # ONNX Runtime for Android, scoped to the pinned Smart Turn v3.2 artifact only (M10).
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 # ML Kit GenAI Prompt API: the supported AICore/Gemini Nano runtime discovery and

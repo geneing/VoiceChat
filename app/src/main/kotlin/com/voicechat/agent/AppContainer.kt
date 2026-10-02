@@ -2,6 +2,8 @@ package com.voicechat.agent
 
 import android.content.Context
 import com.voicechat.agent.credentials.AndroidKeystoreCredentialStore
+import com.voicechat.agent.diagnostics.AppDiagnosticsRuntime
+import com.voicechat.agent.diagnostics.InMemoryTraceStore
 import com.voicechat.agent.local.AndroidLocalModelFileStore
 import com.voicechat.agent.local.CatalogLocalLanguageModelFactory
 import com.voicechat.agent.local.LocalModelInstaller
@@ -68,6 +70,13 @@ class AppContainer(
 
     val languageModel by lazy { ConversationDefaults.languageModel() }
 
+    private val diagnosticsRuntimeDelegate = lazy { AppDiagnosticsRuntime() }
+
+    /** Recent content-free traces retained in memory for developer inspection. */
+    val traceStore: InMemoryTraceStore get() = diagnosticsRuntimeDelegate.value.traceStore
+
+    internal val diagnosticsSink get() = diagnosticsRuntimeDelegate.value.sink
+
     val settingsFactory by lazy {
         settingsViewModelFactory(
             store = settingsStore,
@@ -95,6 +104,7 @@ class AppContainer(
             context = appContext,
             repository = repository,
             fallbackLanguageModel = languageModel,
+            diagnostics = diagnosticsSink,
             turnCompletion = smartTurnDetectorProvider,
             selectionProvider = {
                 val settings = settingsStore.observe().first()
@@ -113,6 +123,9 @@ class AppContainer(
      * process death releases everything without running this.
      */
     fun close() {
-        runBlocking { transport.close() }
+        runBlocking {
+            if (diagnosticsRuntimeDelegate.isInitialized()) diagnosticsRuntimeDelegate.value.close()
+            transport.close()
+        }
     }
 }

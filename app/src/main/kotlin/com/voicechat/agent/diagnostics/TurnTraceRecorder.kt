@@ -139,7 +139,10 @@ class TurnTraceRecorder(
     )
 
     /**
-     * Marks the moment the request actually started streaming.
+     * Marks when the completed provider-neutral request is handed to the
+     * selected adapter for streaming. Call after local context/request building;
+     * the interval from here to first text includes adapter, network, and server
+     * time and is the app's external-provider time-to-first-text.
      *
      * The first [llmDelta] then reports `durationNanos` as time-to-first-text
      * measured from this point (not from turn start), which is the latency the

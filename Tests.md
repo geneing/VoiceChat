@@ -1435,3 +1435,56 @@ installed allow-listed model id (if any).
 Unrun M20 device items are tracked as R-0215; **do not mark any row passed unless
 it was run on the device.**
 
+## Optimization branch smoke run (2026-10-01)
+
+Branch: `optimization/voice-latency`.
+
+Device: Pixel 10 (`frankel`), Android 17 / API 37,
+`google/frankel/frankel:17/CP3A.260905.009/16091614:user/release-keys`.
+
+Command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:connectedDebugAndroidTest
+```
+
+Outcome: **passed**. The JVM suite reported 917 tests, 0 failures, and 8
+skipped. The connected Pixel 10 suite reported 24 tests, 0 failures, and 0
+skipped. This included microphone/VAD capture checks, ML Kit availability,
+platform TTS initialization/stop, the local-runtime availability checks, and a
+fake-backed voice-session integration check.
+
+The real STT capability probe reported ML Kit **Advanced** as ready and **Basic**
+as requiring a download. The instrumented STT tests only checked availability
+and adapter behavior; they did not transcribe any file from `test_data`. The
+voice-session test uses fakes, and the platform TTS test is not a first-audio or
+voice-quality benchmark. No end-to-end latency or recognition-quality baseline
+was produced. The file-replay harness is tracked in
+[voice-latency-optimization.md](./docs/voice-latency-optimization.md).
+
+The first attempt was blocked at Android test compilation by a stale exhaustive
+`when` in `AndroidTtsInstrumentedTest`; the missing
+`SelectedVoiceUnavailable` branch was added before the passing run above.
+
+### Optimization branch formatted-source smoke run (2026-10-01)
+
+Command (Windows PowerShell, attached Pixel 10):
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\gradlew.bat :app:testDebugUnitTest :app:connectedDebugAndroidTest
+```
+
+Outcome: **Gradle passed**. The JVM reports contain 922 tests, 0 failures, and 8
+skipped. Pixel instrumentation completed with 24 ordinary checks passing. The
+two new paced replay methods were intentionally not run because no replay run id
+was supplied; their `AssumptionViolatedException`s appear as two failures in the
+raw Android XML report even though the connected Gradle task completed
+successfully. The dedicated replay driver supplies the opt-in arguments.
+`spotlessCheck` also passed after running `spotlessApply`.
+
+This smoke run compiled the debug-only Moonshine adapter and verified APK
+packaging with a single `libonnxruntime.so`. It did not load Moonshine models or
+transcribe corpus files, so the Moonshine/ONNX version combination and all
+candidate latency/accuracy results remain unverified.
+

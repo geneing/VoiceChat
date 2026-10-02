@@ -120,3 +120,5 @@ row out rather than guessing a value.
 - Endpointing policy: [vad-endpointing.md](./vad-endpointing.md)
 - Smart Turn: [smart-turn.md](./smart-turn.md)
 - Device test matrix: [Tests.md](../Tests.md)
+- End-to-end latency and engine comparison plan:
+  [voice-latency-optimization.md](./voice-latency-optimization.md)

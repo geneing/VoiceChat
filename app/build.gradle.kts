@@ -51,6 +51,15 @@ android {
         buildConfig = true
     }
 
+    // Moonshine's debug AAR bundles the same native ONNX library as the
+    // app-managed Smart Turn dependency. Keep one shared object in the debug
+    // APK; dependency order below makes the app-pinned runtime the first match.
+    packaging {
+        jniLibs {
+            pickFirsts += "**/libonnxruntime.so"
+        }
+    }
+
     testOptions {
         unitTests {
             // Robolectric needs the merged resources and manifest to build an
@@ -100,6 +109,12 @@ dependencies {
     // APK. The `turn` package keeps it behind a small, fakeable engine seam, so
     // the JVM tests never load the native runtime.
     implementation(libs.onnxruntime.android)
+
+    // Moonshine is an evaluation candidate only. Its adapter and native/model
+    // dependency are debug-only until the Pixel benchmark and quality review.
+    // The app's ONNX Runtime declaration stays before this AAR so pickFirsts
+    // retains the app-pinned libonnxruntime.so for both native consumers.
+    debugImplementation(libs.moonshine.voice)
 
     // On-device LLM runtimes (M20). AICore/Gemini Nano discovery uses the ML Kit
     // GenAI Prompt API; the LiteRT-LM artifact backs the optional, allow-listed
