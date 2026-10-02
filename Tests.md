@@ -1488,3 +1488,31 @@ packaging with a single `libonnxruntime.so`. It did not load Moonshine models or
 transcribe corpus files, so the Moonshine/ONNX version combination and all
 candidate latency/accuracy results remain unverified.
 
+### Paced speech replay on Pixel 10 (2026-10-01)
+
+The dedicated runner stages local files into the target app's private cache,
+then invokes only the replay instrumentation method; it does not use a live
+microphone. The local `Walking*.m4a` files and the WAV fixtures remain outside
+the APK and repository. Run from PowerShell with the phone attached:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\scripts\run-stt-paced-replay.ps1 `
+  -Engine Both -Mode Both -DeviceSerial '57220DLCR002R6' `
+  -OutputCsv "$env:TEMP\voicechat-stt-mlkit.csv" `
+  -MoonshineOutputCsv "$env:TEMP\voicechat-stt-moonshine.csv" `
+  -ExportDraftLabels -ExportMoonshineDraftLabels
+```
+
+Run 2026-10-01 on Pixel 10 (`frankel`, Android 17/API 37,
+`CP3A.260905.009`), tested source commit
+`acdce6ef505ee2b60745d88daa95939ef7ff0358`: 12 files (10 WAV, two outdoor
+M4A) were paced at 20 ms frames. Both Moonshine Tiny and Small produced final
+results for 12/12 clips. First-partial p50/p90 were 2,184.5/7,750.9 ms (Tiny)
+and 2,276.5/7,878.0 ms (Small). ML Kit Advanced failed 12/12 with
+`STT_RECOGNITION_FAILED`; Basic failed 12/12 with `STT_MODEL_NOT_READY`. These
+ML Kit failures are not valid latency samples. Two local draft sidecars were
+created and confirmed Git-ignored; their transcript text is unreviewed and no
+WER/CER is available. The exact results and cold model-load measurements are
+in [docs/voice-latency-results.md](./docs/voice-latency-results.md).
+

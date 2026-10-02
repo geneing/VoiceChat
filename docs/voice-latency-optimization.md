@@ -36,32 +36,43 @@ run, is recorded in [voice-latency-results.md](./voice-latency-results.md).
   files have no reference transcripts or committed metadata. Accuracy scores
   must wait for trusted labels; model-generated pseudo-labels are not ground
   truth.
-- The attached test device is a Pixel 10 (`frankel`) on Android 17 / API 37. A
-  first combined JVM/device test attempt did not reach test execution because
-  `AndroidTtsInstrumentedTest` has a non-exhaustive `when` for
-  `SelectedVoiceUnavailable`; track that compiler blocker before interpreting
-  any test result.
-- Current candidate priority is Moonshine Voice streaming STT (Tiny then Small)
-  because its Android Kotlin SDK accepts audio chunks and emits partials.
-  Compare the installed ML Kit engine first. Whisper tiny/base and Parakeet 110M
-  are offline-recognition comparisons; their lack of native streaming changes
-  the latency shape. Defer Parakeet 0.6B unless smaller candidates leave a
-  quality gap. For TTS, retain platform TTS as baseline, then test Moonshine's
-  streaming Kokoro integration for time-to-first-audio. Check every model and
-  voice asset license before adding it to the app.
+- The attached test device is a Pixel 10 (`frankel`) on Android 17 / API 37. The
+  paced corpus harness has now run on this device. ML Kit Advanced failed all 12
+  clips (`STT_RECOGNITION_FAILED`) and Basic failed all 12
+  (`STT_MODEL_NOT_READY`), so neither produced a latency or accuracy result.
+- Moonshine Voice 0.1.5 Tiny and Small each returned final results for 12/12
+  clips. Their first-partial medians were 2.18 s and 2.28 s; p90 was 7.75 s and
+  7.88 s, driven by slow outdoor Walking clips. Tiny is currently the stronger
+  end-of-utterance candidate (59 ms median after input end vs 74 ms Small), but
+  no reviewed labels exist, so this is not an accuracy selection. This is a
+  baseline, not an acceptable seamless-latency result. See the single
+  [measurement log](./voice-latency-results.md) for per-run hashes and details.
+- Next STT experiment: reduce Moonshine's debug candidate update interval from
+  500 ms and replay the same corpus. Record CPU/thermal effects if available; a
+  faster callback cadence is useful only if it moves first partial earlier
+  without hurting recognition or finalization. Diagnose the ML Kit failure
+  category separately. Then evaluate Parakeet TDT-CTC 110M as an offline
+  accuracy/final-latency comparison; its simulated-stream demo does not provide
+  native partials. Whisper tiny/base remain later candidates.
+- For TTS, retain platform TTS as baseline and then evaluate streamed text into
+  Moonshine's Kokoro path for first generated audio and first audible playback.
+  Start TTS work after the streaming STT timing/accuracy tradeoff is measured.
+  Audit each voice/G2P asset license before selection.
 
 ## Candidate, runtime, and license metadata
 
 These sources establish published model/runtime properties, not this app's
-performance. **No STT or TTS candidate has a Pixel 10 latency or quality result
-yet.** Vendor-reported speed and streaming behavior below are hypotheses to
-check on the attached device, not measured project results.
+performance. Moonshine Tiny/Small now have one Pixel 10 latency pass, but no STT
+model has a reviewed accuracy result or a repeated-run acceptance result. No
+TTS candidate has a Pixel 10 latency or quality result. Vendor-reported speed
+and streaming behavior below are hypotheses to check on the attached device,
+not measured project results.
 
 | Candidate | Runtime and intended comparison | Model / asset license and source |
 | --- | --- | --- |
 | Moonshine Voice Tiny Streaming and Small Streaming STT | The Android Kotlin SDK is published as `ai.moonshine:moonshine-voice:0.1.5`; stream 16 kHz audio and compare partial cadence with ML Kit. This repository wires it with `debugImplementation` only. The adapter downloads model files on first use into app-private storage; do not bundle them in the APK. | Moonshine says English and all streaming STT models are MIT; verify the pinned asset manifest and third-party runtime notices when updating. See [Android dependency setup](https://moonshine-voice.readthedocs.io/en/latest/using/adding-the-library/) and [Moonshine license](https://github.com/moonshine-ai/moonshine/blob/main/LICENSE). |
 | Whisper tiny.en and base.en | OpenAI's upstream implementation is Python and transcribes a file in sliding 30-second windows. For Android, the proposed route is the separate `whisper.cpp` Android sample/native runtime, so this is an offline phrase-level baseline unless a chunked partial path is separately demonstrated. | OpenAI lists tiny.en at 39M parameters and base.en at 74M and licenses code/weights MIT. Android integration and model conversion are separate runtime work. See [OpenAI Whisper](https://github.com/openai/whisper) and [`whisper.cpp` Android sample](https://github.com/ggml-org/whisper.cpp/tree/master/examples/whisper.android). |
-| Parakeet TDT-CTC 110M English | NVIDIA's NeMo checkpoint has a sherpa-onnx int8 ONNX conversion and an Android-capable runtime. The cited sherpa model is an offline CTC recognizer, so compare full-phrase final latency/quality, not live partial latency. Conversion, Kotlin binding, ABI/package size, and Pixel memory use remain to be checked. | The NVIDIA model card identifies CC-BY-4.0; the sherpa-onnx runtime is Apache-2.0. The sherpa model page reports an approximately 126 MB archive; verify the downloaded artifact and attribution obligations before use. See [NVIDIA model card](https://huggingface.co/nvidia/parakeet-tdt_ctc-110m), [sherpa-onnx 110M model instructions](https://github.com/k2-fsa/sherpa/blob/master/docs/source/onnx/pretrained_models/offline-ctc/nemo/english.rst), and [sherpa-onnx Android guidance](https://github.com/k2-fsa/sherpa-onnx/blob/master/android/README.md). |
+| Parakeet TDT-CTC 110M English | NVIDIA's NeMo checkpoint has a sherpa-onnx int8 ONNX conversion and an Android-capable runtime. The cited sherpa model is an offline CTC recognizer, so compare full-phrase final latency/quality, not live partial latency. The Android “simulated streaming” demo segments offline recognition with VAD; it is not native incremental transcription. The sherpa AAR's bundled ONNX Runtime may conflict with this app's pinned ONNX Runtime and Moonshine's embedded runtime, so inspect APK packaging before adding it. | The NVIDIA model card identifies CC-BY-4.0; the sherpa-onnx runtime is Apache-2.0. The sherpa model page reports an approximately 126 MB archive; verify the downloaded artifact and attribution obligations before use. See [NVIDIA model card](https://huggingface.co/nvidia/parakeet-tdt_ctc-110m), [sherpa-onnx 110M model instructions](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-ctc/nemo/english.html), [simulated streaming explanation](https://k2-fsa.github.io/sherpa/onnx/android/apk-simulate-streaming-asr.html), and [sherpa-onnx Android guidance](https://github.com/k2-fsa/sherpa-onnx/blob/master/android/README.md). |
 | Android platform TTS | Keep as the baseline using an installed Android TTS engine/voice. `UtteranceProgressListener` exposes synthesized audio chunks on API 24+; its generation callbacks and playback callbacks mark different events, so measure first generated audio and first audible output separately. | No speech model is bundled by this app for the platform engine. Voice availability, data downloads, and terms depend on the selected installed engine/vendor; record engine and voice IDs and verify their terms for the chosen device. See [Android TTS progress callbacks](https://developer.android.com/reference/android/speech/tts/UtteranceProgressListener). |
 | Moonshine Voice streaming Kokoro TTS | Candidate Kotlin/Android integration via the same Moonshine Voice SDK. Its 0.1.5 notes describe chunked text input and streamed audio output, including sub-sentence chunking; treat this as a published capability, not a Pixel time-to-first-audio result. | Kokoro-82M weights are Apache-2.0, but Moonshine explicitly says TTS/G2P data follow their own upstream licenses. Before selecting a voice, audit that voice bundle, G2P/lexicon, ONNX conversion, and required notices individually. Model and voice assets are downloaded on demand, not packaged in the app. See [Moonshine TTS data provenance](https://github.com/moonshine-ai/moonshine/blob/main/core/moonshine-tts/data/README.md), [Kokoro source/license](https://github.com/hexgrad/kokoro), and [Moonshine 0.1.5 release notes](https://github.com/moonshine-ai/moonshine/blob/main/CHANGELOGS.md). |
 
