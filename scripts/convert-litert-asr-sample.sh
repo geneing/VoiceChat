@@ -58,7 +58,7 @@ if [[ "$output_path" != /* ]]; then output_path="$repo_root/$output_path"; fi
 if [[ "$audio_path" != /* ]]; then audio_path="$repo_root/$audio_path"; fi
 output_absolute="$(realpath -m -- "$output_path")"
 audio_absolute="$(realpath -m -- "$audio_path")"
-relative_output="$(realpath --relative-to="$repo_root" "$output_absolute")"
+relative_output="$(realpath -m --relative-to="$repo_root" "$output_absolute")"
 case "$relative_output" in
   models/*) ;;
   *) echo "Output must be inside models/." >&2; exit 8 ;;
