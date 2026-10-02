@@ -11,6 +11,9 @@ model="$repo_root/models/litert-asr/moonshine-tiny-fp32-5s.tflite"
 audio="$repo_root/test_data/eng-000001-000081dd.wav"
 model_sha256="c4f4735852d4a8de1003431c43a253376c4c91ee19713778a07bd0a446c7e930"
 model_bytes=109330616
+fp16_model="$repo_root/models/litert-asr/moonshine-tiny-fp16-5s.tflite"
+fp16_sha256="59a3701c307eb0d6ec6d3dc40654b8de3a3c66d67647cd43c25f2aa941d39826"
+fp16_bytes=55271072
 destination="litert-asr"
 
 if ! command -v "$adb_bin" >/dev/null 2>&1 && [[ ! -f "$adb_bin" ]]; then
@@ -26,6 +29,17 @@ actual_bytes="$(stat -c '%s' "$model")"
 if [[ "$actual_sha256" != "$model_sha256" || "$actual_bytes" != "$model_bytes" ]]; then
   echo "Unexpected model artifact: size=$actual_bytes sha256=$actual_sha256" >&2
   exit 1
+fi
+
+fp16_present=false
+if [[ -f "$fp16_model" ]]; then
+  fp16_sha256_actual="$(sha256sum "$fp16_model" | awk '{print $1}')"
+  fp16_bytes_actual="$(stat -c '%s' "$fp16_model")"
+  if [[ "$fp16_sha256_actual" != "$fp16_sha256" || "$fp16_bytes_actual" != "$fp16_bytes" ]]; then
+    echo "Unexpected FP16 artifact: size=$fp16_bytes_actual sha256=$fp16_sha256_actual" >&2
+    exit 1
+  fi
+  fp16_present=true
 fi
 
 adb_args=()
@@ -69,3 +83,6 @@ copy_private() {
 
 copy_private "$model" "moonshine-tiny-fp32-5s.tflite"
 copy_private "$audio" "eng-000001-000081dd.wav"
+if [[ "$fp16_present" == true ]]; then
+  copy_private "$fp16_model" "moonshine-tiny-fp16-5s.tflite"
+fi

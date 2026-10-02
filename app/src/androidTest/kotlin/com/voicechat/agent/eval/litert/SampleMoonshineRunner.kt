@@ -16,15 +16,43 @@ import com.google.ai.edge.litert.TensorType
 import java.io.File
 import kotlin.math.sqrt
 
-/** CPU-only port of the sample runner's encoder plus default autoregressive decoder path. */
-internal class SampleMoonshineCpuRunner(
+/**
+ * Port of the sample runner's encoder plus default autoregressive decoder path.
+ *
+ * The accelerator allowlist is explicit so a caller can request CPU-only, or a
+ * single non-CPU accelerator with no CPU entry. The class does not itself infer
+ * which accelerator executed; it only reports the runtime's available
+ * accelerators and the set it requested. Placement evidence must come from the
+ * runtime or a profiler, never from this request.
+ */
+internal class SampleMoonshineRunner(
     modelFile: File,
+    accelerators: Set<Accelerator> = setOf(Accelerator.CPU),
+    gpuOptions: CompiledModel.GpuOptions? = null,
 ) : AutoCloseable {
+    private val environment = Environment.create()
+
+    /**
+     * Accelerators the loaded runtime reports as available on this device.
+     * Resolved reflectively because the Kotlin API surface exposes this only as
+     * a JVM method; an unavailable query yields an empty set rather than failing
+     * the run.
+     */
+    val availableAccelerators: Set<Accelerator> =
+        runCatching {
+            @Suppress("UNCHECKED_CAST")
+            Environment::class.java
+                .getMethod("getAvailableAccelerators")
+                .invoke(environment) as Set<Accelerator>
+        }.getOrElse { emptySet() }
+
     private val compiledModel =
         CompiledModel.create(
             modelFile.absolutePath,
-            CompiledModel.Options(setOf(Accelerator.CPU)),
-            Environment.create(),
+            CompiledModel.Options(accelerators).also { options ->
+                if (gpuOptions != null) options.gpuOptions = gpuOptions
+            },
+            environment,
         )
 
     private val inputBuffers = compiledModel.createInputBuffers()
