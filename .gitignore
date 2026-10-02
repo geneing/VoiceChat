@@ -54,3 +54,4 @@ google-services.json
 # for re-use — see R-0037). Fetch locally with scripts/fetch-models.sh; do not
 # commit until the intake process passes.
 test_data/smart-turn-v3.2-eng/
+test_data/openai-stt-reference-review/
