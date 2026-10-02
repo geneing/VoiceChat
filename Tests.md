@@ -1577,3 +1577,22 @@ The Android test APK also includes a minimal exhaustive
 probe. This test-only logging case unblocks compilation after the result type
 gained that state; it does not change production TTS and is unrelated to LiteRT.
 
+### LiteRT CPU/GPU/NPU evaluation probes
+
+Five opt-in, debug-only instrumentation probes cover the LiteRT ASR spike. None
+is part of the routine suite, and none transcribes audio (the sample tokenizer
+JNI is not linked), so they produce token counts and timings only:
+
+- `LiteRtSpeechCpuInstrumentedTest` — Moonshine Tiny FP32/FP16, CPU-only allowlist.
+- `LiteRtSpeechGpuInstrumentedTest` — Moonshine Tiny FP16/FP32, GPU-only allowlist.
+- `LiteRtParakeetComparisonInstrumentedTest` — official Parakeet CTC and TDT INT8 artifacts, CPU-only allowlist.
+- `LiteRtParakeetGpuInstrumentedTest` — the same Parakeet artifacts, GPU-only allowlist.
+- `LiteRtParakeetNpuInstrumentedTest` — the upstream F32 AOT Google Tensor G5 TDT artifact, NPU-only allowlist.
+
+Stage inputs with `scripts/stage-litert-asr-inputs.sh` (`STAGE_PARAKEET=1` for the
+Parakeet INT8 set, `STAGE_PARAKEET_NPU=1` for the F32 G5 artifact). The NPU probe
+additionally needs `scripts/fetch-litert-npu-runtime.sh`, which installs the pinned
+v2.1.1 dispatch library under the gitignored `models/` tree. Every result,
+including failures, is recorded in
+[the single speech latency results log](./docs/voice-latency-results.md).
+
