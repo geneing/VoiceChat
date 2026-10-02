@@ -680,7 +680,7 @@ private fun Composer(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Bottom))
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             if (onVoiceToggle != null && dialog.voiceAvailable) {
