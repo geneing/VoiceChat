@@ -3,7 +3,7 @@
 **Branch:** optimization/litert-speech-benchmark
 **Planning base:** 2edaf78017b802a83f24a8c4b804f151ca025cb6
 **Plan created:** 2026-10-02
-**Status:** CPU-only Moonshine Tiny conversion and host signature-load smoke checks are recorded below. A debug/test-only Android CPU instrumentation spike now compiles, but no Android inference/device benchmark has run. The single-window spike has no transcript or accuracy output.
+**Status:** CPU-only Moonshine Tiny conversion and host signature-load smoke checks are recorded in [voice-latency-results.md](./voice-latency-results.md). A debug/test-only Android CPU instrumentation spike has now run on the Pixel 10: four independent cold single-window Moonshine Tiny FP32 runs, observed CPU with a CPU-only allowlist. GPU/NPU lanes, multi-window/streaming timing, transcription text, and accuracy remain unmeasured.
 
 ## Objective
 
@@ -53,8 +53,7 @@ timing or crashed under a then-tested runtime/dispatcher/AOT combination. The
 visible issue text does not establish a current resolution, so it is not proof
 that no current pairing exists. Attempt NPU only when a current Tensor runtime,
 dispatcher, dynamic-feature/AiPack packaging, and artifact are available; mark
-unavailable combinations with the exact missing component. The current preflight
-saw zero ADB devices, so no phone lane is presently runnable.
+unavailable combinations with the exact missing component. An earlier preflight saw zero ADB devices; the Pixel 10 (`frankel`) is now attached (`57220DLCR002R6`), so the CPU lane is runnable and has been run. The GPU/NPU lanes remain gated on actual delegate placement evidence.
 
 The upstream `LiteRtRunner` normally allows both CPU and the selected
 accelerator, so its default GPU/NPU candidate path can fall back to CPU. The
