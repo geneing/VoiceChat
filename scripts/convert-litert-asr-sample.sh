@@ -93,4 +93,11 @@ case "$model" in
     ;;
 esac
 export PYTHONPATH="$sample_dir"
+# Parakeet CTC needs a tracked compatibility patch for the transformers 5.18
+# ParakeetEncoderCTCHead contract; the downloaded sample is left untouched.
+case "$model" in
+  parakeet-ctc | parakeet-tdt)
+    exec "$python" "$repo_root/scripts/litert_asr_parakeet_compat.py" \
+      "--model=$model_id" "$@" ;;
+esac
 exec "$python" "$converter" "--model=$model_id" "$@"
