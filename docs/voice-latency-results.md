@@ -28,7 +28,7 @@ ground truth.
 
 - Branch: optimization/litert-speech-benchmark, created from clean master at source hash 2edaf78017b802a83f24a8c4b804f151ca025cb6.
 - The historical setup, checkpoint table, and existing run log document the prior optimization/voice-latency branch and its sherpa ONNX Parakeet candidate, not LiteRT.
-- No LiteRT conversion, backend execution, or device benchmark is recorded yet. Add only runs that were actually attempted; use explicit unavailable/failure outcomes for unsupported lanes.
+- Two host conversion smoke exports are recorded below (Moonshine Tiny and Whisper Tiny). No Android LiteRT inference, CPU/GPU/NPU backend execution, Pixel benchmark, or accuracy result is recorded yet. Add only runs that were actually attempted; use explicit unavailable/failure outcomes for unsupported lanes.
 ## Significant checkpoints
 
 | Commit | Change | Progress |
@@ -94,8 +94,9 @@ tested source hash and concise change description here.
 
 ## LiteRT run record (optimization/litert-speech-benchmark)
 
-No LiteRT conversion or device benchmark has been run on this branch yet. Add only
-real attempted runs below, with the exact tested source hash and backend evidence.
+No on-device LiteRT inference or device benchmark has been run on this branch
+yet. Add only real attempted device runs below, with the exact tested source hash
+and backend evidence.
 
 | Date | Source commit | Model / quantization | Device / requested backend | Confirmed backend / outcome | Latency / accuracy | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -109,3 +110,4 @@ real attempted runs below, with the exact tested source hash and backend evidenc
 | 2026-10-02 | 95ff477b7a4ddcf8267b1762e7d840b9bc2dfd3a | Added guarded wrappers for the sample-listed converter models and a separate Whisper Small extension; documented WSL-native venv override and the sample’s non-FP16/non-static-INT8 quantization limits. | WSL2 Ubuntu, CPython 3.12.3; pinned sample source checkout matches 07d62e59e235274425863262918eb8794482662c. Shell syntax and wrapper help passed. `pip check` reported no broken requirements, but the first converter CLI invocation failed at import with `ModuleNotFoundError: No module named 'absl'`; setup was incomplete and is being retried. `adb devices -l` listed zero devices. | No model conversion, device inference, latency, or accuracy result. No API request or audio upload. |
 | 2026-10-02 | 98d5dfc7c9fc4fe74a2eadf0b3186b3bc48bbd97 | Completed the CPU-only conversion environment in WSL-native `/tmp/litert-asr-venv`; converter help/import succeeded. First five-second Moonshine Tiny conversion attempt exposed a wrapper path check that rejected a not-yet-created output directory; corrected in `8461ca976f2cab28fe000513353a3b0fcf29705d`. | WSL2 Ubuntu, CPython 3.12.3, torch 2.13.0+cpu, litert-torch 0.9.4, pinned sample commit 07d62e59e235274425863262918eb8794482662c. `pip check` passed. The conversion stopped before downloading model weights or creating an artifact. | No model artifact, conversion time, inference timing, or accuracy result. No device or API request. |
 | 2026-10-02 | `8461ca976f2cab28fe000513353a3b0fcf29705d` (conversion run HEAD `de7bc8fb1aecf4eb7a905b7edadc19a266621a0f`; docs-only after code) | Converted and LiteRT-loaded a five-second Moonshine Tiny FP32 sample artifact after fixing new-output path validation. | WSL2 Ubuntu, CPython 3.12.3, CPU-only PyTorch 2.13.0+cpu; LiteRT Torch 0.9.4; pinned sample 07d62e59e235274425863262918eb8794482662c. The CLI converted `UsefulSensors/moonshine-tiny`, resolved HF revision `390624ed33d594443aa4aa221f5b9f283b545b5a`, input `test_data/eng-000001-000081dd.wav` at 16 kHz/5 s, output 109,330,616 bytes, SHA-256 `c4f4735852d4a8de1003431c43a253376c4c91ee19713778a07bd0a446c7e930`. LiteRT Python loaded `encode` and `decode` signatures; no inference was run. | Converter reported 22 s in its graph-conversion stage only; this is not model inference latency. No phone, backend benchmark, accuracy result, or API upload. |
+| 2026-10-02 | `96f5bd8daa5a06fb37c7db3a70e92e54d723ec65` (conversion run HEAD; later evaluation-doc-only commit) | Converted and LiteRT-loaded a five-second Whisper Tiny FP32 sample artifact. | WSL2 Ubuntu, CPython 3.12.3, CPU-only PyTorch 2.13.0+cpu; LiteRT Torch 0.9.4; pinned sample 07d62e59e235274425863262918eb8794482662c. The CLI converted `openai/whisper-tiny`, resolved HF revision `169d4a4341b33bc18d8881c4b69c2e104e1cc0af`, using `test_data/eng-000001-000081dd.wav` at 16 kHz/5 s. Output is 150,848,568 bytes, SHA-256 `76787da04065c1bf39a36b42b4e5e6c8e0a730c43d0b4e08ed1d30b9d673c9ba`; LiteRT Python loaded `encode` and `decode` signatures, without inference. | Converter reported 14 s in its graph-conversion stage only; this is not inference latency. ADB still lists no device and `OPENAI_API_KEY` is absent. No device timing, accuracy, or API upload. |
