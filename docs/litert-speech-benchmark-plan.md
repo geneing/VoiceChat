@@ -3,7 +3,7 @@
 **Branch:** optimization/litert-speech-benchmark
 **Planning base:** 2edaf78017b802a83f24a8c4b804f151ca025cb6
 **Plan created:** 2026-10-02
-**Status:** Contract/preflight scaffolding and source/toolchain pinning are in progress. This branch has not run a LiteRT conversion or device benchmark.
+**Status:** CPU-only Moonshine Tiny conversion and host signature-load smoke checks are recorded below. A debug/test-only Android CPU instrumentation spike now compiles, but no Android inference/device benchmark has run. The single-window spike has no transcript or accuracy output.
 
 ## Objective
 
@@ -55,6 +55,16 @@ that no current pairing exists. Attempt NPU only when a current Tensor runtime,
 dispatcher, dynamic-feature/AiPack packaging, and artifact are available; mark
 unavailable combinations with the exact missing component. The current preflight
 saw zero ADB devices, so no phone lane is presently runnable.
+
+The upstream `LiteRtRunner` normally allows both CPU and the selected
+accelerator, so its default GPU/NPU candidate path can fall back to CPU. The
+current spike deliberately passes a CPU-only allowlist and disables fallback;
+future GPU/NPU measurements must report placement evidence or remain
+`UNKNOWN`. Upstream model metadata distinguishes the general Parakeet TDT
+`_i8_stateful.tflite` URL from its Pixel-targeted NPU
+`_f32_stateful_<target>.tflite` URL. That F32 target artifact is not evidence
+for the requested INT8 NPU lane. Do not label it INT8 or treat a successful
+fallback as accelerator execution.
 ## Model and backend matrix to evaluate
 
 The upstream README lists these broad lanes. They are compatibility claims from the sample, not results from this project:
@@ -97,16 +107,31 @@ contains ML Kit availability/refusal instrumentation but no device file-replay
 harness; production MlKitSpeechToText, mic smoke test, and generic replay
 contracts remain intact.
 
-### M1b — Instrumented benchmark path (in progress)
+### M1b — CPU instrumentation spike (scaffold complete; device run pending)
 
-Integrate the pinned sample's model metadata, audio preprocessors, decoders,
-window merger, and CPU/GPU runner into Android instrumentation. Keep file replay
-and ML Kit production STT separate. For simulated incremental updates, pace the
-file source at 1x audio rate; report full-speed offline throughput separately.
-Record cold load, warm-up count, per-window preprocess/encode/decode/merge,
-first hypothesis from clip start, final latency, total wall time/RTF, repeat
-p50/p90, failures, and device thermal/power metadata. Confirm accelerator
-placement from runtime evidence rather than the requested delegate alone.
+Added a debug-test-only Moonshine Tiny CPU path using the pinned sample's
+LiteRT `CompiledModel` encode/decode signatures, default autoregressive token
+decoder, and RIFF/PCM16 window reader. The test accepts only the verified
+5-second FP32 artifact and records cold model setup, WAV read/preprocessing,
+encoder, first decoded token, decoder total, model/audio hashes, device details,
+and thermal/power metadata. Its allowlist is CPU-only, so a completed encode is
+CPU evidence with fallback disabled; earlier failures remain `UNKNOWN`/failed.
+Production ML Kit remains unchanged.
+
+This first spike is a single offline window. It does not pace input at 1x,
+perform overlap merging, load the sample's tokenizer JNI library, produce a
+transcript, or measure accuracy / clip-start first text. Those values are
+explicitly unavailable; only the instrument-stage timings are meaningful. The
+sample tokenizer target depends on an NDK-built `tokenizer_jni` library linked
+against `libtokenizers_c.a`; it is not part of this test-only runtime. GPU,
+verified text output, repeated warm runs, and real-time paced replay remain
+future M1b/M2 work. No device timing is claimed until the staged test actually
+runs on a connected device.
+
+To unblock Android test compilation, this checkpoint also adds an explicit
+`SelectedVoiceUnavailable` result branch to the existing M11 TTS instrumentation
+probe. It only logs the result in a test and does not change production TTS; it
+is unrelated to the LiteRT harness.
 ### M2 — Sample-compatible model pipeline
 
 Implement reusable audio decoding and the sample's per-family preprocessing and decoder contracts. Capture cold load, warm-up, preprocess, encoder, decoder, postprocess/window merge, first window-hypothesis, finalization, and total wall time. Separate one-shot throughput from overlapping-window incremental-output timing. Record input audio duration and real-time factor. Validate determinism and transcript-free logging with host tests.

@@ -142,6 +142,9 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.rules)
+    // LiteRT ASR benchmark spike only. Keep the production app and ML Kit path
+    // independent of this sample-pinned runtime.
+    androidTestImplementation(libs.litert.asr.test)
     // Compose instrumented UI tests reuse the BOM-managed Compose UI test library;
     // ui-test-manifest is already a debugImplementation for both test hosts.
     androidTestImplementation(platform(libs.androidx.compose.bom))

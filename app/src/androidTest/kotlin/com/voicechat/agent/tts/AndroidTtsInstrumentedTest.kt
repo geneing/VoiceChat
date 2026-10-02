@@ -62,6 +62,12 @@ class AndroidTtsInstrumentedTest {
                         assertTrue("no on-device voice was reported, so the embedded set must be empty", onDevice.isEmpty())
                     }
 
+                    is TtsEngineAvailability.SelectedVoiceUnavailable -> {
+                        // No voice id is requested in this probe; preserve an
+                        // explicit result if engine policy changes later.
+                        Log.w(TAG, "M11 selected voice unavailable: ${availability.voiceId}")
+                    }
+
                     is TtsEngineAvailability.Unavailable -> {
                         // Recorded above; an unavailable engine is not a pass or a fake.
                         Log.w(TAG, "M11 engine unavailable: ${availability.error.code}")
