@@ -3,7 +3,7 @@
 **Branch:** optimization/litert-speech-benchmark
 **Planning base:** 2edaf78017b802a83f24a8c4b804f151ca025cb6
 **Plan created:** 2026-10-02
-**Status:** Moonshine Tiny FP32 runs on the Pixel 10 CPU (four cold single-window spikes; see results). Parakeet CTC 0.6B FP32 converted through a tracked compatibility shim; Parakeet TDT is blocked on the missing `nemo_toolkit` conversion dependency. Whisper Tiny-30s and Whisper Small-30s FP32 artifacts are converted and host-verified. The GPU lane was attempted on the Pixel 10 with GPU-only FP16 and FP32 allowlists and failed: the OpenGL (ML Drift) delegate kernel failed shader compilation, so there is no GPU execution. NPU did not register. No device GPU/NPU timing, streaming timing, transcription text, or accuracy exists yet.
+**Status:** Moonshine Tiny FP32 runs on the Pixel 10 CPU (four cold single-window spikes; see results). Whisper Tiny and Small FP32-30s run on the Pixel 10 CPU with host-extracted log-Mel features and a decode bounded to 16 steps (model-graph timings only; no transcript). Parakeet CTC 0.6B FP32 converted through a tracked compatibility shim; Parakeet TDT is blocked on the missing `nemo_toolkit` conversion dependency. The GPU lane was attempted on the Pixel 10 with GPU-only FP16 and FP32 allowlists and failed: the OpenGL (ML Drift) delegate kernel failed shader compilation, so there is no GPU execution. NPU did not register. No device GPU/NPU timing, full streaming timing, transcription text, or accuracy exists yet.
 
 ## Objective
 
