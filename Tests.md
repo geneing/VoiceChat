@@ -1504,15 +1504,6 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
   -ExportDraftLabels -ExportMoonshineDraftLabels
 ```
 
-Run 2026-10-01 on Pixel 10 (`frankel`, Android 17/API 37,
-`CP3A.260905.009`), tested source commit
-`acdce6ef505ee2b60745d88daa95939ef7ff0358`: 12 files (10 WAV, two outdoor
-M4A) were paced at 20 ms frames. Both Moonshine Tiny and Small produced final
-results for 12/12 clips. First-partial p50/p90 were 2,184.5/7,750.9 ms (Tiny)
-and 2,276.5/7,878.0 ms (Small). ML Kit Advanced failed 12/12 with
-`STT_RECOGNITION_FAILED`; Basic failed 12/12 with `STT_MODEL_NOT_READY`. These
-ML Kit failures are not valid latency samples. Two local draft sidecars were
-created and confirmed Git-ignored; their transcript text is unreviewed and no
-WER/CER is available. The exact results and cold model-load measurements are
-in [docs/voice-latency-results.md](./docs/voice-latency-results.md).
+Keep all run outcomes, latency/accuracy progress, and tested source hashes in
+the single [speech latency results log](./docs/voice-latency-results.md).
 

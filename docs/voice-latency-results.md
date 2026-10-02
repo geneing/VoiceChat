@@ -21,6 +21,17 @@ drafts are separate, local, Git-ignored files and are not ground truth.
   `DownloadRequired` (2026-10-01). This is availability, not a transcription or
   latency result.
 
+## Significant checkpoints
+
+| Commit | Change | Progress |
+| --- | --- | --- |
+| `ffd905b053156eba5788807574111df2771667aa` | Added app-scoped trace diagnostics, first LLM text timing after request construction, paced WAV/M4A STT replay, local draft sidecars, and debug-only Moonshine candidates. | Initial implementation checkpoint; replay staging issue recorded below. |
+| `acdce6ef505ee2b60745d88daa95939ef7ff0358` | Fixed replay staging through app-private cache and direct instrumentation. | One-file smoke passed; subsequent cold and full-corpus rows below. |
+| `ab5f33c9a291584a8c75306f0ad0588f3dc42108` | Recorded initial Pixel ML Kit failures and added R-0235. | Interim measurement checkpoint; later full-corpus rows supersede its pending-run note. |
+| `2ec3b2e71cab990b0b28e910302e2dd020c0f037` | Updated the plan, test instructions, and this log with the completed 12-file baseline results and model survey. | Documentation checkpoint; source results remain tied to their tested hashes in the run table. |
+| `d652cdcfc3adcf763466e0af6c46278e57f205d9` | Changed Moonshine's debug update cadence to 100 ms for a controlled replay comparison. | Pixel replay completed; full measurements and outcome are below. |
+| `711769bbc2afe9f9e44e74090c6de84d41f06baf` | Restored the 500 ms Moonshine default after the 100 ms comparison showed no material first-partial gain. | `:app:testDebugUnitTest` and `spotlessCheck` passed. The behavior matches the earlier 500 ms device baseline; no separate device pass was run. |
+
 ## Run log
 
 | Date | Tested source commit | Change at checkpoint | Device / engine | Latency result | Accuracy result | Notes |
@@ -31,6 +42,7 @@ drafts are separate, local, Git-ignored files and are not ground truth.
 | 2026-10-01 | `acdce6ef505ee2b60745d88daa95939ef7ff0358` | Same private-cache harness checkpoint; Moonshine Voice debug candidate, cold first use. | Pixel 10; fixture `eng-000129-002077dd.wav` (4,307 ms); Tiny and Small streaming models. | Tiny: model open 17,441 ms; first partial 2,367 ms after audio start; final 215 ms after audio end; wall time 26,039 ms, RTF 6.046 including cold model setup. Small: model open 34,114 ms; first partial 2,371 ms; no final before timeout at 42,937 ms. | Tiny reached a final-result event, but the transcript was not exported and no reviewed reference exists; no WER/CER. Small timed out without a final result. | Single-clip cold run. Model open includes first-run model acquisition/setup; not a warm-inference comparison. Draft labels were not exported in this smoke. |
 | 2026-10-01 | `acdce6ef505ee2b60745d88daa95939ef7ff0358` | Full-corpus ML Kit replay after the cache fix; 12 top-level files (10 WAV, two Walking M4A), each paced in 20 ms frames. | Pixel 10; ML Kit Advanced and Basic; 24 rows. | Advanced: 12/12 failed with `STT_RECOGNITION_FAILED`. Basic: 12/12 failed with `STT_MODEL_NOT_READY`. No valid TTFS, finalization, or RTF comparison. | No final hypotheses for review from these ML Kit attempts; no WER/CER. | Instrumentation completed successfully, but recognizer outcomes failed. Basic had reported `DownloadRequired` in the prior availability check. |
 | 2026-10-01 | `acdce6ef505ee2b60745d88daa95939ef7ff0358` | Full-corpus Moonshine streaming STT pass; warmed Tiny/Small models after a separate cold-first-use smoke. | Pixel 10; Moonshine Voice 0.1.5; Tiny Streaming and Small Streaming; 12 source files/model, all paced at 20 ms. | Tiny: 12/12 `FINAL`; first partial p50 2,184.5 ms / p90 7,750.9 ms; end-to-final p50 59.0 ms / p90 322.4 ms; RTF p50 1.823 / p90 2.020. Small: 12/12 `FINAL`; first partial p50 2,276.5 ms / p90 7,878.0 ms; end-to-final p50 74.0 ms / p90 1,063.8 ms; RTF p50 2.022 / p90 2.094. | Draft sidecars exported locally for both engines (24 rows each) and verified Git-ignored. No human review yet; no WER/CER. | Tested code hash above. Percentiles use linear interpolation at `(n-1)*p`; 12 cases/model, so p90 is descriptive and sensitive to the two outdoor Walking clips. Their first-partial latencies were about 9.78/8.36 s for Tiny and 9.99/8.49 s for Small. Model-open time was 584 ms for the first Tiny case and 1,114 ms for the first Small case, then 0–4 ms; cold first-use smoke separately measured 17.441 s/34.114 s including model acquisition/setup. Reports are local temp CSVs; no transcript text copied here. |
+| 2026-10-02 | `d652cdcfc3adcf763466e0af6c46278e57f205d9` | Changed Moonshine's debug candidate update interval from 500 ms to 100 ms; reran the full corpus. | Pixel 10; Moonshine Voice 0.1.5; Tiny and Small Streaming; 12 source files/model, paced at 20 ms. Device was USB-powered/charging at 80%, battery 28.6 °C during and 29.2 °C after the run; thermal status remained 0. Instrumentation took 505.681 s. | Tiny: 12/12 `FINAL`; first partial p50 2,168.5 ms / p90 7,738.6 ms; end-to-final p50 32 ms / p90 314.5 ms; RTF p50 1.83 / p90 1.98. Small: 12/12 `FINAL`; first partial p50 2,310 ms / p90 7,819.4 ms; end-to-final p50 69 ms / p90 466.3 ms; RTF p50 2.05 / p90 2.17. | No reviewed reference; no WER/CER. For diagnostic consistency only, exact draft-output agreement with the earlier 500 ms run was 7/12 Tiny and 8/12 Small; this is not an accuracy score. New Moonshine draft sidecar is local and Git-ignored. | Relative to the 500 ms run, Tiny first-partial p50 improved only 16 ms and p90 12 ms; Small p50 regressed 33.5 ms while p90 improved 58.6 ms. The more frequent updates did not make first speech meaningfully faster and changed several hypotheses. Use 500 ms for the next comparison. Run report is local temp CSV `voicechat-moonshine-100ms-d652cdc.csv`; no transcript text copied here. |
 
 ## Measurement definitions
 
@@ -57,10 +69,11 @@ Review/edits are still required before measuring WER/CER.
 
 ## Next run
 
-Tune Moonshine's partial update interval and repeat the same corpus on the same
-device. Investigate why ML Kit Advanced reports `Ready` but fails on paced replay
-and why Basic remains not ready. Then add an offline Parakeet 110M final-result
-comparison if runtime/ONNX packaging can be resolved. Do not move to TTS latency
-optimization until a streaming STT candidate has a lower measured first-partial
-latency without an unacceptable accuracy or resource regression. Continue to
-record each run's tested source hash and concise change description here.
+The 100 ms Moonshine update interval did not improve first-partial latency enough
+to justify the changed hypotheses and extra callbacks; the debug candidate is
+being restored to 500 ms. Next evaluate Parakeet TDT-CTC 110M as an offline
+final-result and accuracy comparison, while investigating the ML Kit Advanced
+failure and Basic model availability. Do not move to TTS latency optimization
+until a streaming STT candidate has a materially lower first-partial latency
+without an unacceptable accuracy or resource regression. Continue to record
+each run's tested source hash and concise change description here.

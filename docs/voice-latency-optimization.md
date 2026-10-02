@@ -40,20 +40,18 @@ run, is recorded in [voice-latency-results.md](./voice-latency-results.md).
   paced corpus harness has now run on this device. ML Kit Advanced failed all 12
   clips (`STT_RECOGNITION_FAILED`) and Basic failed all 12
   (`STT_MODEL_NOT_READY`), so neither produced a latency or accuracy result.
-- Moonshine Voice 0.1.5 Tiny and Small each returned final results for 12/12
-  clips. Their first-partial medians were 2.18 s and 2.28 s; p90 was 7.75 s and
-  7.88 s, driven by slow outdoor Walking clips. Tiny is currently the stronger
-  end-of-utterance candidate (59 ms median after input end vs 74 ms Small), but
-  no reviewed labels exist, so this is not an accuracy selection. This is a
-  baseline, not an acceptable seamless-latency result. See the single
-  [measurement log](./voice-latency-results.md) for per-run hashes and details.
-- Next STT experiment: reduce Moonshine's debug candidate update interval from
-  500 ms and replay the same corpus. Record CPU/thermal effects if available; a
-  faster callback cadence is useful only if it moves first partial earlier
-  without hurting recognition or finalization. Diagnose the ML Kit failure
-  category separately. Then evaluate Parakeet TDT-CTC 110M as an offline
-  accuracy/final-latency comparison; its simulated-stream demo does not provide
-  native partials. Whisper tiny/base remain later candidates.
+- Moonshine Voice 0.1.5 Tiny and Small each returned final results for all 12
+  clips. A 100 ms callback interval did not materially improve first partial
+  over the SDK's 500 ms default and changed several draft hypotheses. No
+  reviewed labels exist, so neither model is an accuracy selection; this is a
+  baseline, not an acceptable seamless-latency result. The single
+  [measurement log](./voice-latency-results.md) holds the only detailed
+  measurements and per-run hashes.
+- The Moonshine candidate is restored to the 500 ms default. Next, evaluate
+  Parakeet TDT-CTC 110M as an offline final-result and accuracy comparison; its
+  simulated-stream demo does not provide native partials. Diagnose the ML Kit
+  failure category and model availability. Whisper tiny/base remain later
+  candidates.
 - For TTS, retain platform TTS as baseline and then evaluate streamed text into
   Moonshine's Kokoro path for first generated audio and first audible playback.
   Start TTS work after the streaming STT timing/accuracy tradeoff is measured.
