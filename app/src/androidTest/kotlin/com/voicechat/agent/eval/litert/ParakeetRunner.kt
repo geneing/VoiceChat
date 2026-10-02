@@ -149,84 +149,88 @@ internal class ParakeetRunner(
         val decodeOutputs = compiledModel.createOutputBuffers(DECODE_SIGNATURE)
         val decodeOneInputs = compiledModel.createInputBuffers(DECODE_ONE_SIGNATURE)
         val decodeOneOutputs = compiledModel.createOutputBuffers(DECODE_ONE_SIGNATURE)
+        try {
+            // Encoder output is shared zero-copy by handing the same buffer to both
+            // decode signatures; the sample assigns decoder inputs[0] = encode output.
+            val decode0 = mutableListOf(encodeOutputs[0], decodeInputs[1], decodeInputs[2], decodeInputs[3])
+            val decode1 = mutableListOf(encodeOutputs[0], decodeOneInputs[1], decodeOneInputs[2], decodeOneInputs[3])
 
-        // Encoder output is shared zero-copy by handing the same buffer to both
-        // decode signatures; the sample assigns decoder inputs[0] = encode output.
-        val decode0 = mutableListOf(encodeOutputs[0], decodeInputs[1], decodeInputs[2], decodeInputs[3])
-        val decode1 = mutableListOf(encodeOutputs[0], decodeOneInputs[1], decodeOneInputs[2], decodeOneInputs[3])
+            val maxTimeIndex = encodeOutputDims.last()
+            val numTokenIds =
+                compiledModel.getInputTensorType(inputBufferName(1), DECODE_SIGNATURE).numElements
+            val logitsPer =
+                compiledModel.getOutputTensorType(outputBufferName(0), DECODE_SIGNATURE).numElements /
+                    numTokenIds / maxTimeIndex
 
-        val maxTimeIndex = encodeOutputDims.last()
-        val numTokenIds =
-            compiledModel.getInputTensorType(inputBufferName(1), DECODE_SIGNATURE).numElements
-        val logitsPer =
-            compiledModel.getOutputTensorType(outputBufferName(0), DECODE_SIGNATURE).numElements /
-                numTokenIds / maxTimeIndex
+            val numStates =
+                compiledModel.getInputTensorType(inputBufferName(2), DECODE_SIGNATURE).numElements
+            val zeroStates = FloatArray(numStates)
+            // States: [input state buffers] and [output state buffers] ping-pong.
+            val statesIn = listOf(decodeInputs[2], decodeInputs[3])
+            val statesOut = listOf(decodeOutputs[1], decodeOutputs[2])
+            var statesIndex = 0
+            statesIn.forEach { it.writeFloat(zeroStates) }
 
-        val numStates =
-            compiledModel.getInputTensorType(inputBufferName(2), DECODE_SIGNATURE).numElements
-        val zeroStates = FloatArray(numStates)
-        // States: [input state buffers] and [output state buffers] ping-pong.
-        val statesIn = listOf(decodeInputs[2], decodeInputs[3])
-        val statesOut = listOf(decodeOutputs[1], decodeOutputs[2])
-        var statesIndex = 0
-        statesIn.forEach { it.writeFloat(zeroStates) }
+            var signature = DECODE_SIGNATURE
+            var numInferenceTokens = numTokenIds
+            var tokenIdsBuffer = decodeInputs[1]
+            var tokenIds = IntArray(numTokenIds).also { it[0] = TDT_BLANK }
+            var logits = decodeOutputs[0]
+            var tokenIndex = 0
+            var timeIndex = 0
+            var iterations = 0
+            val emitted = ArrayList<Int>()
 
-        var signature = DECODE_SIGNATURE
-        var numInferenceTokens = numTokenIds
-        var tokenIdsBuffer = decodeInputs[1]
-        var tokenIds = IntArray(numTokenIds).also { it[0] = TDT_BLANK }
-        var logits = decodeOutputs[0]
-        var tokenIndex = 0
-        var timeIndex = 0
-        var iterations = 0
-        val emitted = ArrayList<Int>()
-
-        while (timeIndex < maxTimeIndex) {
-            tokenIdsBuffer.writeInt(tokenIds)
-            val inputs = if (signature == DECODE_SIGNATURE) decode0 else decode1
-            val outputs =
-                if (signature == DECODE_SIGNATURE) {
-                    listOf(logits, statesOut[1 - statesIndex], statesOut[statesIndex])
-                } else {
-                    listOf(logits, decodeOneOutputs[1], decodeOneOutputs[2])
-                }
-            compiledModel.run(inputs, outputs, signature)
-            iterations++
-
-            val values = logits.readFloat()
-            val base = timeIndex * numInferenceTokens * logitsPer + tokenIndex * logitsPer
-            val endDuration = base + logitsPer
-            val endToken = endDuration - NUM_DURATIONS
-            val token = ((base until endToken).maxByOrNull { values[it] } ?: base) - base
-            if (token != TDT_BLANK) {
-                emitted.add(token)
-                if (numInferenceTokens > 1) {
-                    tokenIndex++
-                    if (tokenIndex >= numInferenceTokens) {
-                        signature = DECODE_ONE_SIGNATURE
-                        numInferenceTokens = 1
-                        tokenIdsBuffer = decodeOneInputs[1]
-                        tokenIds = IntArray(1)
-                        logits = decodeOneOutputs[0]
-                        tokenIndex = 0
+            while (timeIndex < maxTimeIndex) {
+                tokenIdsBuffer.writeInt(tokenIds)
+                val inputs = if (signature == DECODE_SIGNATURE) decode0 else decode1
+                val outputs =
+                    if (signature == DECODE_SIGNATURE) {
+                        listOf(logits, statesOut[1 - statesIndex], statesOut[statesIndex])
+                    } else {
+                        listOf(logits, decodeOneOutputs[1], decodeOneOutputs[2])
                     }
-                }
-                tokenIds[tokenIndex] = token
-            }
-            val duration = ((endToken until endDuration).maxByOrNull { values[it] } ?: endToken) - endToken
-            timeIndex += if (duration == 0 && token == TDT_BLANK) 1 else duration
-            if (numInferenceTokens == 1 && token != TDT_BLANK) statesIndex = 1 - statesIndex
-        }
+                compiledModel.run(inputs, outputs, signature)
+                iterations++
 
-        decodeOneInputs.let { }
-        return ParakeetRunResult(
-            encodeMs = encodeMs,
-            decodeMs = elapsed(decodeStart),
-            tokenIds = emitted.toIntArray(),
-            decodeIterations = iterations,
-            encodeOutputShape = encodeOutputDims,
-            modelLoadMs = loadMs,
-        )
+                val values = logits.readFloat()
+                val base = timeIndex * numInferenceTokens * logitsPer + tokenIndex * logitsPer
+                val endDuration = base + logitsPer
+                val endToken = endDuration - NUM_DURATIONS
+                val token = ((base until endToken).maxByOrNull { values[it] } ?: base) - base
+                if (token != TDT_BLANK) {
+                    emitted.add(token)
+                    if (numInferenceTokens > 1) {
+                        tokenIndex++
+                        if (tokenIndex >= numInferenceTokens) {
+                            signature = DECODE_ONE_SIGNATURE
+                            numInferenceTokens = 1
+                            tokenIdsBuffer = decodeOneInputs[1]
+                            tokenIds = IntArray(1)
+                            logits = decodeOneOutputs[0]
+                            tokenIndex = 0
+                        }
+                    }
+                    tokenIds[tokenIndex] = token
+                }
+                val duration = ((endToken until endDuration).maxByOrNull { values[it] } ?: endToken) - endToken
+                timeIndex += if (duration == 0 && token == TDT_BLANK) 1 else duration
+                if (numInferenceTokens == 1 && token != TDT_BLANK) statesIndex = 1 - statesIndex
+            }
+
+            return ParakeetRunResult(
+                encodeMs = encodeMs,
+                decodeMs = elapsed(decodeStart),
+                tokenIds = emitted.toIntArray(),
+                decodeIterations = iterations,
+                encodeOutputShape = encodeOutputDims,
+                modelLoadMs = loadMs,
+            )
+        } finally {
+            // The buffers created for this decode are not owned by close();
+            // release them so repeated runs do not leak native memory.
+            (decodeInputs + decodeOutputs + decodeOneInputs + decodeOneOutputs).forEach { it.close() }
+        }
     }
 
     private fun elapsed(startNanos: Long) = (android.os.SystemClock.elapsedRealtimeNanos() - startNanos) / 1_000_000L
