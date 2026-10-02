@@ -69,6 +69,17 @@ android {
     }
 }
 
+// The Parakeet candidate is intentionally opt-in and local-only. Its source set
+// and runtime are enabled only after the pinned sherpa-onnx AAR has been fetched
+// into the gitignored models/ directory.
+val sherpaOnnxParakeetAar = rootProject.file("models/sherpa-onnx-1.13.8.aar")
+if (sherpaOnnxParakeetAar.isFile) {
+    android.sourceSets
+        .getByName("androidTest")
+        .kotlin.directories
+        .add("src/parakeetAndroidTest/kotlin")
+}
+
 // Export the Room schema so migrations have a checked-in contract to review.
 // The app has a single schema version today (see docs/persistence.md); the
 // schema-export test asserts the JSON is produced and matches version 1.
@@ -115,6 +126,18 @@ dependencies {
     // The app's ONNX Runtime declaration stays before this AAR so pickFirsts
     // retains the app-pinned libonnxruntime.so for both native consumers.
     debugImplementation(libs.moonshine.voice)
+    if (sherpaOnnxParakeetAar.isFile) {
+        // Device-evaluation-only AAR (48 MB); absent from clean checkouts and
+        // release builds. The Parakeet model itself stays outside all APKs.
+        debugImplementation(
+            fileTree(
+                mapOf(
+                    "dir" to sherpaOnnxParakeetAar.parentFile,
+                    "include" to listOf(sherpaOnnxParakeetAar.name),
+                ),
+            ),
+        )
+    }
 
     // On-device LLM runtimes (M20). AICore/Gemini Nano discovery uses the ML Kit
     // GenAI Prompt API; the LiteRT-LM artifact backs the optional, allow-listed

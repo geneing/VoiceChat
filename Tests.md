@@ -1507,3 +1507,20 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 Keep all run outcomes, latency/accuracy progress, and tested source hashes in
 the single [speech latency results log](./docs/voice-latency-results.md).
 
+For the offline Parakeet comparison, fetch the pinned candidate artifacts first,
+then run the same corpus on the attached Pixel 10:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\scripts\fetch-parakeet-candidate.ps1
+.\scripts\run-stt-paced-replay.ps1 `
+  -Engine Parakeet -DeviceSerial '57220DLCR002R6' `
+  -ParakeetOutputCsv "$env:TEMP\voicechat-parakeet.csv" `
+  -ExportParakeetDraftLabels
+```
+
+This candidate is offline, so this run records model-open, audio-decode, and
+full-phrase decode time; it has no first-partial metric. The runner stages
+checksum-verified weights only to the debug app's private storage. Draft text is
+saved to an ignored local CSV for manual review.
+

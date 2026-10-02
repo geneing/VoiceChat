@@ -1,16 +1,19 @@
 param(
     [string]$InputPath = "test_data",
-    [ValidateSet("MlKit", "Moonshine", "Both")]
+    [ValidateSet("MlKit", "Moonshine", "Parakeet", "Both")]
     [string]$Engine = "MlKit",
     [ValidateSet("Advanced", "Basic", "Both")]
     [string]$Mode = "Advanced",
     [string]$OutputCsv,
     [string]$MoonshineOutputCsv,
+    [string]$ParakeetOutputCsv,
     [string]$DeviceSerial,
     [switch]$ExportDraftLabels,
     [string]$DraftLabelsPath,
     [switch]$ExportMoonshineDraftLabels,
-    [string]$MoonshineDraftLabelsPath
+    [string]$MoonshineDraftLabelsPath,
+    [switch]$ExportParakeetDraftLabels,
+    [string]$ParakeetDraftLabelsPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,6 +67,9 @@ if ($Engine -eq "Moonshine" -and $ExportDraftLabels) {
 if ($Engine -eq "MlKit" -and $ExportMoonshineDraftLabels) {
     throw "-ExportMoonshineDraftLabels requires -Engine Moonshine or Both."
 }
+if ($Engine -ne "Parakeet" -and $ExportParakeetDraftLabels) {
+    throw "-ExportParakeetDraftLabels requires -Engine Parakeet."
+}
 $mlDraftLabels = Resolve-DraftLabelsOutput `
     -Enabled:$ExportDraftLabels `
     -RequestedPath $DraftLabelsPath `
@@ -74,9 +80,18 @@ $moonshineDraftLabels = Resolve-DraftLabelsOutput `
     -RequestedPath $MoonshineDraftLabelsPath `
     -DefaultFileName "test_data/stt-draft-labels-moonshine-$runId.csv" `
     -OptionName "ExportMoonshineDraftLabels"
+$parakeetDraftLabels = Resolve-DraftLabelsOutput `
+    -Enabled:$ExportParakeetDraftLabels `
+    -RequestedPath $ParakeetDraftLabelsPath `
+    -DefaultFileName "test_data/stt-draft-labels-parakeet-$runId.csv" `
+    -OptionName "ExportParakeetDraftLabels"
 if ($mlDraftLabels -and $moonshineDraftLabels -and
     $mlDraftLabels.Path.Equals($moonshineDraftLabels.Path, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "ML Kit and Moonshine draft labels need separate local output paths."
+}
+if (($parakeetDraftLabels -and $mlDraftLabels -and $parakeetDraftLabels.Path.Equals($mlDraftLabels.Path, [System.StringComparison]::OrdinalIgnoreCase)) -or
+    ($parakeetDraftLabels -and $moonshineDraftLabels -and $parakeetDraftLabels.Path.Equals($moonshineDraftLabels.Path, [System.StringComparison]::OrdinalIgnoreCase))) {
+    throw "Parakeet draft labels need a separate local output path."
 }
 foreach ($draftOutput in @($mlDraftLabels, $moonshineDraftLabels) | Where-Object { $null -ne $_ }) {
     $draftOutputDirectory = Split-Path -Parent $draftOutput.Path
@@ -97,6 +112,12 @@ if ([string]::IsNullOrWhiteSpace($MoonshineOutputCsv)) {
     $MoonshineOutputCsv = Join-Path (Get-Location).Path $MoonshineOutputCsv
 }
 $MoonshineOutputCsv = [System.IO.Path]::GetFullPath($MoonshineOutputCsv)
+if ([string]::IsNullOrWhiteSpace($ParakeetOutputCsv)) {
+    $ParakeetOutputCsv = Join-Path $env:TEMP "voicechat-parakeet-replay-$runId.csv"
+} elseif (-not [System.IO.Path]::IsPathRooted($ParakeetOutputCsv)) {
+    $ParakeetOutputCsv = Join-Path (Get-Location).Path $ParakeetOutputCsv
+}
+$ParakeetOutputCsv = [System.IO.Path]::GetFullPath($ParakeetOutputCsv)
 if ($Engine -eq "Both" -and $OutputCsv.Equals($MoonshineOutputCsv, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "ML Kit and Moonshine timing reports need separate output paths."
 }
@@ -104,6 +125,7 @@ if ($Engine -eq "Both" -and $OutputCsv.Equals($MoonshineOutputCsv, [System.Strin
 $outputDirectories = @()
 if ($Engine -in @("MlKit", "Both")) { $outputDirectories += Split-Path -Parent $OutputCsv }
 if ($Engine -in @("Moonshine", "Both")) { $outputDirectories += Split-Path -Parent $MoonshineOutputCsv }
+if ($Engine -eq "Parakeet") { $outputDirectories += Split-Path -Parent $ParakeetOutputCsv }
 foreach ($outputDirectory in $outputDirectories | Select-Object -Unique) {
     if (-not (Test-Path -LiteralPath $outputDirectory)) {
         New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
@@ -200,6 +222,7 @@ if ($Engine -in @("MlKit", "Both")) {
         DraftOutput = $mlDraftLabels
         OutputCsv = $OutputCsv
         IsMlKit = $true
+        IsParakeet = $false
     }
 }
 if ($Engine -in @("Moonshine", "Both")) {
@@ -212,6 +235,23 @@ if ($Engine -in @("Moonshine", "Both")) {
         DraftOutput = $moonshineDraftLabels
         OutputCsv = $MoonshineOutputCsv
         IsMlKit = $false
+        IsParakeet = $false
+    }
+}
+if ($Engine -eq "Parakeet") {
+    $targets += [pscustomobject]@{
+        Name = "Parakeet TDT-CTC 110M offline"
+        ClassName = "com.voicechat.agent.stt.ParakeetOfflineReplayInstrumentedTest"
+        ResultsFile = "parakeet-results.csv"
+        DraftFile = "parakeet-draft-labels.csv"
+        ExportDraftLabels = [bool]$ExportParakeetDraftLabels
+        DraftOutput = $parakeetDraftLabels
+        OutputCsv = $ParakeetOutputCsv
+        IsMlKit = $false
+        IsParakeet = $true
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot "models\sherpa-onnx-1.13.8.aar"))) {
+        throw "Parakeet runtime is not present. Run scripts/fetch-parakeet-candidate.ps1 first."
     }
 }
 $failedTargets = @()
@@ -225,6 +265,12 @@ try {
         & $gradle :app:installDebug :app:installDebugAndroidTest "-Pandroid.injected.device.serial=$DeviceSerial"
         if ($LASTEXITCODE -ne 0) {
             throw "Gradle install failed with exit code $LASTEXITCODE."
+        }
+        if ($Engine -eq "Parakeet") {
+            & (Join-Path $PSScriptRoot "push-parakeet-candidate.ps1") -DeviceSerial $DeviceSerial
+            if ($LASTEXITCODE -ne 0) {
+                throw "Could not stage the pinned Parakeet model on the device."
+            }
         }
 
         & $adb -s $DeviceSerial shell mkdir -p $deviceTempRunDirectory
@@ -271,7 +317,8 @@ try {
         Write-Output "Verified app-private cache path '$remoteRunDirectory': $($expectedDeviceNames.Count) sanitized audio files staged."
 
         foreach ($target in $targets) {
-            Write-Output "Running real-time paced $($target.Name) STT replay..."
+            $replayKind = if ($target.IsParakeet) { "offline batch" } else { "real-time paced" }
+            Write-Output "Running $replayKind $($target.Name) STT replay..."
             $instrumentationArguments = @(
                 "-w",
                 "-e", "class", $target.ClassName,
@@ -296,7 +343,7 @@ try {
                 $failedTargets += "$($target.Name) (exit $targetExitCode)"
             }
 
-            $deviceCsvPath = Join-Path $env:TEMP "voicechat-stt-replay-$runId-$($target.IsMlKit)-device.csv"
+            $deviceCsvPath = Join-Path $env:TEMP "voicechat-stt-replay-$runId-$($target.Name -replace '[^A-Za-z0-9]+', '-')-device.csv"
             $deviceTempFiles += $deviceCsvPath
             $remoteResults = "$remoteRunDirectory/$($target.ResultsFile)"
             try {
@@ -322,8 +369,12 @@ try {
                         failure_ms = $deviceRow.failure_ms
                         input_start_to_first_partial_ms = $deviceRow.input_start_to_first_partial_ms
                         input_end_to_final_ms = $deviceRow.input_end_to_final_ms
+                        audio_decode_ms = $deviceRow.audio_decode_ms
+                        decode_ms = $deviceRow.decode_ms
                         wall_time_ms = $deviceRow.wall_time_ms
                         real_time_factor = $deviceRow.real_time_factor
+                        decode_real_time_factor = $deviceRow.decode_real_time_factor
+                        streaming = $deviceRow.streaming
                         outcome = $deviceRow.outcome
                         error_code = $deviceRow.error_code
                     }
@@ -388,12 +439,18 @@ if ($Engine -in @("MlKit", "Both") -and (Test-Path -LiteralPath $OutputCsv)) {
 if ($Engine -in @("Moonshine", "Both") -and (Test-Path -LiteralPath $MoonshineOutputCsv)) {
     Write-Output "Content-free Moonshine Tiny/Small replay rows: $MoonshineOutputCsv"
 }
+if ($Engine -eq "Parakeet" -and (Test-Path -LiteralPath $ParakeetOutputCsv)) {
+    Write-Output "Content-free Parakeet offline replay rows: $ParakeetOutputCsv"
+}
 Write-Output "WAV files: $($wavRows.Count); M4A files: $($m4aRows.Count); engine: $Engine; ML Kit mode: $Mode"
 if ($ExportDraftLabels -and $mlDraftLabels -and (Test-Path -LiteralPath $mlDraftLabels.Path)) {
     Write-Output "ML Kit machine-generated, unverified draft labels: $($mlDraftLabels.Path) (Git-ignored)"
 }
 if ($ExportMoonshineDraftLabels -and $moonshineDraftLabels -and (Test-Path -LiteralPath $moonshineDraftLabels.Path)) {
     Write-Output "Moonshine machine-generated, unverified draft labels: $($moonshineDraftLabels.Path) (Git-ignored)"
+}
+if ($ExportParakeetDraftLabels -and $parakeetDraftLabels -and (Test-Path -LiteralPath $parakeetDraftLabels.Path)) {
+    Write-Output "Parakeet machine-generated, unverified draft labels: $($parakeetDraftLabels.Path) (Git-ignored)"
 }
 if ($failedTargets.Count -gt 0) {
     throw "One or more on-device STT replay targets failed: $($failedTargets -join ', '). Available reports were saved to their separate output paths."
