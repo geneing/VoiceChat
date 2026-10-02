@@ -10,6 +10,7 @@ package com.voicechat.agent.eval.litert
 
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
+import com.google.ai.edge.litert.Environment
 import com.google.ai.edge.litert.TensorBuffer
 import com.google.ai.edge.litert.TensorType
 import java.io.File
@@ -26,25 +27,45 @@ internal data class ParakeetRunResult(
 
 /**
  * Port of the pinned sample's Parakeet encode plus the CTC and stateful TDT
- * decoders. Requests a CPU-only accelerator allowlist here; a completed run is
- * therefore CPU evidence. It emits token IDs only; text mapping is a separate,
- * explicitly-external step and is not accuracy.
+ * decoders. The accelerator allowlist is explicit so a caller can request
+ * CPU-only, or a single non-CPU accelerator with no CPU entry; the class does
+ * not itself infer which accelerator executed. It emits token IDs only; text
+ * mapping is a separate, explicitly-external step and is not accuracy.
  */
 internal class ParakeetRunner(
     modelFile: File,
     private val mode: Mode,
+    accelerators: Set<Accelerator> = setOf(Accelerator.CPU),
+    gpuOptions: CompiledModel.GpuOptions? = null,
 ) : AutoCloseable {
     enum class Mode {
         CTC,
         TDT,
     }
 
+    private val environment = Environment.create()
+
+    /**
+     * Accelerators the loaded runtime reports as available on this device.
+     * Resolved reflectively because the Kotlin API surface exposes this only as
+     * a JVM method; an unavailable query yields an empty set rather than failing
+     * the run.
+     */
+    val availableAccelerators: Set<Accelerator> =
+        runCatching {
+            @Suppress("UNCHECKED_CAST")
+            Environment::class.java
+                .getMethod("getAvailableAccelerators")
+                .invoke(environment) as Set<Accelerator>
+        }.getOrElse { emptySet() }
+
     private val compiledModel =
         CompiledModel.create(
             modelFile.absolutePath,
-            CompiledModel.Options(setOf(Accelerator.CPU)),
-            com.google.ai.edge.litert.Environment
-                .create(),
+            CompiledModel.Options(accelerators).also { options ->
+                if (gpuOptions != null) options.gpuOptions = gpuOptions
+            },
+            environment,
         )
 
     private val inputBuffers = compiledModel.createInputBuffers()
