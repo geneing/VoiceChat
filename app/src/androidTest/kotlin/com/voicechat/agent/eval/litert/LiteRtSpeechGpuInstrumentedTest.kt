@@ -113,11 +113,11 @@ class LiteRtSpeechGpuInstrumentedTest {
             return
         }
 
-        var runner: SampleMoonshineRunner? = null
+        var runner: SampleAsrRunner? = null
         try {
             val loadStart = SystemClock.elapsedRealtimeNanos()
             runner =
-                SampleMoonshineRunner(
+                SampleAsrRunner(
                     modelFile = model,
                     accelerators = setOf(Accelerator.GPU),
                     gpuOptions =

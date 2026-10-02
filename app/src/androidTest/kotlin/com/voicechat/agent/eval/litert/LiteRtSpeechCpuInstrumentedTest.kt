@@ -58,14 +58,14 @@ class LiteRtSpeechCpuInstrumentedTest {
             throw AssertionError("Staged LiteRT model does not match the converted artifact")
         }
 
-        var runner: SampleMoonshineRunner? = null
+        var runner: SampleAsrRunner? = null
         var observedBackend = "UNKNOWN"
         var outcome = "INFERENCE_FAILED"
         val thermalBefore = thermalStatus()
         val batteryBefore = batterySnapshot()
         try {
             val loadStart = SystemClock.elapsedRealtimeNanos()
-            runner = SampleMoonshineRunner(model)
+            runner = SampleAsrRunner(model)
             val modelLoadMs = elapsedMs(loadStart)
 
             val preprocessStart = SystemClock.elapsedRealtimeNanos()

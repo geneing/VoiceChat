@@ -86,3 +86,35 @@ copy_private "$audio" "eng-000001-000081dd.wav"
 if [[ "$fp16_present" == true ]]; then
   copy_private "$fp16_model" "moonshine-tiny-fp16-5s.tflite"
 fi
+
+copy_validated() {
+  local path="$1" expected_sha="$2" expected_bytes="$3" dest="$4"
+  if [[ ! -f "$path" ]]; then
+    echo "Missing staged artifact: $path" >&2
+    exit 1
+  fi
+  local actual_sha actual_bytes
+  actual_sha="$(sha256sum "$path" | awk '{print $1}')"
+  actual_bytes="$(stat -c '%s' "$path")"
+  if [[ "$actual_sha" != "$expected_sha" || "$actual_bytes" != "$expected_bytes" ]]; then
+    echo "Unexpected artifact $path: size=$actual_bytes sha256=$actual_sha" >&2
+    exit 1
+  fi
+  copy_private "$path" "$dest"
+}
+
+# Whisper artifacts are large; stage them only when explicitly requested.
+if [[ "${STAGE_WHISPER:-0}" == "1" ]]; then
+  copy_validated \
+    "$repo_root/models/litert-asr/whisper-tiny-fp32-30s.tflite" \
+    "6e160e3b992a7af2adab32c0d4942aec417698b83d77e456339fe1c89fff50ed" \
+    151149520 "whisper-tiny-fp32-30s.tflite"
+  copy_validated \
+    "$repo_root/models/litert-asr/whisper-small-fp32-30s.tflite" \
+    "157f637fafbc6a2fef9e5c81c33d3a478d9100b7e176da10cdfac3a791ed1b4a" \
+    967516352 "whisper-small-fp32-30s.tflite"
+  copy_validated \
+    "$repo_root/models/litert-asr/whisper-tiny-features-30s.f32" \
+    "9a92bc4e39afec7e170daa22ea67fbf1325b0e10b09ed187280e463982ca0a62" \
+    960000 "whisper-features-30s.f32"
+fi

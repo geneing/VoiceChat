@@ -17,18 +17,24 @@ import java.io.File
 import kotlin.math.sqrt
 
 /**
- * Port of the sample runner's encoder plus default autoregressive decoder path.
+ * Port of the sample runner's `encode` signature plus its default autoregressive
+ * `decode` decoder, shared by the Moonshine and Whisper spikes.
  *
  * The accelerator allowlist is explicit so a caller can request CPU-only, or a
- * single non-CPU accelerator with no CPU entry. The class does not itself infer
- * which accelerator executed; it only reports the runtime's available
- * accelerators and the set it requested. Placement evidence must come from the
- * runtime or a profiler, never from this request.
+ * single non-CPU accelerator with no CPU entry. The class does not infer which
+ * accelerator executed; it only reports the runtime's available accelerators and
+ * the set it requested. Placement evidence must come from the runtime or a
+ * profiler, never from this request.
+ *
+ * `decodeStartToken`/`decodeStopToken` come from the sample's model metadata
+ * (Moonshine 1/2, Whisper 50258/50257), not from a guess.
  */
-internal class SampleMoonshineRunner(
+internal class SampleAsrRunner(
     modelFile: File,
     accelerators: Set<Accelerator> = setOf(Accelerator.CPU),
     gpuOptions: CompiledModel.GpuOptions? = null,
+    decodeStartToken: Int = 1,
+    decodeStopToken: Int = 2,
 ) : AutoCloseable {
     private val environment = Environment.create()
 
@@ -57,7 +63,7 @@ internal class SampleMoonshineRunner(
 
     private val inputBuffers = compiledModel.createInputBuffers()
     private val outputBuffers = compiledModel.createOutputBuffers()
-    private val decoder = DefaultDecoder(compiledModel)
+    private val decoder = DefaultDecoder(compiledModel, decodeStartToken, decodeStopToken)
     private val expectedInputFloats =
         compiledModel.getInputTensorType(inputBufferName(0), ENCODE_SIGNATURE).numElements
 
@@ -81,9 +87,11 @@ internal class SampleMoonshineRunner(
     /** Runs the sample's default autoregressive decoder over encoded buffers. */
     fun decode(encodedOutputs: List<TensorBuffer>): Sequence<Int> = decoder.decode(encodedOutputs)
 
-    /** Mirrors LiteRtRunner.DefaultDecoder from the pinned sample for Moonshine. */
+    /** Mirrors LiteRtRunner.DefaultDecoder from the pinned sample. */
     private class DefaultDecoder(
         private val model: CompiledModel,
+        private val startToken: Int,
+        private val stopToken: Int,
     ) {
         private val inputBuffers = model.createInputBuffers(DECODE_SIGNATURE)
         private val tokenIdsBuffer = inputBuffers[inputBuffers.size - 2]
@@ -126,7 +134,7 @@ internal class SampleMoonshineRunner(
                 maskBuffer.writeFloat(causalMask)
 
                 val tokenIds = IntArray(numTokenIds)
-                tokenIds[0] = MOONSHINE_START_TOKEN
+                tokenIds[0] = startToken
                 for (index in 0 until numTokenIds - 1) {
                     tokenIdsBuffer.writeInt(tokenIds)
                     model.run(decodeInputs, outputBuffers, DECODE_SIGNATURE)
@@ -136,7 +144,7 @@ internal class SampleMoonshineRunner(
                     val end = (index + 1) * logitsPerToken
                     val token =
                         ((start until end).maxByOrNull { logits[it] } ?: start) - start
-                    if (token == MOONSHINE_STOP_TOKEN) break
+                    if (token == stopToken) break
                     yield(token)
                     tokenIds[index + 1] = token
                 }
@@ -148,8 +156,6 @@ internal class SampleMoonshineRunner(
         const val ENCODE_SIGNATURE = "encode"
         const val DECODE_SIGNATURE = "decode"
         const val END_OF_SEQUENCE = -1
-        const val MOONSHINE_START_TOKEN = 1
-        const val MOONSHINE_STOP_TOKEN = 2
         const val MASKED_IN = 0.0f
         const val MASKED_OUT = -0.7f * Float.MAX_VALUE
 
