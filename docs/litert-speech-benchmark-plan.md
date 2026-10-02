@@ -24,7 +24,7 @@ Pinned conversion source: google-ai-edge/litert-samples commit
 07d62e59e235274425863262918eb8794482662c. The conversion environment uses
 CPython 3.12 on Linux/WSL, with direct pins in
 [scripts/litert-asr-conversion-requirements.txt](../scripts/litert-asr-conversion-requirements.txt)
-and an isolated venv under ignored build/. LiteRT Torch is Linux-only; do not
+and an isolated venv under ignored build/ by default. Set LITERT_ASR_VENV_DIR to use WSL native storage when installing on a mounted Windows worktree. LiteRT Torch is Linux-only; do not
 install these packages into the app's Windows/Gradle environment. CPU-only
 PyTorch is pinned from the official download.pytorch.org/whl/cpu index. A full
 resolved dependency lock and wheel hashes are pending the first successful
