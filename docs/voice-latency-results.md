@@ -100,3 +100,9 @@ real attempted runs below, with the exact tested source hash and backend evidenc
 | Date | Source commit | Model / quantization | Device / requested backend | Confirmed backend / outcome | Latency / accuracy | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | No run recorded | | | | | | |
+
+## LiteRT setup checkpoints
+
+| Date | Source commit | Change description | Environment / outcome | Timing and accuracy |
+| --- | --- | --- | --- | --- |
+| 2026-10-02 | dd857417a2ee1894cfdc8e0937858a9378293367 | Pinned the LiteRT speech sample source revision and added a Linux/WSL isolated conversion environment with a CPU-only PyTorch wheel. | WSL2 Ubuntu, CPython 3.12.3. Pinned sample source: 07d62e59e235274425863262918eb8794482662c. Shell syntax and source checkout checks passed. Pinned package installation is still running; no ASR model weights were requested. Android preflight found zero connected devices. OPENAI_API_KEY was absent, so no Walking audio was uploaded. | No model conversion, device inference, timing, or accuracy measurement yet. |
