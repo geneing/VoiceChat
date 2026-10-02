@@ -139,7 +139,7 @@ internal class ParakeetRunner(
             compiledModel.getInputTensorType(inputBufferName(1), DECODE_SIGNATURE).numElements
         val logitsPer =
             compiledModel.getOutputTensorType(outputBufferName(0), DECODE_SIGNATURE).numElements /
-                numTokenIds / maxTimeIndex / NUM_DURATIONS
+                numTokenIds / maxTimeIndex
 
         val numStates =
             compiledModel.getInputTensorType(inputBufferName(2), DECODE_SIGNATURE).numElements
