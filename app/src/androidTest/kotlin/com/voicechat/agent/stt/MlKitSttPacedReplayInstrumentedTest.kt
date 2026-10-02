@@ -29,7 +29,7 @@ import java.util.Locale
 /**
  * Opt-in, file-backed smoke benchmark for the real ML Kit STT adapter.
  *
- * The PowerShell driver copies WAV/M4A files into app-specific external cache and passes
+ * The PowerShell driver copies WAV/M4A files into app-private cache and passes
  * a unique run id. Without that argument the test is skipped, so ordinary
  * connected test runs never replay personal audio. WAV samples, and M4A decoded
  * to PCM, are fed in 20 ms frames no faster than real time, as required by ML
@@ -48,8 +48,7 @@ class MlKitSttPacedReplayInstrumentedTest {
             requireNotNull(runId)
             require(RUN_ID.matches(runId)) { "invalid replay run id" }
             val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
-            val externalCacheDir = requireNotNull(targetContext.externalCacheDir)
-            val replayDir = File(File(externalCacheDir, REPLAY_DIRECTORY), runId)
+            val replayDir = File(File(targetContext.cacheDir, REPLAY_DIRECTORY), runId)
             assertTrue("replay directory is missing", replayDir.isDirectory)
 
             val modeArgument = arguments.getString(ARG_MODE, "ADVANCED").uppercase(Locale.ROOT)

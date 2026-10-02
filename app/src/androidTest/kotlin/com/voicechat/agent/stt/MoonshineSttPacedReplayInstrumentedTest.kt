@@ -46,7 +46,7 @@ class MoonshineSttPacedReplayInstrumentedTest {
                     ?.toBoolean() == true
 
             val context = InstrumentationRegistry.getInstrumentation().targetContext
-            val replayDir = File(File(requireNotNull(context.externalCacheDir), REPLAY_DIRECTORY), runId)
+            val replayDir = File(File(context.cacheDir, REPLAY_DIRECTORY), runId)
             assertTrue("replay directory is missing", replayDir.isDirectory)
             val files =
                 replayDir

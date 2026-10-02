@@ -133,11 +133,13 @@ $wavRows = @($fileRows | Where-Object { $_.File.Extension -in @(".wav", ".WAV") 
 $m4aRows = @($fileRows | Where-Object { $_.File.Extension -in @(".m4a", ".M4A") })
 $replayRows = @($fileRows | Where-Object { $_.File.Extension -in @(".wav", ".WAV", ".m4a", ".M4A") })
 
-# The app package name is pinned in app/build.gradle.kts. These files live only
-# in app-specific external cache, never in source sets or APK assets.
+# The app package name is pinned in app/build.gradle.kts. Audio is staged into
+# an isolated temporary directory, then copied into app-private cache with
+# run-as so Android's scoped-storage view does not hide shell-owned files.
 $appId = "com.voicechat.agent"
-$deviceCacheRoot = "/sdcard/Android/data/$appId/cache/voicechat-stt-replay"
-$remoteRunDirectory = "$deviceCacheRoot/$runId"
+$instrumentationComponent = "$appId.test/androidx.test.runner.AndroidJUnitRunner"
+$deviceTempRunDirectory = "/data/local/tmp/voicechat-stt-replay-$runId"
+$remoteRunDirectory = "/data/user/0/$appId/cache/voicechat-stt-replay/$runId"
 $adb = Join-Path (Join-Path $env:LOCALAPPDATA "Android\Sdk") "platform-tools\adb.exe"
 $gradle = Join-Path $repoRoot "gradlew.bat"
 
@@ -148,6 +150,31 @@ if (-not (Test-Path -LiteralPath $gradle)) {
     throw "Gradle wrapper was not found at '$gradle'."
 }
 $env:ANDROID_HOME = Join-Path $env:LOCALAPPDATA "Android\Sdk"
+
+function Copy-AppPrivateFileFromDevice {
+    param(
+        [string]$DevicePath,
+        [string]$HostPath
+    )
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $adb
+    $startInfo.Arguments = "-s $DeviceSerial exec-out run-as $appId cat $DevicePath"
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $output = [System.IO.File]::Create($HostPath)
+    try {
+        $process.StandardOutput.BaseStream.CopyTo($output)
+    } finally {
+        $output.Dispose()
+    }
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) {
+        Remove-Item -LiteralPath $HostPath -Force -ErrorAction SilentlyContinue
+        throw "Could not copy app-private report '$DevicePath' from the device."
+    }
+}
 
 $onlineSerials = @(& $adb devices | Select-String '^\S+\s+device$' | ForEach-Object { ($_ -split '\s+')[0] })
 if ($LASTEXITCODE -ne 0) {
@@ -200,50 +227,84 @@ try {
             throw "Gradle install failed with exit code $LASTEXITCODE."
         }
 
-        & $adb -s $DeviceSerial shell mkdir -p $remoteRunDirectory
+        & $adb -s $DeviceSerial shell mkdir -p $deviceTempRunDirectory
         if ($LASTEXITCODE -ne 0) {
-            throw "Could not create the run-specific app cache directory on the device."
+            throw "Could not create the temporary audio staging directory on the device."
         }
         $remoteDirectoryCreated = $true
+        & $adb -s $DeviceSerial shell run-as $appId mkdir -p $remoteRunDirectory
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not create the run-specific app-private cache directory on the device."
+        }
 
         foreach ($row in $replayRows) {
             $extension = $row.File.Extension.ToLowerInvariant()
-            $remoteFile = "$remoteRunDirectory/$($row.FileId)$extension"
+            $fileName = "$($row.FileId)$extension"
+            $temporaryRemoteFile = "$deviceTempRunDirectory/$fileName"
+            $remoteFile = "$remoteRunDirectory/$fileName"
             Write-Output "Copying $($row.File.Name) to the run-specific device cache..."
-            & $adb -s $DeviceSerial push $row.File.FullName $remoteFile
+            & $adb -s $DeviceSerial push $row.File.FullName $temporaryRemoteFile
             if ($LASTEXITCODE -ne 0) {
                 throw "ADB could not copy audio file '$($row.File.Name)' to the device."
             }
+            & $adb -s $DeviceSerial shell run-as $appId cp $temporaryRemoteFile $remoteFile
+            if ($LASTEXITCODE -ne 0) {
+                throw "The app could not copy staged audio file '$($row.File.Name)' into its private cache."
+            }
         }
+
+        $expectedDeviceNames = @(
+            $replayRows | ForEach-Object { "$($_.FileId)$($_.File.Extension.ToLowerInvariant())" }
+        )
+        $stagedDeviceNames = @(
+            & $adb -s $DeviceSerial shell run-as $appId ls -1 $remoteRunDirectory 2>$null |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ -match '^audio_\d{3}\.(wav|m4a)$' }
+        )
+        if ($LASTEXITCODE -ne 0) {
+            throw "ADB could not verify staged audio in the run-specific cache directory."
+        }
+        $missingDeviceNames = @($expectedDeviceNames | Where-Object { $_ -notin $stagedDeviceNames })
+        if ($missingDeviceNames.Count -gt 0) {
+            throw "Staging verification failed in '$remoteRunDirectory'; $($missingDeviceNames.Count) of $($expectedDeviceNames.Count) expected audio files are missing."
+        }
+        Write-Output "Verified app-private cache path '$remoteRunDirectory': $($expectedDeviceNames.Count) sanitized audio files staged."
 
         foreach ($target in $targets) {
             Write-Output "Running real-time paced $($target.Name) STT replay..."
-            $gradleArguments = @(
-                ":app:connectedDebugAndroidTest",
-                "-Pandroid.injected.device.serial=$DeviceSerial",
-                "-Pandroid.testInstrumentationRunnerArguments.class=$($target.ClassName)",
-                "-Pandroid.testInstrumentationRunnerArguments.sttReplayRunId=$runId"
+            $instrumentationArguments = @(
+                "-w",
+                "-e", "class", $target.ClassName,
+                "-e", "sttReplayRunId", $runId
             )
             if ($target.IsMlKit) {
                 $draftExportArgument = if ($target.ExportDraftLabels) { "true" } else { "false" }
-                $gradleArguments += "-Pandroid.testInstrumentationRunnerArguments.sttReplayMode=$($Mode.ToUpperInvariant())"
-                $gradleArguments += "-Pandroid.testInstrumentationRunnerArguments.sttReplayExportDraftLabels=$draftExportArgument"
+                $instrumentationArguments += @("-e", "sttReplayMode", $Mode.ToUpperInvariant())
+                $instrumentationArguments += @("-e", "sttReplayExportDraftLabels", $draftExportArgument)
             } elseif ($target.ExportDraftLabels) {
                 # Moonshine stays transcript-free unless its dedicated opt-in switch was supplied.
-                $gradleArguments += "-Pandroid.testInstrumentationRunnerArguments.sttReplayExportDraftLabels=true"
+                $instrumentationArguments += @("-e", "sttReplayExportDraftLabels", "true")
             }
 
-            & $gradle @gradleArguments
+            $instrumentationOutput = @(
+                & $adb -s $DeviceSerial shell am instrument @instrumentationArguments $instrumentationComponent 2>&1
+            )
             $targetExitCode = $LASTEXITCODE
-            if ($targetExitCode -ne 0) {
+            $instrumentationOutput | ForEach-Object { Write-Output $_ }
+            $instrumentationText = $instrumentationOutput -join "`n"
+            if ($targetExitCode -ne 0 -or $instrumentationText -match "INSTRUMENTATION_CODE:\s*-1") {
                 $failedTargets += "$($target.Name) (exit $targetExitCode)"
             }
 
             $deviceCsvPath = Join-Path $env:TEMP "voicechat-stt-replay-$runId-$($target.IsMlKit)-device.csv"
             $deviceTempFiles += $deviceCsvPath
             $remoteResults = "$remoteRunDirectory/$($target.ResultsFile)"
-            & $adb -s $DeviceSerial pull $remoteResults $deviceCsvPath
-            if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $deviceCsvPath)) {
+            try {
+                Copy-AppPrivateFileFromDevice -DevicePath $remoteResults -HostPath $deviceCsvPath
+            } catch {
+                Write-Warning "$($target.Name) did not produce its content-free timing CSV. Check the instrumentation output."
+            }
+            if (Test-Path -LiteralPath $deviceCsvPath) {
                 $targetRows = foreach ($deviceRow in Import-Csv -LiteralPath $deviceCsvPath) {
                     $source = $fileById[$deviceRow.file_id]
                     [pscustomobject][ordered]@{
@@ -278,8 +339,12 @@ try {
                 $draftDeviceCsvPath = Join-Path $env:TEMP "voicechat-stt-replay-$runId-$($target.IsMlKit)-drafts.csv"
                 $deviceTempFiles += $draftDeviceCsvPath
                 $remoteDraftLabels = "$remoteRunDirectory/$($target.DraftFile)"
-                & $adb -s $DeviceSerial pull $remoteDraftLabels $draftDeviceCsvPath
-                if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $draftDeviceCsvPath)) {
+                try {
+                    Copy-AppPrivateFileFromDevice -DevicePath $remoteDraftLabels -HostPath $draftDeviceCsvPath
+                } catch {
+                    Write-Warning "$($target.Name) draft-label export was enabled, but its sidecar was not produced."
+                }
+                if (Test-Path -LiteralPath $draftDeviceCsvPath) {
                     $draftRows = foreach ($draftRow in Import-Csv -LiteralPath $draftDeviceCsvPath) {
                         $source = $fileById[$draftRow.file_id]
                         [pscustomobject][ordered]@{
@@ -308,7 +373,8 @@ try {
     }
 } finally {
     if ($remoteDirectoryCreated) {
-        & $adb -s $DeviceSerial shell rm -r $remoteRunDirectory | Out-Null
+        & $adb -s $DeviceSerial shell run-as $appId rm -r $remoteRunDirectory | Out-Null
+        & $adb -s $DeviceSerial shell rm -r $deviceTempRunDirectory | Out-Null
     }
     foreach ($temporaryFile in $deviceTempFiles) {
         Remove-Item -LiteralPath $temporaryFile -Force -ErrorAction SilentlyContinue
