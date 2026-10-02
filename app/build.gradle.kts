@@ -80,6 +80,27 @@ if (sherpaOnnxParakeetAar.isFile) {
         .add("src/parakeetAndroidTest/kotlin")
 }
 
+// The LiteRT Tensor G5 NPU dispatch library is a vendor runtime spike, opt-in
+// and local-only. Fetch it with scripts/fetch-litert-npu-runtime.sh; it is
+// packaged into debug builds only when present and is never committed.
+val litertNpuDispatchDir = rootProject.file("models/litert-asr/npu-dispatch")
+if (litertNpuDispatchDir.isDirectory) {
+    android.sourceSets
+        .getByName("debug")
+        .jniLibs.directories
+        .add(litertNpuDispatchDir.absolutePath)
+}
+
+// The LiteRT NPU dispatch library must be extracted to the app's native library
+// directory for the runtime to dlopen it by name. Scope legacy packaging to the
+// debug build only so release packaging is unchanged.
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.packaging.jniLibs.useLegacyPackaging
+            .set(true)
+    }
+}
+
 // Export the Room schema so migrations have a checked-in contract to review.
 // The app has a single schema version today (see docs/persistence.md); the
 // schema-export test asserts the JSON is produced and matches version 1.

@@ -123,3 +123,12 @@ if [[ "${STAGE_PARAKEET:-0}" == "1" ]]; then
     "647222dfb72e123aedbd8a4244079b779af94a4184d6aa3c63ab1ec506b8c460" \
     160000 "parakeet-ctc-features-5s.f32"
 fi
+
+# Tensor G5 NPU AOT artifact (F32, not the INT8 candidate). Debug/eval only;
+# requires the v2.1.1 dispatch library packaged via fetch-litert-npu-runtime.sh.
+if [[ "${STAGE_PARAKEET_NPU:-0}" == "1" ]]; then
+  copy_validated \
+    "$repo_root/models/litert-asr/parakeet-tdt-0.6b-v3-5s-f32-stateful-Google_Tensor_G5.tflite" \
+    "5d720a785a90991eec74a898049c4a8e86f78c6fe5b6bba02aea0e59a2c10184" \
+    1292830512 "parakeet-tdt-0.6b-v3-5s-f32-stateful-Google_Tensor_G5.tflite"
+fi
