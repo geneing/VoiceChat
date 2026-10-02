@@ -58,3 +58,7 @@ test_data/smart-turn-v3.2-eng/
 # Local, machine-generated STT draft labels are reference candidates only.
 # They may contain speech transcripts and must stay out of Git until verified.
 test_data/stt-draft-labels-*.csv
+
+# Local OpenAI STT reference review material (may contain Walking audio and
+# transcripts). Keep out of Git.
+test_data/openai-stt-reference-review/

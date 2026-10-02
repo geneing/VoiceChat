@@ -51,6 +51,9 @@ mlkitGenaiPrompt = "1.0.0-beta4"
 # 2.2.0, published 2026-08-13:
 # https://dl.google.com/dl/android/maven2/com/google/ai/edge/litert/litert/maven-metadata.xml
 litert = "2.2.0"
+# LiteRT runtime used only by the pinned speech-recognition instrumentation
+# spike. The sample pins 2.1.5; keep this out of app production dependencies.
+litertAsrTest = "2.1.5"
 
 # LiteRT-LM — the optional local-LLM runtime for `.litertlm` bundles
 # (docs/decisions.md §2.3). The M00 note described v0.16.0 from the guide; the
@@ -125,6 +128,7 @@ mlkit-genai-prompt = { module = "com.google.mlkit:genai-prompt", version.ref = "
 # LiteRT base runtime + LiteRT-LM `.litertlm` runtime (M20). Kept behind the
 # `local` package so no vendor type reaches the app contract.
 litert = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
+litert-asr-test = { module = "com.google.ai.edge.litert:litert", version.ref = "litertAsrTest" }
 litertlm-android = { module = "com.google.ai.edge.litertlm:litertlm-android", version.ref = "litertlm" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }

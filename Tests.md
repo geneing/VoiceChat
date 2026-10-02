@@ -1523,4 +1523,57 @@ This candidate is offline, so this run records model-open, audio-decode, and
 full-phrase decode time; it has no first-partial metric. The runner stages
 checksum-verified weights only to the debug app's private storage. Draft text is
 saved to an ignored local CSV for manual review.
+## LiteRT ASR CPU instrumentation spike (optimization/litert-speech-benchmark)
+
+This debug/test-only spike loads the converted sample Moonshine Tiny FP32 model
+and consumes one 5-second, 16 kHz mono PCM window through the pinned sample's
+`CompiledModel` encode/decode signatures and default token decoder. It does not
+replace production ML Kit. The sample tokenizer JNI library is not wired into
+this test target, so the test records token counts only; transcript text,
+accuracy, and first text from clip start are explicitly unavailable. File input
+is offline and unpaced, not a streaming-latency measurement.
+
+The expected ignored artifact is
+`models/litert-asr/moonshine-tiny-fp32-5s.tflite` (109,330,616 bytes,
+SHA-256 `c4f4735852d4a8de1003431c43a253376c4c91ee19713778a07bd0a446c7e930`).
+The fixture is `test_data/eng-000001-000081dd.wav`; neither file is packaged in
+the APK or test APK.
+
+After the test-only runtime and instrumented test are built, install both APKs,
+stage the inputs in app-private storage, and invoke instrumentation directly.
+Do not use `connectedDebugAndroidTest` for the staged run because Gradle
+reinstalls the app and clears its private files:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\gradlew.bat :app:assembleDebugAndroidTest
+.\gradlew.bat :app:installDebug
+```
+
+From WSL at the clean worktree root, run `bash scripts/stage-litert-asr-inputs.sh`
+after the debug app is installed. Then install the instrumentation APK from
+PowerShell and run the single test:
+
+```powershell
+adb install -r app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+adb shell am instrument -w -e class com.voicechat.agent.eval.litert.LiteRtSpeechCpuInstrumentedTest com.voicechat.agent.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+The runtime is pinned to LiteRT 2.1.5 and is an `androidTestImplementation`
+only. The test requests CPU with a CPU-only accelerator allowlist; a successful
+encode therefore records observed CPU execution with fallback disabled. Before
+the encoder completes, observed backend is `UNKNOWN`; initialization or
+inference failures remain failures and are not reported as successful fallback.
+Logcat tag: `LiteRtSpeechCpuTest`. The JSON records model/audio hashes and sizes,
+device/OS/SoC, cold load, audio read/preprocessing, encode, decoder-first-token,
+decoder-total, and thermal/battery conditions. It does not log audio or text.
+
+The current branch has no device result row unless the test is actually run with
+the verified artifact on a connected phone. A missing staged input is logged as
+`INPUTS_NOT_STAGED` and returns without timing; that is not a benchmark pass.
+
+The Android test APK also includes a minimal exhaustive
+`SelectedVoiceUnavailable` branch in the pre-existing M11 TTS instrumentation
+probe. This test-only logging case unblocks compilation after the result type
+gained that state; it does not change production TTS and is unrelated to LiteRT.
 

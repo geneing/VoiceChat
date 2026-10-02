@@ -63,6 +63,9 @@ class AndroidTtsInstrumentedTest {
                     }
 
                     is TtsEngineAvailability.SelectedVoiceUnavailable -> {
+                        // No voice id is requested in this probe; preserve an
+                        // explicit result if engine policy changes later.
+                        Log.w(TAG, "M11 selected voice unavailable: ${availability.voiceId}")
                         assertFalse(
                             "an unavailable selected voice must not appear in the embedded set",
                             onDevice.any { it.id == availability.voiceId },
