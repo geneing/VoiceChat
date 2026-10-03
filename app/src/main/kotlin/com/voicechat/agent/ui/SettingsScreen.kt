@@ -187,7 +187,7 @@ private fun SttSection(
 ) {
     SettingsHeading("On-device speech-to-text")
     Text(
-        text = "One on-device recognizer; no cloud fallback.",
+        text = "On-device recognizers only; no cloud fallback.",
         style = MaterialTheme.typography.bodySmall,
     )
     if (state.stt.options.isEmpty()) {

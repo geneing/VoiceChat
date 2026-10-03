@@ -47,7 +47,7 @@ class SttAvailabilityTest {
     fun theCatalogPrefersAdvancedButNeverMarksItReady() {
         val catalog = SttEngines.catalog(Locale.US)
 
-        assertEquals(listOf(SttMode.ADVANCED, SttMode.BASIC), catalog.map { it.mode })
+        assertEquals(listOf(SttMode.ADVANCED, SttMode.BASIC, SttMode.PARAKEET_EOU), catalog.map { it.mode })
     }
 
     @Test

@@ -6,7 +6,9 @@ import com.voicechat.agent.providers.DocumentedModelCatalog
 import com.voicechat.agent.settings.SettingsCapabilities
 import com.voicechat.agent.settings.SettingsCapabilityProvider
 import com.voicechat.agent.stt.MlKitSttStatus
+import com.voicechat.agent.stt.ParakeetEouSttCatalog
 import com.voicechat.agent.stt.SttEngines
+import com.voicechat.agent.stt.parakeet.ParakeetEouModelStore
 import com.voicechat.agent.tts.AndroidTtsEngine
 import com.voicechat.agent.tts.TtsVoice
 import com.voicechat.agent.turn.SmartTurnCatalog
@@ -44,13 +46,28 @@ class AndroidSettingsCapabilityProvider(
     private val smartTurnStore: SmartTurnModelStore =
         SmartTurnModelStore(File(appContext.filesDir, SmartTurnModelStore.DIRECTORY_NAME))
 
+    // The app-managed Parakeet-EOU model set (five files) lives in its own
+    // app-private directory; state() verifies every file off the main thread.
+    private val parakeetEouStore: ParakeetEouModelStore =
+        ParakeetEouModelStore(File(appContext.filesDir, ParakeetEouModelStore.DIRECTORY_NAME))
+
     override suspend fun snapshot(): SettingsCapabilities =
         SettingsCapabilities(
-            sttAvailability = SttEngines.catalog().map { MlKitSttStatus.check(it) },
+            sttAvailability = readSttAvailability(),
             ttsVoices = readTtsVoices(),
             smartTurn = SmartTurnCatalog.settingsState(smartTurnStore.state()),
             models = DocumentedModelCatalog.availableModels(),
         )
+
+    /**
+     * The ML Kit modes plus the app-managed Parakeet-EOU engine. Parakeet is
+     * reported from the verified on-disk model set, so an uninstalled set is a
+     * first-class [com.voicechat.agent.stt.SttAvailability.DownloadRequired] and
+     * never a fabricated ready state.
+     */
+    private suspend fun readSttAvailability(): List<com.voicechat.agent.stt.SttAvailability> =
+        SttEngines.catalog().map { MlKitSttStatus.check(it) } +
+            ParakeetEouSttCatalog.availability(parakeetEouStore.state())
 
     private suspend fun readTtsVoices(): List<TtsVoice> {
         val engine = AndroidTtsEngine(appContext)
