@@ -7,12 +7,14 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 
 /**
- * Exact port of the pinned sample's log-Mel front end
- * (`MelSpectroProcessor.kt`), including its jlibrosa mel generator, so on-device
- * features match what the converted artifacts were trained/calibrated against.
+ * Port of the pinned sample's log-Mel front end (`MelSpectroProcessor.kt`),
+ * including jlibrosa defaults. Those defaults use a 512-sample window and
+ * frame-major TDT output; they do not match the HF Parakeet TDT profile's
+ * 400-sample symmetric Hann window or mel-major input layout, so the TDT corpus
+ * path intentionally uses [LogMelSpectrogram] instead.
  *
- * The pure-Kotlin [LogMelSpectrogram] is a self-contained fallback; this class is
- * preferred when the pinned jlibrosa JAR is present (scripts/fetch-jlibrosa.sh).
+ * Keep this implementation as the pinned-sample/CTC comparison and diagnostic
+ * fallback. Presence of the jlibrosa JAR must not select it for TDT.
  */
 internal class SampleMelProcessor(
     private val samplingRate: Int,
@@ -24,13 +26,13 @@ internal class SampleMelProcessor(
     private val preemphasis: Float,
     private val normType: String,
 ) : FeatureSource {
-    override fun process(rawSpeech: FloatArray): FloatArray {
-        if (rawSpeech.isEmpty()) return FloatArray(0)
-        val audio = if (preemphasis > 0f) applyPreemphasis(rawSpeech) else rawSpeech
+    override fun process(audio: FloatArray): FloatArray {
+        if (audio.isEmpty()) return FloatArray(0)
+        val emphasizedAudio = if (preemphasis > 0f) applyPreemphasis(audio) else audio
 
         val paddedNFFT = smallestPowerOfTwoAtLeast(nFft)
-        val melSpec = generateMelSpectrogram(audio, samplingRate, paddedNFFT, nMels, hopLength)
-        val validFrames = rawSpeech.size / hopLength
+        val melSpec = generateMelSpectrogram(emphasizedAudio, samplingRate, paddedNFFT, nMels, hopLength)
+        val validFrames = audio.size / hopLength
 
         if (normType == "whisper") {
             var maxVal = Float.NEGATIVE_INFINITY

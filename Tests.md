@@ -1605,15 +1605,53 @@ text, not token IDs:
    the debug APK ships it only when present.
 2. `scripts/stage-litert-asr-inputs.sh STAGE_PARAKEET=1 STAGE_CORPUS=1` stages the
    Parakeet models, tokenizers, and the 16 kHz `eng-*.wav` fixtures.
-3. `LiteRtParakeetCorpusInstrumentedTest` preprocesses each clip on-device with
-   the sample's log-Mel front end and writes
-   `litert-asr/<model>--<clip>.transcript.txt`.
-4. `scripts/local-whisper-reference.sh` produces offline local Whisper
+3. `LiteRtParakeetFeatureParityInstrumentedTest` compares both the pure-Kotlin
+   and jlibrosa front ends against the SHA-pinned frozen TDT tensor. It reports
+   max/mean absolute error by mel bin and frame, including edge/interior
+   summaries. TDT uses the pure-Kotlin HF/NeMo-compatible profile: 512-point FFT,
+   400-sample symmetric Hann, constant center padding, Slaney area-normalized
+   mel filters, mel-major layout, and 499 valid 10 ms hops plus one zero-padded
+   frame. `SampleMelProcessor` remains the CTC/sample comparison; its jlibrosa
+   defaults are not selected for TDT.
+4. `LiteRtParakeetCorpusInstrumentedTest` preprocesses each clip on-device and
+   writes `litert-asr/<model>--<clip>.transcript.txt` sidecars in app-private
+   storage.
+5. `scripts/local-whisper-reference.sh` produces offline local Whisper
    pseudo-references under the gitignored `test_data/litert-asr-wer/`.
-5. `scripts/run-litert-wer.ps1` scores the pulled transcripts against those
+6. `scripts/run-litert-wer.ps1` scores the pulled transcripts against those
    references with the M25 `SpeechQualityScorer` and writes a content-free CSV.
 
 A reference produced by a local model is a pseudo-reference: its WER is agreement
 with that reference, not human-reviewed gold. No audio, transcript, or model is
-committed. See R-0239 for the Parakeet TDT feature-parity gap.
+committed.
 
+### R-0239 — TDT feature parity and corpus verification
+
+Do not use `connectedDebugAndroidTest` for these staged runs: it reinstalls the
+debug app and clears app-private staged files. Build/install first, stage after
+both APKs are installed, and invoke each instrumentation class directly:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest
+.\gradlew.bat :app:installDebug
+adb install -r app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+
+# Run in WSL; ADB intentionally points to the Windows executable for USB access.
+wsl -e bash -lc "SERIAL=57220DLCR002R6 ADB=/mnt/c/Users/genei/AppData/Local/Android/Sdk/platform-tools/adb.exe STAGE_PARAKEET=1 STAGE_CORPUS=1 /mnt/i/Android_Projects/VoiceChat/scripts/stage-litert-asr-inputs.sh"
+
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb logcat -c
+& $adb shell am instrument -w -e class com.voicechat.agent.eval.litert.LiteRtParakeetFeatureParityInstrumentedTest com.voicechat.agent.test/androidx.test.runner.AndroidJUnitRunner
+& $adb logcat -d -s ParakeetFeatureParity:I
+& $adb shell am instrument -w -e class com.voicechat.agent.eval.litert.LiteRtParakeetComparisonInstrumentedTest com.voicechat.agent.test/androidx.test.runner.AndroidJUnitRunner
+& $adb shell am instrument -w -e class com.voicechat.agent.eval.litert.LiteRtParakeetCorpusInstrumentedTest com.voicechat.agent.test/androidx.test.runner.AndroidJUnitRunner
+& $adb logcat -d -s LiteRtParakeetTest:I LiteRtParakeetCorpus:I
+```
+
+The parity test asserts the frozen feature SHA-256 and a max-absolute error
+below `1e-3` for the corrected TDT profile. The comparison test is the frozen
+feature control; the corpus test records `tokenCount`/`hasTranscript` and writes
+local-only transcript sidecars. TDT's 500-frame tensor has 499 valid frames in
+the frozen reference, so long clips are evaluated only over their initial 4.99 s
+feature window.

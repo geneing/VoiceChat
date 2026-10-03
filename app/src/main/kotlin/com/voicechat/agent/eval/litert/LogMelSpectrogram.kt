@@ -5,8 +5,9 @@
  * host-side dependency. Original sample source is Apache-2.0:
  * https://github.com/google-ai-edge/litert-samples/tree/main/samples/litert/speech_recognition
  *
- * The mel filterbank uses librosa's default "slaney" scale and norm, matching
- * jlibrosa.generateMelSpectroGram defaults used by the sample.
+ * The mel filterbank uses librosa's "slaney" scale and area norm. Window length,
+ * Hann periodicity, center padding, and output layout are explicit per model so
+ * this implementation can match the Hugging Face Parakeet feature extractor.
  */
 package com.voicechat.agent.eval.litert
 
@@ -26,7 +27,38 @@ internal data class LogMelConfig(
     val transpose: Boolean,
     val preemphasis: Float,
     val normType: String = "standard",
-)
+    /** Analysis window length before symmetric zero-padding to [nFft]. */
+    val winLength: Int = nFft,
+    /** PyTorch/NeMo's non-periodic Hann uses a denominator of `winLength - 1`. */
+    val periodicWindow: Boolean = true,
+    /** librosa defaults to reflect; the HF Parakeet extractor uses constant center padding. */
+    val reflectCenterPadding: Boolean = true,
+    /** Maximum input samples before STFT; lets a fixed output include padded frames. */
+    val inputSampleLimit: Int? = null,
+) {
+    init {
+        require(winLength in 2..nFft) { "winLength must be in 2..nFft" }
+        require(inputSampleLimit == null || inputSampleLimit >= 0) { "inputSampleLimit cannot be negative" }
+    }
+
+    companion object {
+        /** HF Parakeet TDT-v3 feature layout and inference-time feature parameters. */
+        fun parakeetTdt(): LogMelConfig =
+            LogMelConfig(
+                nFft = 512,
+                nMels = 128,
+                nFrames = 500,
+                transpose = false,
+                preemphasis = 0.97f,
+                winLength = 400,
+                periodicWindow = false,
+                reflectCenterPadding = false,
+                // The frozen (1, 128, 500) tensor has 499 valid hops and a
+                // zero-padded final frame; keep this 4.99 s analysis window.
+                inputSampleLimit = 499 * 160,
+            )
+    }
+}
 
 /** Anything that turns a waveform window into model input features. */
 internal interface FeatureSource {
@@ -34,26 +66,36 @@ internal interface FeatureSource {
 }
 
 /**
- * Pure-Kotlin log-Mel spectrogram matching the sample's pipeline:
- * preemphasis -> Hann-windowed STFT power spectrum -> slaney mel filterbank ->
- * ln -> per-mel mean/std normalization over valid frames -> pad/transpose.
+ * Pure-Kotlin log-Mel spectrogram with model-configurable feature extraction:
+ * preemphasis -> windowed STFT power spectrum -> slaney mel filterbank -> ln ->
+ * per-mel mean/std normalization over valid frames -> pad/layout.
  */
 internal class LogMelSpectrogram(
     private val config: LogMelConfig,
 ) : FeatureSource {
-    private val window = FloatArray(config.nFft) { 0.5f - 0.5f * cos(2f * PI.toFloat() * it / config.nFft) }
+    private val window =
+        FloatArray(config.nFft) { fftIndex ->
+            val windowIndex = fftIndex - (config.nFft - config.winLength) / 2
+            if (windowIndex !in 0 until config.winLength) {
+                0f
+            } else {
+                val denominator = if (config.periodicWindow) config.winLength else config.winLength - 1
+                0.5f - 0.5f * cos(2f * PI.toFloat() * windowIndex / denominator)
+            }
+        }
     private val melFilters = melFilterbank(config.sampleRate, config.nFft, config.nMels)
     private val fft = Fft(config.nFft)
 
     /** Converts a raw [-1,1] waveform window into the model's feature vector. */
-    override fun process(rawSpeech: FloatArray): FloatArray {
-        val audio = if (config.preemphasis > 0f) preemphasize(rawSpeech) else rawSpeech
-        // librosa's default STFT centers each frame (reflect padding at the
-        // edges), so frame f is centered at f * hopLength. Match that, or the
-        // log-mel statistics drift far enough to break recognition.
+    override fun process(audio: FloatArray): FloatArray {
+        val inputAudio = config.inputSampleLimit?.let { audio.copyOf(minOf(audio.size, it)) } ?: audio
+        if (inputAudio.isEmpty()) return FloatArray(if (config.nFrames > 0) config.nFrames * config.nMels else 0)
+        val emphasizedAudio = if (config.preemphasis > 0f) preemphasize(inputAudio) else inputAudio
+        // Both reference profiles center the STFT at frame * hopLength; their
+        // edge padding mode is selected by [LogMelConfig.reflectCenterPadding].
         val padding = config.nFft / 2
-        val centered = reflectPad(audio, padding)
-        val frameCount = audio.size / config.hopLength
+        val centered = centerPad(emphasizedAudio, padding)
+        val frameCount = inputAudio.size / config.hopLength
         val padded = FloatArray(config.nFft)
         val melSpec = Array(config.nMels) { FloatArray(frameCount) }
 
@@ -106,14 +148,18 @@ internal class LogMelSpectrogram(
         return result
     }
 
-    /** librosa `pad_mode="reflect"` padding used by the centered STFT. */
-    private fun reflectPad(
+    /** Center padding used by the reference STFT (reflect for librosa, zero for HF Parakeet). */
+    private fun centerPad(
         audio: FloatArray,
         padding: Int,
     ): FloatArray {
-        if (padding <= 0 || audio.size <= 1) return audio
-        val limit = min(padding, audio.size - 1)
+        if (padding <= 0) return audio
         val result = FloatArray(audio.size + 2 * padding)
+        if (!config.reflectCenterPadding) {
+            audio.copyInto(result, padding)
+            return result
+        }
+        if (audio.size <= 1) return result
         for (i in 0 until padding) {
             val index = padding - i
             result[i] = if (index < audio.size) audio[index] else audio[0]

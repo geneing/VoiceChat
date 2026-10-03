@@ -8,7 +8,6 @@ import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import java.io.InputStream
 
 /**
  * Debug-only LiteRT ASR corpus run for WER.
@@ -96,7 +95,13 @@ class LiteRtParakeetCorpusInstrumentedTest {
         tokenizer: LiteRtHuggingfaceTokenizer?,
     ) {
         try {
-            val audio = readPcmWindow(clip)
+            val window = readParakeetPcmWindowWithLength(clip)
+            val audio =
+                if (family.mode == ParakeetRunner.Mode.TDT) {
+                    window.samples.copyOf(minOf(window.validSamples, TDT_INPUT_SAMPLE_LIMIT))
+                } else {
+                    window.samples
+                }
             val features = featureProcessor(family).process(audio)
             val start = SystemClock.elapsedRealtimeNanos()
             val result = runner.run(features)
@@ -112,6 +117,7 @@ class LiteRtParakeetCorpusInstrumentedTest {
                     .put("outcome", "CLIP_COMPLETED")
                     .put("family", family.label)
                     .put("clip", clip.name)
+                    .put("inputSamples", audio.size)
                     .put("encodeMs", result.encodeMs)
                     .put("decodeMs", result.decodeMs)
                     .put("totalMs", totalMs)
@@ -161,62 +167,6 @@ class LiteRtParakeetCorpusInstrumentedTest {
         return runCatching { LiteRtHuggingfaceTokenizer.fromJson(file.readText()) }.getOrNull()
     }
 
-    /** Reads the first 5 s of a 16 kHz mono PCM16 WAV as a normalized float window. */
-    private fun readPcmWindow(file: File): FloatArray {
-        val samples = 5 * 16_000
-        val out = FloatArray(samples)
-        file.inputStream().use { input -> readWavSamples(input, out) }
-        return out
-    }
-
-    private fun readWavSamples(
-        input: InputStream,
-        out: FloatArray,
-    ) {
-        val header = ByteArray(12)
-        readFully(input, header)
-        var filled = 0
-        while (filled < out.size) {
-            val chunk = ByteArray(8)
-            val read = input.read(chunk)
-            if (read < 8) break
-            val id = String(chunk, 0, 4)
-            val size =
-                java.nio.ByteBuffer
-                    .wrap(chunk, 4, 4)
-                    .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                    .int
-            if (id == "data") {
-                val bytes = ByteArray(size)
-                var offset = 0
-                while (offset < size && filled < out.size) {
-                    val count = input.read(bytes, offset, minOf(size - offset, out.size * 2))
-                    if (count <= 0) break
-                    offset += count
-                }
-                val buffer =
-                    java.nio.ByteBuffer
-                        .wrap(bytes, 0, offset)
-                        .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                while (buffer.remaining() >= 2 && filled < out.size) out[filled++] = buffer.short / 32768f
-                return
-            }
-            input.skip(size.toLong())
-        }
-    }
-
-    private fun readFully(
-        input: InputStream,
-        bytes: ByteArray,
-    ) {
-        var offset = 0
-        while (offset < bytes.size) {
-            val read = input.read(bytes, offset, bytes.size - offset)
-            require(read > 0) { "Truncated WAV input" }
-            offset += read
-        }
-    }
-
     private fun elapsedMs(startNanos: Long) = (SystemClock.elapsedRealtimeNanos() - startNanos) / 1_000_000L
 
     private data class Family(
@@ -228,9 +178,10 @@ class LiteRtParakeetCorpusInstrumentedTest {
 
     private companion object {
         const val TAG = "LiteRtParakeetCorpus"
+        val TDT_INPUT_SAMPLE_LIMIT = requireNotNull(LogMelConfig.parakeetTdt().inputSampleLimit)
 
-        // Parakeet CTC: 80 mels, 500 frames, mel-major (no transpose), preemphasis.
-        // Parakeet TDT: 128 mels, 500 frames, transpose, preemphasis.
+        // CTC retains the established 80-mel front end. TDT matches HF Parakeet's
+        // 128-bin, 400-sample symmetric-Hann window and NeMo mel-major layout.
         val FEATURE_EXTRACTORS =
             mapOf(
                 ParakeetRunner.Mode.CTC to
@@ -238,13 +189,12 @@ class LiteRtParakeetCorpusInstrumentedTest {
                         LogMelConfig(nFft = 512, nMels = 80, nFrames = 500, transpose = true, preemphasis = 0.97f),
                     ),
                 ParakeetRunner.Mode.TDT to
-                    LogMelSpectrogram(
-                        LogMelConfig(nFft = 512, nMels = 128, nFrames = 500, transpose = true, preemphasis = 0.97f),
-                    ),
+                    LogMelSpectrogram(LogMelConfig.parakeetTdt()),
             )
 
-        // The sample's own jlibrosa-based front end, used when the pinned JAR is
-        // present; the pure-Kotlin extractor above is the self-contained fallback.
+        // The sample's jlibrosa front end remains the CTC default when staged.
+        // It cannot match the TDT 400-sample window/layout, so TDT always uses
+        // the pure-Kotlin implementation above.
         val SAMPLE_EXTRACTORS: Map<ParakeetRunner.Mode, SampleMelProcessor>? =
             runCatching {
                 mapOf(
@@ -275,5 +225,9 @@ class LiteRtParakeetCorpusInstrumentedTest {
     }
 
     private fun featureProcessor(family: Family): FeatureSource =
-        SAMPLE_EXTRACTORS?.get(family.mode) ?: FEATURE_EXTRACTORS.getValue(family.mode)
+        if (family.mode == ParakeetRunner.Mode.TDT) {
+            FEATURE_EXTRACTORS.getValue(family.mode)
+        } else {
+            SAMPLE_EXTRACTORS?.get(family.mode) ?: FEATURE_EXTRACTORS.getValue(family.mode)
+        }
 }

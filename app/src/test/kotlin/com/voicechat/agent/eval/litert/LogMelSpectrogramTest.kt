@@ -1,6 +1,7 @@
 package com.voicechat.agent.eval.litert
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
 import kotlin.math.cos
@@ -52,6 +53,19 @@ class LogMelSpectrogramTest {
         assertEquals("all features must be finite", true, features.all { it.isFinite() })
         // A tone must produce non-zero energy somewhere.
         assertEquals(true, features.any { kotlin.math.abs(it) > 0.01f })
+    }
+
+    @Test
+    fun parakeetTdtKeepsTheFrozen499FrameMaskInA500FrameTensor() {
+        val config = LogMelConfig.parakeetTdt()
+        assertEquals(499 * 160, config.inputSampleLimit)
+
+        val audio = FloatArray(16_000 * 5) { (sin(2.0 * PI * 220.0 * it / 16_000.0) * 0.5).toFloat() }
+        val features = LogMelSpectrogram(config).process(audio)
+
+        assertEquals(500 * 128, features.size)
+        for (mel in 0 until 128) assertEquals("padded final frame for mel $mel", 0f, features[mel * 500 + 499], 0f)
+        assertTrue("valid feature frames should not all be zero", features.any { it != 0f })
     }
 
     @Test
