@@ -87,10 +87,12 @@ Review/edits are still required before measuring WER/CER.
 The 100 ms Moonshine update interval did not improve first-partial latency enough
 to justify the changed hypotheses and extra callbacks; the debug candidate is
 restored to 500 ms. The first Parakeet offline run completed all 12 files, but
-has no native partial timing; its p50 inference was 235 ms and p90 was 512 ms.
-Next repeat the full Parakeet corpus to check timing stability and continue
-reviewing its locally exported draft labels. Investigate ML Kit Advanced failure
-and Basic model availability. Do not move to TTS latency optimization until a
+has no native partial timing; its p50 inference was 235 ms and p90 was 512 ms,
+and its hypotheses are now scored: mean WER 0.184 over the ten untruncated clips,
+with the two high rows explained by number formatting. Next repeat the full
+Parakeet corpus to check timing stability and continue reviewing its locally
+exported draft labels. Investigate ML Kit Advanced failure and Basic model
+availability. Do not move to TTS latency optimization until a
 streaming STT candidate has materially lower first-partial latency without an
 unacceptable accuracy or resource regression. Continue to record each run's
 tested source hash and concise change description here.
@@ -146,6 +148,37 @@ The five clips that fit the window (2.45-4.91 s) score WER 0.00, 0.00, 0.20,
 acoustic error. Parakeet CTC is a strong candidate for short, in-window
 utterances; long prompts need windowing/merge (beyond this 5 s spike).
 
+### Parakeet TDT-CTC 110M accuracy (same pseudo-reference)
+
+The sherpa-onnx 110M candidate already exported a hypothesis sidecar in its
+offline replay run (see the run log above); the later `ec192cd` change scores it
+against the identical local Whisper references with the same M25
+`SpeechQualityScorer`. No new device run was made.
+
+- Model: `parakeet-tdt-ctc-110m-int8` (sherpa-onnx, offline batch, INT8), CPU.
+- The full corpus is scored for every clip whose sidecar transcript is not
+  sentence-truncated. Ten clips qualify; the two `Walking*` M4A recordings
+  (~22.7 s / ~31.4 s) are cut off mid-sentence, so their WER is not meaningful.
+
+| Clip | Audio | Ref words | WER | CER | Note |
+| --- | --- | --- | --- | --- | --- |
+| eng-000016-00043f22 | 10.12 s | 29 | 0.000 | 0.000 | full phrase, word-perfect |
+| eng-000112-001d218c | 7.18 s | 10 | 0.000 | 0.000 | word-perfect |
+| eng-000251-003ab093 | 2.45 s | 5 | 0.000 | 0.000 | word-perfect |
+| eng-000001-000081dd | 12.97 s | 30 | 0.033 | 0.044 | "16" → "sixteen" only |
+| eng-000058-000ee09a | 13.33 s | 32 | 0.063 | 0.012 | dropped one word |
+| eng-000004-00021667 | 5.51 s | 10 | 0.100 | 0.042 | trailing repeats differ |
+| eng-000031-0007fc28 | 14.70 s | 30 | 0.100 | 0.033 | "misplayed" → "misplayed" |
+| eng-000072-0011eab3 | 4.23 s | 7 | 0.143 | 0.063 | "coverage for contact messes" |
+| eng-000129-002077dd | 4.31 s | 5 | 0.400 | 0.029 | hyphen split and a merge |
+| eng-000017-00054cf4 | 4.91 s | 5 | 1.000 | 1.045 | `$2,500` vs "two thousand five hundred" |
+
+Unlike the 5 s-window CTC spike, the 110M offline recognizer sees the whole
+phrase, so long prompts are no longer truncated. The two 1.00/0.40 rows are
+number-formatting and tokenization conventions, not acoustic errors. Across the
+ten in-window clips the mean WER is 0.184 and the median is 0.081. This is still
+agreement with a machine pseudo-reference, not gold accuracy.
+
 Parakeet TDT did **not** produce text over the corpus: its stateful decoder is
 sensitive to the log-Mel statistics, and the on-device front end (both the pure
 Kotlin port and the pinned jlibrosa JAR) differs from the frozen
@@ -195,4 +228,6 @@ audio, transcript, or model binary is committed.
 | 2026-10-02 | `1ea196682c669270750406a491a98eef652d5c8e` | Fixed the Parakeet TDT decoder stride: removed the extra `/ NUM_DURATIONS` from `logitsPer` in `ParakeetRunner.tdt()` (6 → 8198), which had made the token/duration argmax windows empty and stalled the decoder. | Windows Gradle `:app:installDebug :app:assembleDebugAndroidTest` passed; Pixel 10 instrumentation `LiteRtParakeetComparisonInstrumentedTest` passed (1 test). Inputs staged from WSL with `stage-litert-asr-inputs.sh STAGE_PARAKEET=1`, using the Windows `adb.exe` because the WSL `adb` server could not see the USB device. | Full TDT/CTC CPU run recorded above; token IDs only, no transcript or accuracy. |
 | 2026-10-02 | `ed504d8f6298057099b95f51ea242e152bf11969` | Added GPU support to `ParakeetRunner` (accelerator allowlist, GPU options, advertised-accelerator query) and a `LiteRtParakeetGpuInstrumentedTest` that probes the CTC and TDT INT8 artifacts on a GPU-only allowlist. | Windows Gradle `spotlessCheck :app:installDebug :app:assembleDebugAndroidTest` passed; Pixel 10 instrumentation passed (1 test). Both lanes `INFERENCE_FAILED`, placement UNKNOWN. | GPU row recorded above; no GPU timing or accuracy. |
 | 2026-10-02 | `cfa1111b4a093fe9620aef8251c45a125c5b2140` | Added `scripts/fetch-litert-npu-runtime.sh` (pinned v2.1.1 Tensor-G5 dispatch library, size+sha256 verified), a debug-only jniLibs opt-in plus debug-only `useLegacyPackaging`, `STAGE_PARAKEET_NPU` staging, and `LiteRtParakeetNpuInstrumentedTest` for the upstream F32 G5 AOT artifact. | Windows Gradle `spotlessApply spotlessCheck :app:installDebug :app:assembleDebugAndroidTest` passed; the debug APK ships `lib/arm64-v8a/libLiteRtDispatch_GoogleTensor.so`; Pixel 10 instrumentation passed (1 test). NPU accelerator did not register; `DISPATCH_OP` unresolved. | NPU row recorded above; artifact is F32 (not INT8); no NPU timing or accuracy. |
+| 2026-10-02 | `ec192cd` (docs-only; no source change) | Added a `docs/voice-latency-results.md` section that scores the 110M sherpa-onnx hypothesis sidecar against the same local Whisper pseudo-reference. | Pixel 10 (`frankel`), Android 17/API 37, build `CP3A.260905.009`. Model: Parakeet TDT-CTC 110M INT8, sherpa-onnx 1.13.8 offline batch. Reuses the existing `parakeet-110m-int8--*.hypothesis.txt` sidecar (run `0edf380`) — no new device run; device conditions were not resampled. | 10/12 clips produced in-window full-phrase text with no truncation: WER 0.033/0.100/0.000/0.143/0.100/0.063/0.000/0.400/0.000/1.000. The two >16 s outdoor clips are sentence-truncated in the sidecar and were not scored. No new latency. | WER is agreement with a machine pseudo-reference, not human-reviewed gold. The 1.00 row is the `$2,500`↔"two thousand five hundred" number-formatting convention (S/D/I 2/0/3), not misrecognition; combined with the 0.40 `self-cleaning`→"self cleaning" repeat, exact word tokens already match on ≤5-word clips. No transcript text copied here. |
+| 2026-10-02 | `fd39960` | Linked the sample tokenizer JNI (tracked JNI shim + build script), decoded token IDs to text on-device, added the on-device Parakeet corpus runner, a pure-Kotlin log-Mel port plus a jlibrosa-backed variant, a Git-ignored local-Whisper reference script, and the host WER harness. | Windows Gradle `spotlessApply spotlessCheck :app:testDebugUnitTest :app:assembleDebugAndroidTest` passed; Pixel 10 corpus run transcribed all 12 clips with Parakeet CTC. Tokenizer JNI built with NDK 28.2 into `models/litert-asr/tokenizer-jni`. | CTC corpus WER recorded above; TDT blocked on feature parity (R-0239); no committed audio/transcript/model. |
 | 2026-10-02 | `fd39960` | Linked the sample tokenizer JNI (tracked JNI shim + build script), decoded token IDs to text on-device, added the on-device Parakeet corpus runner, a pure-Kotlin log-Mel port plus a jlibrosa-backed variant, a Git-ignored local-Whisper reference script, and the host WER harness. | Windows Gradle `spotlessApply spotlessCheck :app:testDebugUnitTest :app:assembleDebugAndroidTest` passed; Pixel 10 corpus run transcribed all 12 clips with Parakeet CTC. Tokenizer JNI built with NDK 28.2 into `models/litert-asr/tokenizer-jni`. | CTC corpus WER recorded above; TDT blocked on feature parity (R-0239); no committed audio/transcript/model. |
