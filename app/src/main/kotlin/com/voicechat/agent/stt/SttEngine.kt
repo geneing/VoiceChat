@@ -130,25 +130,36 @@ data class SttEngine(
  * [catalog] lists the preferred mode first so [preferred] can pick the best
  * *available* mode without the caller hard-coding a policy, and it never reports
  * a mode as ready: the caller must pass availability that came from the runtime
- * check. Parakeet-EOU is listed after the ML Kit modes so an available ML Kit
- * mode stays the default, while an explicit Parakeet choice is still honoured.
+ * check. Parakeet-EOU is listed first so it is the default whenever its
+ * app-managed model is installed; the ML Kit modes follow as the fallback and an
+ * explicit ML Kit choice is still honoured. A device without the Parakeet model
+ * therefore reports it installable, not ready, and [preferred] falls through to
+ * the first ready ML Kit mode.
  */
 object SttEngines {
     /** Default locale for the scaffold until settings expose a language choice. */
     val DEFAULT_LOCALE: Locale = Locale.US
 
-    /** Selectable modes, preferred first. */
-    fun catalog(locale: Locale = DEFAULT_LOCALE): List<SttEngine> =
+    /** Selectable modes, preferred first: Parakeet-EOU is the default engine. */
+    fun catalog(locale: Locale = DEFAULT_LOCALE): List<SttEngine> = listOf(SttEngine(SttMode.PARAKEET_EOU, locale)) + mlKitCatalog(locale)
+
+    /**
+     * The ML Kit GenAI modes only, preferred first.
+     *
+     * [MlKitSttStatus.check] may only be called for these: Parakeet-EOU is a
+     * separate [SttEngineFamily.PARAKEET_EOU] whose availability comes from the
+     * app-managed model store, not the ML Kit feature status.
+     */
+    fun mlKitCatalog(locale: Locale = DEFAULT_LOCALE): List<SttEngine> =
         listOf(
             SttEngine(SttMode.ADVANCED, locale),
             SttEngine(SttMode.BASIC, locale),
-            SttEngine(SttMode.PARAKEET_EOU, locale),
         )
 
     /**
      * The first [SttAvailability.Ready] engine in [availabilities], or `null`
      * when none is ready. Order comes from the caller (use [catalog]), so
-     * Advanced is preferred when it is actually available.
+     * Parakeet-EOU is preferred when it is actually available, then Advanced.
      */
     fun preferred(availabilities: List<SttAvailability>): SttEngine? = availabilities.firstOrNull { it is SttAvailability.Ready }?.engine
 
@@ -158,7 +169,7 @@ object SttEngines {
      * When [mode] is set, **only** that mode is considered, so a persisted choice
      * that is unavailable is reported as unavailable rather than silently
      * substituted with the other mode (R-0181). `null` keeps the catalog order
-     * ([SttMode.ADVANCED] preferred) for a user who has not chosen.
+     * ([SttMode.PARAKEET_EOU] preferred) for a user who has not chosen.
      */
     fun select(
         availabilities: List<SttAvailability>,

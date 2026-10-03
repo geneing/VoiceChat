@@ -273,10 +273,15 @@ private class PlatformVoiceSession(
         coordinator?.stop()
     }
 
-    /** The runtime availability for every catalog mode, both families. */
+    /**
+     * The runtime availability for every catalog mode, both families, with the
+     * default engine (Parakeet-EOU) first. Only the ML Kit modes go through
+     * [MlKitSttStatus.check]; Parakeet-EOU is app-managed and comes from its
+     * verified model store.
+     */
     private suspend fun availableStt(locale: Locale): List<SttAvailability> =
-        SttEngines.catalog(locale).map { MlKitSttStatus.check(it) } +
-            ParakeetEouSttCatalog.availability(parakeetModelStore.state(), locale)
+        listOf(ParakeetEouSttCatalog.availability(parakeetModelStore.state(), locale)) +
+            SttEngines.mlKitCatalog(locale).map { MlKitSttStatus.check(it) }
 
     private fun reportSttUnavailable(error: VoiceAgentError) {
         _state.value = VoiceSessionState.FAILED

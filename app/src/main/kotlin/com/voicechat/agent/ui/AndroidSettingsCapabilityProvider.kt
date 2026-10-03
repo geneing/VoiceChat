@@ -60,14 +60,15 @@ class AndroidSettingsCapabilityProvider(
         )
 
     /**
-     * The ML Kit modes plus the app-managed Parakeet-EOU engine. Parakeet is
-     * reported from the verified on-disk model set, so an uninstalled set is a
-     * first-class [com.voicechat.agent.stt.SttAvailability.DownloadRequired] and
-     * never a fabricated ready state.
+     * The app-managed Parakeet-EOU engine (the default) plus the ML Kit modes.
+     * Parakeet is reported from the verified on-disk model set, so an uninstalled
+     * set is a first-class [com.voicechat.agent.stt.SttAvailability.DownloadRequired]
+     * and never a fabricated ready state; only the ML Kit modes go through
+     * [MlKitSttStatus.check].
      */
     private suspend fun readSttAvailability(): List<com.voicechat.agent.stt.SttAvailability> =
-        SttEngines.catalog().map { MlKitSttStatus.check(it) } +
-            ParakeetEouSttCatalog.availability(parakeetEouStore.state())
+        listOf(ParakeetEouSttCatalog.availability(parakeetEouStore.state())) +
+            SttEngines.mlKitCatalog().map { MlKitSttStatus.check(it) }
 
     private suspend fun readTtsVoices(): List<TtsVoice> {
         val engine = AndroidTtsEngine(appContext)

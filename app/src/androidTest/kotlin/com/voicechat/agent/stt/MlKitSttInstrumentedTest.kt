@@ -33,7 +33,7 @@ class MlKitSttInstrumentedTest {
         runBlocking {
             val results = mutableListOf<String>()
 
-            SttEngines.catalog(locale).forEach { candidate ->
+            SttEngines.mlKitCatalog(locale).forEach { candidate ->
                 val availability = MlKitSttStatus.check(candidate)
                 assertNotNull(availability)
                 results += "${candidate.mode}=$availability"

@@ -2,6 +2,7 @@ package com.voicechat.agent.stt
 
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.UnavailableReason
+import com.voicechat.agent.domain.VoiceAgentError
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -44,34 +45,54 @@ class SttAvailabilityTest {
     }
 
     @Test
-    fun theCatalogPrefersAdvancedButNeverMarksItReady() {
+    fun theCatalogPrefersParakeetEouThenTheMlKitModes() {
         val catalog = SttEngines.catalog(Locale.US)
 
-        assertEquals(listOf(SttMode.ADVANCED, SttMode.BASIC, SttMode.PARAKEET_EOU), catalog.map { it.mode })
+        assertEquals(listOf(SttMode.PARAKEET_EOU, SttMode.ADVANCED, SttMode.BASIC), catalog.map { it.mode })
+        assertEquals(listOf(SttMode.ADVANCED, SttMode.BASIC), SttEngines.mlKitCatalog(Locale.US).map { it.mode })
     }
 
     @Test
     fun preferredPicksTheFirstReadyEngineInCatalogOrder() {
-        val catalog = SttEngines.catalog(Locale.US)
+        val parakeet = SttEngine(SttMode.PARAKEET_EOU, Locale.US)
+        val advanced = SttEngine(SttMode.ADVANCED, Locale.US)
+        val basic = SttEngine(SttMode.BASIC, Locale.US)
 
-        val advancedReady =
+        // Parakeet-EOU is the default once its app-managed model is installed.
+        val parakeetReady =
             listOf(
-                SttAvailabilityMapper.map(catalog[0], SttFeatureStatus.AVAILABLE),
-                SttAvailabilityMapper.map(catalog[1], SttFeatureStatus.AVAILABLE),
+                SttAvailability.Ready(parakeet),
+                SttAvailability.Ready(advanced),
+                SttAvailability.Ready(basic),
             )
-        assertEquals(SttMode.ADVANCED, SttEngines.preferred(advancedReady)?.mode)
+        assertEquals(SttMode.PARAKEET_EOU, SttEngines.preferred(parakeetReady)?.mode)
+
+        // Without it, the first ready ML Kit mode is the fallback.
+        val onlyAdvancedReady =
+            listOf(
+                SttAvailability.DownloadRequired(parakeet),
+                SttAvailability.Ready(advanced),
+                SttAvailability.Ready(basic),
+            )
+        assertEquals(SttMode.ADVANCED, SttEngines.preferred(onlyAdvancedReady)?.mode)
 
         val onlyBasicReady =
             listOf(
-                SttAvailabilityMapper.map(catalog[0], SttFeatureStatus.UNAVAILABLE),
-                SttAvailabilityMapper.map(catalog[1], SttFeatureStatus.AVAILABLE),
+                SttAvailability.DownloadRequired(parakeet),
+                SttAvailability.DownloadRequired(advanced),
+                SttAvailability.Ready(basic),
             )
         assertEquals(SttMode.BASIC, SttEngines.preferred(onlyBasicReady)?.mode)
 
         val nothingReady =
             listOf(
-                SttAvailabilityMapper.map(catalog[0], SttFeatureStatus.DOWNLOADABLE),
-                SttAvailabilityMapper.map(catalog[1], SttFeatureStatus.UNAVAILABLE),
+                SttAvailability.DownloadRequired(parakeet),
+                SttAvailability.DownloadRequired(advanced),
+                SttAvailability.Unavailable(
+                    basic,
+                    UnavailableReason.DEVICE_UNSUPPORTED,
+                    VoiceAgentError(ErrorCode.STT_UNAVAILABLE, "unavailable"),
+                ),
             )
         assertNull(SttEngines.preferred(nothingReady))
     }
