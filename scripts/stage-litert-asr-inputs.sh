@@ -122,6 +122,18 @@ if [[ "${STAGE_PARAKEET:-0}" == "1" ]]; then
     "$repo_root/models/litert-asr/parakeet-ctc-features-5s.f32" \
     "647222dfb72e123aedbd8a4244079b779af94a4184d6aa3c63ab1ec506b8c460" \
     160000 "parakeet-ctc-features-5s.f32"
+  copy_private "$repo_root/models/litert-asr/parakeet-tdt-tokenizer.json" "parakeet-tdt-tokenizer.json"
+  copy_private "$repo_root/models/litert-asr/parakeet-ctc-tokenizer.json" "parakeet-ctc-tokenizer.json"
+fi
+
+# Corpus run: stage the 16 kHz mono WAV fixtures so the corpus test can
+# preprocess and transcribe them on-device. These are the repo's manifest-less
+# top-level fixtures; they are not packaged in the APK, only pushed to private
+# storage for the local benchmark.
+if [[ "${STAGE_CORPUS:-0}" == "1" ]]; then
+  while IFS= read -r wav; do
+    copy_private "$wav" "$(basename "$wav")"
+  done < <(find "$repo_root/test_data" -maxdepth 1 -type f -name 'eng-*.wav' | sort)
 fi
 
 # Tensor G5 NPU AOT artifact (F32, not the INT8 candidate). Debug/eval only;

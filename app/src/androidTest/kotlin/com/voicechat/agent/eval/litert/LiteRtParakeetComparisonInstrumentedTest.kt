@@ -43,6 +43,7 @@ class LiteRtParakeetComparisonInstrumentedTest {
                     modelSha256 = "3d0799f625842fded4580c9b51d321667f0bd5f334cb325fb1b9051c6534e102",
                     featuresPath = "litert-asr/parakeet-ctc-features-5s.f32",
                     featuresSha256 = "647222dfb72e123aedbd8a4244079b779af94a4184d6aa3c63ab1ec506b8c460",
+                    tokenizerPath = "litert-asr/parakeet-ctc-tokenizer.json",
                     mode = ParakeetRunner.Mode.CTC,
                 ),
                 Case(
@@ -52,6 +53,7 @@ class LiteRtParakeetComparisonInstrumentedTest {
                     modelSha256 = "334745b8bc7fd372b1c213516f0b6338bb827b1a2abb3e77ad35fe6fea5cd16b",
                     featuresPath = "litert-asr/parakeet-tdt-features-5s.f32",
                     featuresSha256 = "8434cd7f5cdfd562de7cb777b908ec07fa1307946b25fa7b095d13baeb1fd441",
+                    tokenizerPath = "litert-asr/parakeet-tdt-tokenizer.json",
                     mode = ParakeetRunner.Mode.TDT,
                 ),
             )
@@ -69,10 +71,12 @@ class LiteRtParakeetComparisonInstrumentedTest {
             return
         }
 
+        val tokenizers = decodeTokenizers(cases)
+
         val thermalBefore = thermalStatus()
         val batteryBefore = batterySnapshot()
         for (case in cases) {
-            runCase(case)
+            runCase(case, tokenizers[case.label])
         }
         Log.i(
             TAG,
@@ -89,11 +93,72 @@ class LiteRtParakeetComparisonInstrumentedTest {
                 .put("thermalStatusAfter", thermalStatus())
                 .put("batteryBefore", batteryBefore)
                 .put("batteryAfter", batterySnapshot())
+                .put("tokenizerJniLoaded", tokenizerJniLoaded)
                 .toString(),
         )
     }
 
-    private fun runCase(case: Case) {
+    /**
+     * Loads the sample tokenizer JNI and builds one tokenizer per case family from
+     * the staged `tokenizer.json`. A missing library or tokenizer is a logged
+     * unavailability, not a failure: the timing rows still run, text is just
+     * reported as unavailable.
+     */
+    private fun decodeTokenizers(cases: List<Case>): Map<String, LiteRtHuggingfaceTokenizer> {
+        try {
+            LiteRtHuggingfaceTokenizer.load()
+            tokenizerJniLoaded = true
+        } catch (failure: Throwable) {
+            Log.i(
+                TAG,
+                JSONObject()
+                    .put("record", "litert_parakeet_comparison")
+                    .put("outcome", "TOKENIZER_JNI_UNAVAILABLE")
+                    .put("failureType", failure.javaClass.name)
+                    .put("failureMessage", failure.message ?: JSONObject.NULL)
+                    .toString(),
+            )
+            return emptyMap()
+        }
+        val result = LinkedHashMap<String, LiteRtHuggingfaceTokenizer>()
+        for (case in cases) {
+            val tokenizerFile = File(context.filesDir, case.tokenizerPath)
+            if (!tokenizerFile.isFile) {
+                Log.i(
+                    TAG,
+                    JSONObject()
+                        .put("record", "litert_parakeet_comparison")
+                        .put("outcome", "TOKENIZER_INPUTS_NOT_STAGED")
+                        .put("case", case.label)
+                        .put("tokenizerPath", case.tokenizerPath)
+                        .toString(),
+                )
+                continue
+            }
+            try {
+                val tokenizer = LiteRtHuggingfaceTokenizer.fromJson(tokenizerFile.readText())
+                result[case.label] = tokenizer
+                tokenizerVocab[case.label] = tokenizer.vocabSize
+            } catch (failure: Throwable) {
+                Log.i(
+                    TAG,
+                    JSONObject()
+                        .put("record", "litert_parakeet_comparison")
+                        .put("outcome", "TOKENIZER_INIT_FAILED")
+                        .put("case", case.label)
+                        .put("failureType", failure.javaClass.name)
+                        .put("failureMessage", failure.message ?: JSONObject.NULL)
+                        .toString(),
+                )
+            }
+        }
+        return result
+    }
+
+    private fun runCase(
+        case: Case,
+        tokenizer: LiteRtHuggingfaceTokenizer?,
+    ) {
         val model = File(context.filesDir, case.modelPath)
         val featuresFile = File(context.filesDir, case.featuresPath)
         val modelSha = sha256(model)
@@ -117,10 +182,18 @@ class LiteRtParakeetComparisonInstrumentedTest {
             val result = runner.run(features)
             assertTrue("decoder produced no token", result.tokenIds.isNotEmpty())
 
-            // Local, Git-ignored hypothesis sidecar so a later reviewed reference
-            // could compute WER; token IDs are not text or accuracy.
+            // Local, Git-ignored hypothesis sidecars: raw token IDs and, when the
+            // tokenizer JNI is present, the decoded text. Neither is accuracy.
             val hypothesisFile = File(context.filesDir, "litert-asr/${case.label}-tokens.txt")
             hypothesisFile.writeText(result.tokenIds.joinToString(" "))
+            val transcript =
+                if (tokenizer != null) {
+                    val decoded = tokenizer.decode(result.tokenIds)
+                    File(context.filesDir, "litert-asr/${case.label}-transcript.txt").writeText(decoded)
+                    decoded
+                } else {
+                    ""
+                }
 
             emit(
                 case,
@@ -137,7 +210,10 @@ class LiteRtParakeetComparisonInstrumentedTest {
                     .put("tokenCount", result.tokenIds.size)
                     .put("encodeOutputShape", JSONArray(result.encodeOutputShape))
                     .put("hypothesisFile", hypothesisFile.name)
-                    .put("transcript", "UNAVAILABLE_TOKEN_IDS_ONLY_NO_TOKENIZER")
+                    .put("transcriptFile", if (transcript.isNotEmpty()) "${case.label}-transcript.txt" else JSONObject.NULL)
+                    .put("tokenizerVocabSize", tokenizerVocab[case.label] ?: JSONObject.NULL)
+                    // Decoded text is intentionally NOT logged: only its presence.
+                    .put("hasTranscript", transcript.isNotEmpty())
                     .put("accuracy", "NOT_MEASURED"),
             )
         } catch (failure: Throwable) {
@@ -221,8 +297,13 @@ class LiteRtParakeetComparisonInstrumentedTest {
         val modelSha256: String,
         val featuresPath: String,
         val featuresSha256: String,
+        val tokenizerPath: String,
         val mode: ParakeetRunner.Mode,
     )
+
+    /** Set once per run; read back into the environment record. */
+    private var tokenizerJniLoaded = false
+    private val tokenizerVocab = LinkedHashMap<String, Int>()
 
     private companion object {
         const val TAG = "LiteRtParakeetTest"

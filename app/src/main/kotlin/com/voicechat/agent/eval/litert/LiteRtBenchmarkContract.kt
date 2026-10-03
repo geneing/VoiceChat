@@ -137,6 +137,7 @@ enum class LiteRtAccuracyReferenceSource(
 ) {
     NONE("none"),
     OPENAI_GPT_4O_TRANSCRIBE("openai_gpt-4o-transcribe"),
+    LOCAL_WHISPER("local_whisper"),
     HUMAN_REVIEWED("human_reviewed"),
 }
 
@@ -273,8 +274,11 @@ data class LiteRtBenchmarkRecord(
             }
 
             LiteRtAccuracyReferenceStatus.UNREVIEWED_PSEUDO_REFERENCE -> {
-                require(accuracyReferenceSource == LiteRtAccuracyReferenceSource.OPENAI_GPT_4O_TRANSCRIBE) {
-                    "pseudo-reference results must identify the OpenAI transcription source"
+                require(
+                    accuracyReferenceSource == LiteRtAccuracyReferenceSource.OPENAI_GPT_4O_TRANSCRIBE ||
+                        accuracyReferenceSource == LiteRtAccuracyReferenceSource.LOCAL_WHISPER,
+                ) {
+                    "pseudo-reference results must identify the OpenAI or local Whisper transcription source"
                 }
             }
 

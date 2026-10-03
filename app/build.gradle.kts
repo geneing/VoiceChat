@@ -102,6 +102,18 @@ if (litertNpuDispatchDir.isDirectory) {
     }
 }
 
+// The LiteRT sample tokenizer JNI (libtokenizer_jni.so) turns ASR token IDs into
+// text for the WER harness. It is built by scripts/build-tokenizer-jni.sh into
+// the gitignored models/ tree and packaged, like the NPU library, only when
+// present; a clean checkout still configures and builds.
+val litertTokenizerJniDir = rootProject.file("models/litert-asr/tokenizer-jni")
+if (litertTokenizerJniDir.isDirectory) {
+    android.sourceSets
+        .getByName("debug")
+        .jniLibs.directories
+        .add(litertTokenizerJniDir.absolutePath)
+}
+
 // Export the Room schema so migrations have a checked-in contract to review.
 // The app has a single schema version today (see docs/persistence.md); the
 // schema-export test asserts the JSON is produced and matches version 1.
@@ -205,6 +217,15 @@ dependencies {
     // LiteRT ASR benchmark spike only. Keep the production app and ML Kit path
     // independent of this sample-pinned runtime.
     androidTestImplementation(libs.litert.asr.test)
+    // The pinned sample's mel front end (jlibrosa), opt-in and local-only. Fetch
+    // it with scripts/fetch-jlibrosa.sh; the JAR is gitignored and only wired when
+    // present so a clean checkout builds without it. The fetch script strips the
+    // fat-jar's bundled junit/maven/commons classes, leaving only jlibrosa's own.
+    val jlibrosaDir = rootProject.file("models/litert-asr/jlibrosa/libs")
+    val jlibrosaJar = jlibrosaDir.listFiles()?.firstOrNull { it.name.endsWith(".jar") }
+    if (jlibrosaJar != null) {
+        androidTestImplementation(files(jlibrosaJar))
+    }
     // Compose instrumented UI tests reuse the BOM-managed Compose UI test library;
     // ui-test-manifest is already a debugImplementation for both test hosts.
     androidTestImplementation(platform(libs.androidx.compose.bom))

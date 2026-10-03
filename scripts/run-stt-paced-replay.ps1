@@ -9,6 +9,7 @@ param(
     [string]$ParakeetOutputCsv,
     [string]$DeviceSerial,
     [switch]$ExportDraftLabels,
+    [switch]$TrimLeadingSilence,
     [string]$DraftLabelsPath,
     [switch]$ExportMoonshineDraftLabels,
     [string]$MoonshineDraftLabelsPath,
@@ -93,7 +94,7 @@ if (($parakeetDraftLabels -and $mlDraftLabels -and $parakeetDraftLabels.Path.Equ
     ($parakeetDraftLabels -and $moonshineDraftLabels -and $parakeetDraftLabels.Path.Equals($moonshineDraftLabels.Path, [System.StringComparison]::OrdinalIgnoreCase))) {
     throw "Parakeet draft labels need a separate local output path."
 }
-foreach ($draftOutput in @($mlDraftLabels, $moonshineDraftLabels) | Where-Object { $null -ne $_ }) {
+foreach ($draftOutput in @($mlDraftLabels, $moonshineDraftLabels, $parakeetDraftLabels) | Where-Object { $null -ne $_ }) {
     $draftOutputDirectory = Split-Path -Parent $draftOutput.Path
     if (-not (Test-Path -LiteralPath $draftOutputDirectory)) {
         New-Item -ItemType Directory -Path $draftOutputDirectory -Force | Out-Null
@@ -254,6 +255,29 @@ if ($Engine -eq "Parakeet") {
         throw "Parakeet runtime is not present. Run scripts/fetch-parakeet-candidate.ps1 first."
     }
 }
+if ($Engine -eq "WhisperSmall") {
+    $whisperRoot = Join-Path $repoRoot "models/whisper-small-en-int8"
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot "models/sherpa-onnx-1.13.8.aar") -PathType Leaf)) {
+        throw "Whisper Small runtime is missing. Run scripts/fetch-whisper-small-candidate.ps1 first."
+    }
+    foreach ($fileName in @("small.en-encoder.int8.onnx", "small.en-decoder.int8.onnx", "small.en-tokens.txt", "local-metadata.json")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $whisperRoot $fileName) -PathType Leaf)) {
+            throw "Whisper Small artifact '$fileName' is missing. Run scripts/fetch-whisper-small-candidate.ps1 first."
+        }
+    }
+    $targets += [pscustomobject]@{
+        Name = "Whisper Small English offline prefix"
+        ClassName = "com.voicechat.agent.stt.WhisperSmallOfflineReplayInstrumentedTest"
+        ResultsFile = "whisper-small-results.csv"
+        DraftFile = "whisper-small-draft-labels.csv"
+        ExportDraftLabels = [bool]$ExportWhisperSmallDraftLabels
+        DraftOutput = $whisperSmallDraftLabels
+        OutputCsv = $WhisperSmallOutputCsv
+        IsMlKit = $false
+        IsParakeet = $false
+        IsWhisperSmall = $true
+    }
+}
 $failedTargets = @()
 $deviceTempFiles = @()
 $remoteDirectoryCreated = $false
@@ -270,6 +294,12 @@ try {
             & (Join-Path $PSScriptRoot "push-parakeet-candidate.ps1") -DeviceSerial $DeviceSerial
             if ($LASTEXITCODE -ne 0) {
                 throw "Could not stage the pinned Parakeet model on the device."
+            }
+        }
+        if ($Engine -eq "WhisperSmall") {
+            & (Join-Path $PSScriptRoot "push-whisper-small-candidate.ps1") -DeviceSerial $DeviceSerial
+            if ($LASTEXITCODE -ne 0) {
+                throw "Could not stage the pinned Whisper Small English model on the device."
             }
         }
 
@@ -328,6 +358,8 @@ try {
                 $draftExportArgument = if ($target.ExportDraftLabels) { "true" } else { "false" }
                 $instrumentationArguments += @("-e", "sttReplayMode", $Mode.ToUpperInvariant())
                 $instrumentationArguments += @("-e", "sttReplayExportDraftLabels", $draftExportArgument)
+                $trimLeadingSilenceArgument = if ($TrimLeadingSilence) { "true" } else { "false" }
+                $instrumentationArguments += @("-e", "sttReplayTrimLeadingSilence", $trimLeadingSilenceArgument)
             } elseif ($target.ExportDraftLabels) {
                 # Moonshine stays transcript-free unless its dedicated opt-in switch was supplied.
                 $instrumentationArguments += @("-e", "sttReplayExportDraftLabels", "true")
@@ -361,6 +393,8 @@ try {
                         model_id = $deviceRow.model_id
                         mode = $deviceRow.mode
                         input_duration_ms = $deviceRow.input_duration_ms
+                        source_audio_duration_ms = $deviceRow.source_audio_duration_ms
+                        leading_trim_ms = $deviceRow.leading_trim_ms
                         model_open_ms = $deviceRow.model_open_ms
                         input_start_ms = $deviceRow.input_start_ms
                         first_partial_ms = $deviceRow.first_partial_ms
