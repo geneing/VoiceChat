@@ -121,44 +121,27 @@ class ParakeetStreamingDecoder(
     }
 
     /**
-     * Flushes the trailing samples at end of input.
-     *
-     * Any remaining samples are zero-padded to a full [ParakeetEouConfig.chunkSamples]
-     * window **exactly once** and decoded, then the remaining tokens are committed
-     * as final. Idempotent: a second call returns the same [DecodeResult] without
-     * re-running the runtime.
+     * Commits the tokens from complete windows at end of input. Any trailing
+     * samples smaller than [ParakeetEouConfig.chunkSamples] are discarded: the
+     * streaming host also stops rather than padding and decoding a partial window.
+     * Idempotent: a second call returns the same [DecodeResult] without re-running
+     * the runtime.
      */
     fun finalize(): DecodeResult {
         if (finalized) return lastResult
         finalized = true
-        if (bufferSize > 0) {
-            val padded = FloatArray(config.chunkSamples)
-            System.arraycopy(buffer, 0, padded, 0, bufferSize)
-            buffer = padded
-            bufferSize = config.chunkSamples
-        }
-        val commit = runPending()
-        val eouDetected = eouPending || commit != null
-        val eouCommit = if (commit != null && currentText().isEmpty()) commit else null
+        // Do not call runPending() here: it decodes complete windows during
+        // accept(), while this buffer is only the host-ineligible partial tail.
+        val eouDetected = eouPending
         val trailing = commitSegment()
         val result =
-            if (eouCommit != null) {
-                DecodeResult(
-                    text = eouCommit.text,
-                    isFinal = true,
-                    eouDetected = true,
-                    confidence = confidenceOf(eouCommit.logProbs),
-                    segmentIndex = eouCommit.index,
-                )
-            } else {
-                DecodeResult(
-                    text = trailing.text,
-                    isFinal = true,
-                    eouDetected = eouDetected && trailing.text.isEmpty(),
-                    confidence = confidenceOf(trailing.logProbs),
-                    segmentIndex = trailing.index,
-                )
-            }
+            DecodeResult(
+                text = trailing.text,
+                isFinal = true,
+                eouDetected = eouDetected && trailing.text.isEmpty(),
+                confidence = confidenceOf(trailing.logProbs),
+                segmentIndex = trailing.index,
+            )
         lastResult = result
         return result
     }

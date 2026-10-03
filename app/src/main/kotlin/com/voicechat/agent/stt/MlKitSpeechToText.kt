@@ -107,7 +107,7 @@ class MlKitSpeechToText(
                             .onResponse(SttEngineResponse.Failure(kind, detail = "feature status $status"))
                             .first() as SttEvent.Failed
                     outcome = DiagnosticOutcome.FAILED
-                    errorCode = event.error.code.name
+                    errorCode = event.error.detail ?: event.error.code.name
                     emit(event)
                     return@flow
                 }
@@ -164,7 +164,7 @@ class MlKitSpeechToText(
 
                                     is SttEvent.Failed -> {
                                         outcome = DiagnosticOutcome.FAILED
-                                        errorCode = event.error.code.name
+                                        errorCode = event.error.detail ?: event.error.code.name
                                     }
                                 }
                                 emit(event)
@@ -172,17 +172,23 @@ class MlKitSpeechToText(
                         }
                     } catch (cancellation: CancellationException) {
                         throw cancellation
-                    } catch (_: Throwable) {
-                        AppLog.e { "stt: recognition stream failed" }
+                    } catch (failure: Throwable) {
+                        val safeDetail =
+                            generateSequence(failure as Throwable?) { it.cause }
+                                .filterIsInstance<com.google.mlkit.genai.common.GenAiException>()
+                                .firstOrNull()
+                                ?.let { "MLKIT_GENAI_ERROR_CODE_${it.errorCode}" }
+                                ?: "recognition stream failed (${failure::class.simpleName ?: "unknown"})"
+                        AppLog.e { "stt: $safeDetail" }
                         assembler
                             .onResponse(
                                 SttEngineResponse.Failure(
                                     SttFailureKind.RECOGNITION_FAILED,
-                                    detail = "recognition stream failed",
+                                    detail = safeDetail,
                                 ),
                             ).forEach { event ->
                                 outcome = DiagnosticOutcome.FAILED
-                                errorCode = (event as SttEvent.Failed).error.code.name
+                                errorCode = (event as SttEvent.Failed).error.detail ?: event.error.code.name
                                 emit(event)
                             }
                     }

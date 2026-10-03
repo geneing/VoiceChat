@@ -51,9 +51,14 @@ android {
         buildConfig = true
     }
 
-    // Moonshine's debug AAR bundles the same native ONNX library as the
-    // app-managed Smart Turn dependency. Keep one shared object in the debug
-    // APK; dependency order below makes the app-pinned runtime the first match.
+    // Moonshine's debug AAR bundles its OWN older/smaller libonnxruntime.so
+    // (6.3 MB, no exported OrtGetApiBase) that collides with the app-pinned
+    // onnxruntime-android (32 MB). On device the debug APK shipped Moonshine's
+    // library and the app-pinned JNI failed with
+    //   dlopen failed: cannot locate symbol "OrtGetApiBase".
+    // The pinned runtime's native libraries are therefore supplied as an
+    // explicit jniLibs source (scripts/fetch-onnxruntime-android-libs.sh) and
+    // project sources take precedence in the merge over the dependency's copy.
     packaging {
         jniLibs {
             pickFirsts += "**/libonnxruntime.so"
@@ -67,6 +72,22 @@ android {
             isIncludeAndroidResources = true
         }
     }
+}
+
+// The pinned ONNX Runtime native libraries, extracted from the
+// onnxruntime-android AAR by scripts/fetch-onnxruntime-android-libs.sh. They are
+// supplied as an explicit jniLibs source because Moonshine's debug AAR bundles a
+// colliding `libonnxruntime.so` that cannot be resolved by dependency order (see
+// the packaging block above). Absent from clean checkouts; a clean build then
+// simply has no ONNX runtime and the Smart Turn / Parakeet engines report
+// unavailable rather than shipping a broken library.
+val onnxRuntimeLibsDir = rootProject.file("models/onnxruntime-android/jniLibs")
+if (onnxRuntimeLibsDir.isDirectory) {
+    android.sourceSets
+        .getByName("debug")
+        .jniLibs
+        .directories
+        .add(onnxRuntimeLibsDir.absolutePath)
 }
 
 // The Parakeet candidate is intentionally opt-in and local-only. Its source set
@@ -157,8 +178,7 @@ dependencies {
 
     // Moonshine is an evaluation candidate only. Its adapter and native/model
     // dependency are debug-only until the Pixel benchmark and quality review.
-    // The app's ONNX Runtime declaration stays before this AAR so pickFirsts
-    // retains the app-pinned libonnxruntime.so for both native consumers.
+    // Its bundled libonnxruntime is excluded above in favour of the pinned one.
     debugImplementation(libs.moonshine.voice)
     if (sherpaOnnxParakeetAar.isFile) {
         // Device-evaluation-only AAR (48 MB); absent from clean checkouts and

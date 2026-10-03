@@ -59,6 +59,11 @@ test_data/smart-turn-v3.2-eng/
 # They may contain speech transcripts and must stay out of Git until verified.
 test_data/stt-draft-labels-*.csv
 
+# On-device replay/benchmark output pulled from the device (timing rows and
+# draft-label sidecars). Content-free timing rows are reproducible from the
+# harness; the label sidecars may contain speech transcripts. Keep out of Git.
+results/
+
 # Local OpenAI STT reference review material (may contain Walking audio and
 # transcripts). Keep out of Git.
 test_data/openai-stt-reference-review/

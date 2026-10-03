@@ -40,7 +40,8 @@ class ParakeetOfflineReplayInstrumentedTest {
             val replayDir = File(File(targetContext.cacheDir, REPLAY_DIRECTORY), runId)
             assertTrue("replay directory is missing", replayDir.isDirectory)
             val modelDir = File(targetContext.filesDir, MODEL_DIRECTORY)
-            val modelFile = File(modelDir, MODEL_FILE)
+            val modelFileName = arguments.getString(ARG_MODEL_FILE)?.takeIf { it.isNotBlank() } ?: MODEL_FILE
+            val modelFile = File(modelDir, modelFileName)
             val tokensFile = File(modelDir, TOKENS_FILE)
             assertTrue("Parakeet model file is missing", modelFile.isFile)
             assertTrue("Parakeet token file is missing", tokensFile.isFile)
@@ -319,6 +320,7 @@ class ParakeetOfflineReplayInstrumentedTest {
         const val TAG = "VoiceChatSttReplay"
         const val ARG_RUN_ID = "sttReplayRunId"
         const val ARG_EXPORT_DRAFT_LABELS = "sttReplayExportDraftLabels"
+        const val ARG_MODEL_FILE = "sttReplayParakeetModelFile"
         const val REPLAY_DIRECTORY = "voicechat-stt-replay"
         const val MODEL_DIRECTORY = "parakeet-tdt-ctc-110m-en-int8"
         const val MODEL_FILE = "model.int8.onnx"

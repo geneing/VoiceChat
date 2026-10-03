@@ -25,6 +25,7 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.Locale
+import kotlin.math.sqrt
 
 /**
  * Opt-in, file-backed smoke benchmark for the real ML Kit STT adapter.
@@ -53,6 +54,7 @@ class MlKitSttPacedReplayInstrumentedTest {
 
             val modeArgument = arguments.getString(ARG_MODE, "ADVANCED").uppercase(Locale.ROOT)
             val exportDraftLabels = arguments.getString(ARG_EXPORT_DRAFT_LABELS)?.toBoolean() == true
+            val trimLeadingSilence = arguments.getString(ARG_TRIM_LEADING_SILENCE)?.toBoolean() == true
             val modes =
                 when (modeArgument) {
                     "BASIC" -> listOf(SttMode.BASIC)
@@ -72,7 +74,7 @@ class MlKitSttPacedReplayInstrumentedTest {
                 buildList {
                     for (mode in modes) {
                         for (file in files) {
-                            add(replayOne(file, mode))
+                            add(replayOne(file, mode, trimLeadingSilence))
                         }
                     }
                 }
@@ -93,6 +95,7 @@ class MlKitSttPacedReplayInstrumentedTest {
     private suspend fun replayOne(
         file: File,
         mode: SttMode,
+        trimLeadingSilence: Boolean,
     ): ReplayRow {
         val engine = SttEngine(mode, Locale.US)
         val fileId = file.nameWithoutExtension.takeIf { SAFE_FILE_ID.matches(it) } ?: "invalid-file-id"
@@ -105,6 +108,8 @@ class MlKitSttPacedReplayInstrumentedTest {
         var outcome = "DECODE_FAILED"
         var errorCode: String? = null
         var inputDurationMillis: Long? = null
+        var sourceAudioDurationMillis: Long? = null
+        var leadingTrimMillis: Long = 0L
         var draftTranscript: String? = null
         val exportDraftLabels =
             InstrumentationRegistry
@@ -128,9 +133,17 @@ class MlKitSttPacedReplayInstrumentedTest {
                 null
             }
         if (decoded != null) {
-            inputDurationMillis = decoded.durationMillis
+            sourceAudioDurationMillis = decoded.durationMillis
+            val fedAudio =
+                if (trimLeadingSilence) {
+                    trimLeadingSilence(decoded.samples)
+                } else {
+                    TrimmedAudio(decoded.samples, leadingSamples = 0)
+                }
+            inputDurationMillis = samplesToMillis(fedAudio.samples.size)
+            leadingTrimMillis = samplesToMillis(fedAudio.leadingSamples)
             val input =
-                pacedFrames(decoded.samples) { startedAt, endedAt ->
+                pacedFrames(fedAudio.samples) { startedAt, endedAt ->
                     inputStartedAtNanos = startedAt
                     inputEndedAtNanos = endedAt
                 }
@@ -154,7 +167,7 @@ class MlKitSttPacedReplayInstrumentedTest {
 
                                 is SttEvent.Failed -> {
                                     failureAtNanos = eventAt
-                                    errorCode = event.error.code.name
+                                    errorCode = event.error.detail ?: event.error.code.name
                                     outcome = "FAILED"
                                 }
                             }
@@ -181,6 +194,8 @@ class MlKitSttPacedReplayInstrumentedTest {
             engineId = engine.engineId.value,
             modelId = engine.modelId.value,
             inputDurationMillis = inputDurationMillis,
+            sourceAudioDurationMillis = sourceAudioDurationMillis,
+            leadingTrimMillis = leadingTrimMillis,
             inputStartMillis = inputStartedAtNanos?.let { elapsedMillis(sessionStartedAtNanos, it) },
             firstPartialMillis = firstPartialAtNanos?.let { elapsedMillis(sessionStartedAtNanos, it) },
             inputEndMillis = inputEndedAtNanos?.let { elapsedMillis(sessionStartedAtNanos, it) },
@@ -243,6 +258,36 @@ class MlKitSttPacedReplayInstrumentedTest {
             }
         }
     }
+
+    private fun trimLeadingSilence(samples: ShortArray): TrimmedAudio {
+        var consecutiveSpeechFrames = 0
+        var candidateOnset = -1
+        var offset = 0
+        while (offset < samples.size) {
+            val end = minOf(offset + FRAME_SIZE_SAMPLES, samples.size)
+            var sumSquares = 0.0
+            for (index in offset until end) {
+                val sample = samples[index].toDouble()
+                sumSquares += sample * sample
+            }
+            val rms = sqrt(sumSquares / (end - offset))
+            if (rms >= LEADING_TRIM_SPEECH_RMS_THRESHOLD) {
+                if (consecutiveSpeechFrames == 0) candidateOnset = offset
+                consecutiveSpeechFrames++
+                if (consecutiveSpeechFrames >= REQUIRED_SPEECH_FRAMES) {
+                    val trimSamples = (candidateOnset - LEADING_TRIM_PREROLL_SAMPLES).coerceAtLeast(0)
+                    return TrimmedAudio(samples.copyOfRange(trimSamples, samples.size), trimSamples)
+                }
+            } else {
+                consecutiveSpeechFrames = 0
+                candidateOnset = -1
+            }
+            offset = end
+        }
+        return TrimmedAudio(samples, leadingSamples = 0)
+    }
+
+    private fun samplesToMillis(sampleCount: Int): Long = sampleCount.toLong() * 1_000L / SAMPLE_RATE_HZ
 
     private fun readPcmWav(file: File): AndroidM4aReplayDecoder.PcmAudio {
         RandomAccessFile(file, "r").use { input ->
@@ -307,6 +352,8 @@ class MlKitSttPacedReplayInstrumentedTest {
         val engineId: String,
         val modelId: String,
         val inputDurationMillis: Long?,
+        val sourceAudioDurationMillis: Long?,
+        val leadingTrimMillis: Long,
         val inputStartMillis: Long?,
         val firstPartialMillis: Long?,
         val inputEndMillis: Long?,
@@ -327,6 +374,8 @@ class MlKitSttPacedReplayInstrumentedTest {
                 engineId,
                 modelId,
                 inputDurationMillis.csvValue(),
+                sourceAudioDurationMillis.csvValue(),
+                leadingTrimMillis.toString(),
                 inputStartMillis.csvValue(),
                 firstPartialMillis.csvValue(),
                 inputEndMillis.csvValue(),
@@ -353,7 +402,7 @@ class MlKitSttPacedReplayInstrumentedTest {
                 csvCell(errorCode),
             ).joinToString(",")
 
-        fun toLogLine(): String = "STT_REPLAY,$fileId,$mode,$outcome"
+        fun toLogLine(): String = "STT_REPLAY,$fileId,$mode,$outcome,leading_trim_ms=$leadingTrimMillis,error_code=${errorCode.orEmpty()}"
 
         private fun Long?.csvValue(): String = this?.toString().orEmpty()
 
@@ -365,6 +414,11 @@ class MlKitSttPacedReplayInstrumentedTest {
             const val DRAFT_VERIFICATION_STATUS = "unverified"
         }
     }
+
+    private data class TrimmedAudio(
+        val samples: ShortArray,
+        val leadingSamples: Int,
+    )
 
     private fun readFourCc(input: RandomAccessFile): String {
         val bytes = ByteArray(4)
@@ -412,6 +466,8 @@ class MlKitSttPacedReplayInstrumentedTest {
                 "engine_id",
                 "model_id",
                 "input_duration_ms",
+                "source_audio_duration_ms",
+                "leading_trim_ms",
                 "input_start_ms",
                 "first_partial_ms",
                 "input_end_ms",
@@ -439,6 +495,7 @@ class MlKitSttPacedReplayInstrumentedTest {
         const val ARG_RUN_ID = "sttReplayRunId"
         const val ARG_MODE = "sttReplayMode"
         const val ARG_EXPORT_DRAFT_LABELS = "sttReplayExportDraftLabels"
+        const val ARG_TRIM_LEADING_SILENCE = "sttReplayTrimLeadingSilence"
         const val REPLAY_DIRECTORY = "voicechat-stt-replay"
         const val RESULTS_FILE = "results.csv"
         const val DRAFT_LABELS_FILE = "draft-labels.csv"
@@ -448,6 +505,9 @@ class MlKitSttPacedReplayInstrumentedTest {
         const val BITS_PER_SAMPLE = 16
         const val PCM_ENCODING = 1
         const val RECOGNITION_TIMEOUT_GRACE_MILLIS = 30_000L
+        const val LEADING_TRIM_SPEECH_RMS_THRESHOLD = 655.36
+        const val REQUIRED_SPEECH_FRAMES = 3
+        const val LEADING_TRIM_PREROLL_SAMPLES = 4_000 // 250 ms at 16 kHz
         const val NANOS_PER_MILLI = 1_000_000L
         const val NANOS_PER_SECOND = 1_000_000_000L
         val SUPPORTED_EXTENSIONS = setOf("wav", "m4a")

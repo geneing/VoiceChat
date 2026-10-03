@@ -79,5 +79,8 @@ internal fun GenAiException.toEngineResponse(): SttEngineResponse =
     if (errorCode == GenAiException.ErrorCode.UNKNOWN) {
         SttEngineResponse.Stopped
     } else {
-        SttEngineResponse.Failure(toFailureKind())
+        SttEngineResponse.Failure(
+            kind = toFailureKind(),
+            detail = "MLKIT_GENAI_ERROR_CODE_$errorCode",
+        )
     }
