@@ -17,6 +17,8 @@ import com.voicechat.agent.domain.Transcript
 import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
+import com.voicechat.agent.log.AppLog
+import com.voicechat.agent.log.LogLevel
 import com.voicechat.agent.orchestration.TurnOrchestrator
 import com.voicechat.agent.orchestration.TurnResult
 import com.voicechat.agent.stt.MlKitSpeechToText
@@ -125,12 +127,16 @@ private class PlatformVoiceSession(
         val stt = selection.stt ?: VoiceSttResolution.resolve(availableStt(selection.locale), selection.sttMode)
         if (stt !is VoiceSttSelection.Ready) {
             val error = (stt as VoiceSttSelection.Unavailable).error
-            _state.value = VoiceSessionState.FAILED
-            downstream.onSessionState(VoiceSessionState.FAILED)
-            downstream.onError(error)
+            AppLog.voice(LogLevel.WARN) {
+                "voice: session start refused sttMode=${selection.sttMode} code=${error.code} detail=${error.detail}"
+            }
+            reportSttUnavailable(error)
             return
         }
         val engine = stt.engine
+        AppLog.voice(LogLevel.INFO) {
+            "voice: session start sttMode=${engine.mode} family=${engine.family} engineId=${engine.engineId.value}"
+        }
         // The engine family decides the adapter: ML Kit's system-managed modes, or
         // the app-managed Parakeet-EOU ONNX streaming recognizer. A selection the
         // app cannot honor is reported here, never faked.
@@ -149,6 +155,7 @@ private class PlatformVoiceSession(
                     return
                 }
             if (built !is com.voicechat.agent.stt.parakeet.ParakeetEouModelState.Installed) {
+                AppLog.voice(LogLevel.WARN) { "voice: parakeet model not installed state=${built::class.simpleName}" }
                 reportSttUnavailable(
                     VoiceAgentError(ErrorCode.MODEL_UNAVAILABLE, "the Parakeet-EOU model is not installed"),
                 )
@@ -160,6 +167,7 @@ private class PlatformVoiceSession(
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Throwable) {
+                    AppLog.voice(LogLevel.ERROR, failure) { "voice: parakeet adapter failed to load" }
                     reportSttUnavailable(
                         VoiceAgentError(ErrorCode.MODEL_UNAVAILABLE, "the Parakeet-EOU model failed to load"),
                     )

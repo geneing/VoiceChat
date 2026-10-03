@@ -26,6 +26,7 @@ import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
 import com.voicechat.agent.domain.context.ModelContextBuilder
 import com.voicechat.agent.log.AppLog
+import com.voicechat.agent.log.LogLevel
 import com.voicechat.agent.orchestration.TurnObserver
 import com.voicechat.agent.orchestration.TurnOrchestrator
 import com.voicechat.agent.orchestration.TurnOutcome
@@ -282,7 +283,7 @@ class ConversationViewModel(
                     createdAtEpochMillis = now,
                     updatedAtEpochMillis = now,
                 )
-        AppLog.d { "ui: voice session start" }
+        AppLog.voice(LogLevel.INFO) { "ui: voice session start" }
         _uiState.update { state ->
             state.copy(
                 dialog =
@@ -500,7 +501,7 @@ class ConversationViewModel(
     }
 
     override fun onError(error: VoiceAgentError) {
-        AppLog.w { "ui: voice session error code=${error.code}" }
+        AppLog.voice(LogLevel.WARN) { "voice: session error code=${error.code} detail=${error.detail}" }
         _uiState.update { state -> state.copy(dialog = state.dialog?.copy(notice = error.toNotice())) }
     }
 

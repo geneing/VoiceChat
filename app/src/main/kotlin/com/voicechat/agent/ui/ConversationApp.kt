@@ -1135,6 +1135,16 @@ private fun ErrorCode.messageRes(): Int =
         ErrorCode.LLM_TIMEOUT -> R.string.notice_llm_timeout
         ErrorCode.LLM_NETWORK_FAILED -> R.string.notice_llm_network
         ErrorCode.PERSISTENCE_FAILED -> R.string.notice_persistence_failed
+        ErrorCode.STT_UNAVAILABLE -> R.string.notice_stt_unavailable
+        ErrorCode.STT_MODEL_NOT_READY -> R.string.notice_stt_model_not_ready
+        ErrorCode.STT_RECOGNITION_FAILED -> R.string.notice_stt_recognition_failed
+        ErrorCode.MODEL_UNAVAILABLE -> R.string.notice_model_unavailable
+        ErrorCode.MODEL_CORRUPT -> R.string.notice_model_corrupt
+        ErrorCode.MODEL_DOWNLOAD_FAILED -> R.string.notice_model_download_failed
+        ErrorCode.AUDIO_PERMISSION_DENIED -> R.string.notice_audio_permission_denied
+        ErrorCode.AUDIO_CAPTURE_FAILED, ErrorCode.AUDIO_DEVICE_UNAVAILABLE -> R.string.notice_audio_capture_failed
+        ErrorCode.TTS_NO_ON_DEVICE_VOICE -> R.string.notice_tts_no_on_device_voice
+        ErrorCode.TTS_NO_ON_DEVICE_VOICE -> R.string.notice_tts_no_on_device_voice
         else -> R.string.notice_generic_error
     }
 

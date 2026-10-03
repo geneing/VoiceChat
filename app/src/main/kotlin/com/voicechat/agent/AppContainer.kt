@@ -13,12 +13,14 @@ import com.voicechat.agent.providers.RegisteredProviderLanguageModelFactory
 import com.voicechat.agent.remote.OkHttpStreamingEngine
 import com.voicechat.agent.remote.RemoteTransport
 import com.voicechat.agent.settings.PreferencesSettingsStore
+import com.voicechat.agent.stt.parakeet.ParakeetEouModelStore
 import com.voicechat.agent.turn.OnnxSmartTurnEngine
 import com.voicechat.agent.turn.SmartTurnDetectorFactory
 import com.voicechat.agent.turn.SmartTurnEngineFactory
 import com.voicechat.agent.turn.SmartTurnModelStore
 import com.voicechat.agent.ui.AndroidSettingsCapabilityProvider
 import com.voicechat.agent.ui.ConversationDefaults
+import com.voicechat.agent.ui.DefaultParakeetEouModelInstaller
 import com.voicechat.agent.ui.DefaultSmartTurnModelInstaller
 import com.voicechat.agent.ui.settingsViewModelFactory
 import com.voicechat.agent.voice.VoiceRuntimeSelection
@@ -84,6 +86,8 @@ class AppContainer(
             credentials = credentials,
             capabilityProvider = AndroidSettingsCapabilityProvider(appContext),
             smartTurnInstaller = DefaultSmartTurnModelInstaller(File(appContext.filesDir, SmartTurnModelStore.DIRECTORY_NAME)),
+            parakeetEouInstaller =
+                DefaultParakeetEouModelInstaller(File(appContext.filesDir, ParakeetEouModelStore.DIRECTORY_NAME)),
         )
     }
 
