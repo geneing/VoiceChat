@@ -63,10 +63,15 @@ class ParakeetVocabulary private constructor(
         fun of(pieces: Map<Int, String>): ParakeetVocabulary = ParakeetVocabulary(LinkedHashMap(pieces))
 
         /**
-         * The expected number of vocabulary entries for [config]: every word piece
-         * plus the two special tokens, i.e. `vocabSize + 2`.
+         * The expected number of vocabulary entries for [config].
+         *
+         * The pinned bundle's `vocabSize` (1026) **is** the total entry count: ids
+         * `0..1023` are word pieces and `1024`/`1025` are `<EOU>`/`<EOB>`, so
+         * `vocabSize` already includes the two special tokens. (The earlier
+         * `vocabSize + 2` was wrong; it double-counted the specials and rejected
+         * the pinned `vocab.json`.)
          */
-        fun expectedCount(config: ParakeetEouConfig): Int = config.vocabSize + 2
+        fun expectedCount(config: ParakeetEouConfig): Int = config.vocabSize
     }
 }
 
