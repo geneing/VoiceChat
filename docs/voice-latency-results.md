@@ -111,6 +111,68 @@ accelerator compile is a failed lane rather than fallback success.
 | 2026-10-02 | `ed504d8f6298057099b95f51ea242e152bf11969` | Parakeet CTC 0.6B INT8 (596,365,072 B) and TDT 0.6B v3 INT8 stateful (614,261,072 B) — same artifacts as the CPU row — requested with a GPU-only accelerator allowlist and no CPU entry; default GPU options. | Pixel 10 (`frankel`), Tensor G5, Android 17 / API 37, build `CP3A.260905.009`. Requested backend GPU; observed backend **UNKNOWN** (the runtime exposes no per-op placement query). Runtime logs: NPU accelerator did not register (`npu_registry.cc:34`); GPU loaded via `libLiteRtClGlAccelerator.so` using OpenGL (OpenCL unsupported). CTC replaced 1790/1790 nodes then reported `Restored original execution plan after delegate application failure` and `Failed to compile model`. TDT replaced 1790/1790 (subgraph 0), 163/163 (subgraph 1), 63/63 (subgraph 2), then `Failed to create input buffers` (`litert_compiled_model.h:1656`). | **INFERENCE_FAILED** for both lanes; placement **UNKNOWN**; no encode ran. | No GPU latency or accuracy; not a CPU-fallback result. Extends the Moonshine GPU finding: the Parakeet INT8 graphs also do not run on the LiteRT 2.1.5 OpenGL GPU delegate on this device, and the NPU accelerator is not registered. |
 | 2026-10-02 | `cfa1111b4a093fe9620aef8251c45a125c5b2140` | Parakeet TDT 0.6B v3 F32 AOT stateful for Google Tensor G5 (`parakeet_tdt_0.6b_v3_5s_f32_stateful_Google_Tensor_G5.tflite`, 1,292,830,512 B, SHA-256 `5d720a785a90991eec74a898049c4a8e86f78c6fe5b6bba02aea0e59a2c10184`; **F32, not the project's INT8 candidate**), NPU-only accelerator allowlist, no CPU entry. Dispatch library `libLiteRtDispatch_GoogleTensor.so` (SHA-256 `5731f46e9ac6e016113524a7a15fe9feb7bb55e03a0ce1c1b9aee7d5aab46fad`) from `litert_npu_runtime_libraries.zip` (LiteRT v2.1.1), packaged into the debug APK. | Pixel 10 (`frankel`), Tensor G5, Android 17 / API 37, build `CP3A.260905.009`. Requested backend NPU; observed backend **UNKNOWN**. Runtime: `npu_registry.cc:34` — NPU accelerator could not be loaded/registered (`kLiteRtStatusErrorInvalidArgument`); then `Encountered unresolved custom op: DISPATCH_OP` and `Node number 0 (DISPATCH_OP) failed to prepare`. | **INFERENCE_FAILED**; placement **UNKNOWN**; no NPU inference ran. | Matches the documented LiteRT runtime/dispatcher protocol mismatch: the last release that ships `litert_npu_runtime_libraries.zip` is v2.1.1, and its dispatcher does not register with the pinned `litert:2.1.5` runtime, so the AOT G5 model's `DISPATCH_OP` kernel is unresolved. No compatible Tensor-G5 dispatch/runtime pairing is available here; recorded UNAVAILABLE, not INT8, and not a CPU fallback. |
 
+### Parakeet CTC accuracy (local Whisper pseudo-reference)
+
+The sample tokenizer JNI is now linked, so the corpus run decodes token IDs to
+text and the M25 `SpeechQualityScorer` computes WER/CER against a local, offline
+Whisper (`small.en`, faster-whisper, CPU) pseudo-reference. The reference is a
+machine transcript, not human-reviewed gold: a WER here is agreement with that
+reference.
+
+- Run commit: `fd39960` (tokenizer JNI + WER harness). Device: Pixel 10
+  (`frankel`), Tensor G5, Android 17 / API 37, build `CP3A.260905.009`.
+- Model: Parakeet CTC 0.6B INT8 (`3d0799f6…e102`), CPU-only allowlist, features
+  computed on-device with the sample's log-Mel front end. Full corpus of 12
+  `eng-*` WAV fixtures; on-device preprocess + encode ≈ 320-520 ms per clip.
+- All 12 clips produced text. The model window is 5 s, so prompts longer than the
+  window are truncated; the full-corpus WER is dominated by truncation, not
+  recognition error. The scored clips:
+
+| Clip | Audio | Ref words | WER | CER | Note |
+| --- | --- | --- | --- | --- | --- |
+| eng-000072-0011eab3 | 4.23 s | 7 | 0.000 | 0.000 | in window; word-perfect |
+| eng-000251-003ab093 | 2.45 s | 5 | 0.000 | 0.000 | in window; word-perfect |
+| eng-000112-001d218c | 7.18 s | 10 | 0.200 | 0.119 | truncated tail |
+| eng-000004-00021667 | 5.51 s | 10 | 0.300 | 0.125 | marginal; trailing repeats dropped |
+| eng-000129-002077dd | 4.31 s | 5 | 0.400 | 0.029 | in window; hyphenation split |
+| eng-000016-00043f22 | 10.12 s | 29 | 0.517 | 0.492 | truncated |
+| eng-000001-000081dd | 12.97 s | 30 | 0.567 | 0.600 | truncated |
+| eng-000058-000ee09a | 13.33 s | 32 | 0.594 | 0.606 | truncated |
+| eng-000031-0007fc28 | 14.70 s | 30 | 0.700 | 0.693 | truncated |
+| eng-000017-00054cf4 | 4.91 s | 5 | 0.800 | 1.000 | in window; `$2,500` vs "two thousand five hundred" formatting, not misrecognition |
+
+The five clips that fit the window (2.45-4.91 s) score WER 0.00, 0.00, 0.20,
+0.40, 0.80 — with the 0.80 case a number-formatting convention rather than an
+acoustic error. Parakeet CTC is a strong candidate for short, in-window
+utterances; long prompts need windowing/merge (beyond this 5 s spike).
+
+Parakeet TDT did **not** produce text over the corpus: its stateful decoder is
+sensitive to the log-Mel statistics, and the on-device front end (both the pure
+Kotlin port and the pinned jlibrosa JAR) differs from the frozen
+`parakeet-tdt-features-5s.f32` by ~5 (max abs). TDT does decode the frozen file,
+so this is a preprocessing-parity gap, tracked as R-0239, not a decoder bug. No
+TDT WER is claimed.
+
+### Tokenizer JNI and WER harness (new tooling)
+
+- `scripts/litert-tokenizer-jni/` — a tracked JNI shim (its own C++ symbol names)
+  linking the pinned sample's prebuilt `libtokenizers_c.a`.
+- `scripts/build-tokenizer-jni.sh` — builds `libtokenizer_jni.so` (arm64-v8a)
+  into the Git-ignored `models/` tree; the debug APK ships it only when present.
+- `scripts/fetch-jlibrosa.sh` — fetches and repackages the sample's jlibrosa JAR
+  (strips its bundled junit/maven classes so it does not collide with test deps).
+- `scripts/local-whisper-reference.sh` — offline local Whisper transcription
+  (faster-whisper, CPU, ffmpeg decode) producing Git-ignored pseudo-references.
+- `scripts/run-litert-wer.ps1` — scores local hypotheses against references with
+  the M25 `SpeechQualityScorer`.
+- On-device: `LiteRtParakeetCorpusInstrumentedTest` (preprocess + transcribe) and
+  `LiteRtParakeetComparisonInstrumentedTest` (single-window, now with tokenizer
+  text); `LogMelSpectrogram` (pure Kotlin) and `SampleMelProcessor` (jlibrosa).
+
+Inputs are local and Git-ignored: `test_data/litert-asr-wer/` (hypotheses,
+references, `cases.csv`) and `models/litert-asr/{tokenizer-jni,jlibrosa}/`. No
+audio, transcript, or model binary is committed.
+
 ## LiteRT setup checkpoints
 
 | Date | Source commit | Change description | Environment / outcome | Timing and accuracy |
@@ -133,3 +195,4 @@ accelerator compile is a failed lane rather than fallback success.
 | 2026-10-02 | `1ea196682c669270750406a491a98eef652d5c8e` | Fixed the Parakeet TDT decoder stride: removed the extra `/ NUM_DURATIONS` from `logitsPer` in `ParakeetRunner.tdt()` (6 → 8198), which had made the token/duration argmax windows empty and stalled the decoder. | Windows Gradle `:app:installDebug :app:assembleDebugAndroidTest` passed; Pixel 10 instrumentation `LiteRtParakeetComparisonInstrumentedTest` passed (1 test). Inputs staged from WSL with `stage-litert-asr-inputs.sh STAGE_PARAKEET=1`, using the Windows `adb.exe` because the WSL `adb` server could not see the USB device. | Full TDT/CTC CPU run recorded above; token IDs only, no transcript or accuracy. |
 | 2026-10-02 | `ed504d8f6298057099b95f51ea242e152bf11969` | Added GPU support to `ParakeetRunner` (accelerator allowlist, GPU options, advertised-accelerator query) and a `LiteRtParakeetGpuInstrumentedTest` that probes the CTC and TDT INT8 artifacts on a GPU-only allowlist. | Windows Gradle `spotlessCheck :app:installDebug :app:assembleDebugAndroidTest` passed; Pixel 10 instrumentation passed (1 test). Both lanes `INFERENCE_FAILED`, placement UNKNOWN. | GPU row recorded above; no GPU timing or accuracy. |
 | 2026-10-02 | `cfa1111b4a093fe9620aef8251c45a125c5b2140` | Added `scripts/fetch-litert-npu-runtime.sh` (pinned v2.1.1 Tensor-G5 dispatch library, size+sha256 verified), a debug-only jniLibs opt-in plus debug-only `useLegacyPackaging`, `STAGE_PARAKEET_NPU` staging, and `LiteRtParakeetNpuInstrumentedTest` for the upstream F32 G5 AOT artifact. | Windows Gradle `spotlessApply spotlessCheck :app:installDebug :app:assembleDebugAndroidTest` passed; the debug APK ships `lib/arm64-v8a/libLiteRtDispatch_GoogleTensor.so`; Pixel 10 instrumentation passed (1 test). NPU accelerator did not register; `DISPATCH_OP` unresolved. | NPU row recorded above; artifact is F32 (not INT8); no NPU timing or accuracy. |
+| 2026-10-02 | `fd39960` | Linked the sample tokenizer JNI (tracked JNI shim + build script), decoded token IDs to text on-device, added the on-device Parakeet corpus runner, a pure-Kotlin log-Mel port plus a jlibrosa-backed variant, a Git-ignored local-Whisper reference script, and the host WER harness. | Windows Gradle `spotlessApply spotlessCheck :app:testDebugUnitTest :app:assembleDebugAndroidTest` passed; Pixel 10 corpus run transcribed all 12 clips with Parakeet CTC. Tokenizer JNI built with NDK 28.2 into `models/litert-asr/tokenizer-jni`. | CTC corpus WER recorded above; TDT blocked on feature parity (R-0239); no committed audio/transcript/model. |

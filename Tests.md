@@ -1596,3 +1596,24 @@ v2.1.1 dispatch library under the gitignored `models/` tree. Every result,
 including failures, is recorded in
 [the single speech latency results log](./docs/voice-latency-results.md).
 
+**Corpus WER path.** The sample tokenizer JNI is linked so transcripts are real
+text, not token IDs:
+
+1. `scripts/fetch-litert-speech-sample.sh` then
+   `scripts/build-tokenizer-jni.sh` (needs an NDK; `ANDROID_NDK_HOME`) builds
+   `libtokenizer_jni.so` into the gitignored `models/litert-asr/tokenizer-jni/`;
+   the debug APK ships it only when present.
+2. `scripts/stage-litert-asr-inputs.sh STAGE_PARAKEET=1 STAGE_CORPUS=1` stages the
+   Parakeet models, tokenizers, and the 16 kHz `eng-*.wav` fixtures.
+3. `LiteRtParakeetCorpusInstrumentedTest` preprocesses each clip on-device with
+   the sample's log-Mel front end and writes
+   `litert-asr/<model>--<clip>.transcript.txt`.
+4. `scripts/local-whisper-reference.sh` produces offline local Whisper
+   pseudo-references under the gitignored `test_data/litert-asr-wer/`.
+5. `scripts/run-litert-wer.ps1` scores the pulled transcripts against those
+   references with the M25 `SpeechQualityScorer` and writes a content-free CSV.
+
+A reference produced by a local model is a pseudo-reference: its WER is agreement
+with that reference, not human-reviewed gold. No audio, transcript, or model is
+committed. See R-0239 for the Parakeet TDT feature-parity gap.
+
