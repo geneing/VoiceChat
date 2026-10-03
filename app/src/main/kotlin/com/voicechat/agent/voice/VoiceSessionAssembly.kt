@@ -243,8 +243,7 @@ private class PlatformVoiceSession(
                 // Release best-effort; the session already ended.
             }
             try {
-                // ParakeetEouSession.close() also closes its SpeechToText; avoid a
-                // double close by not closing speechToText separately for it.
+                // The session owns its STT adapter and runtime; close it once here.
                 parakeetSession?.close()
             } catch (cancellation: CancellationException) {
                 throw cancellation

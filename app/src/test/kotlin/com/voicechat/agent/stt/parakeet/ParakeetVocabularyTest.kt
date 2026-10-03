@@ -47,8 +47,11 @@ class ParakeetVocabularyTest {
     }
 
     @Test
-    fun expectedCountIsVocabSizePlusTheTwoSpecialTokens() {
-        assertEquals(1028, ParakeetVocabulary.expectedCount(ParakeetEouConfig.pinned()))
+    fun expectedCountIsThePinnedVocabularyEntryCount() {
+        // vocabSize (1026) already counts the two specials: ids 0..1023 are word
+        // pieces and 1024/1025 are <EOU>/<EOB>, so the pinned vocab.json has 1026
+        // entries.
+        assertEquals(1026, ParakeetVocabulary.expectedCount(ParakeetEouConfig.pinned()))
     }
 
     @Test

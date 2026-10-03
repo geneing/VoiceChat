@@ -23,6 +23,7 @@ import com.voicechat.agent.ui.ConversationDefaults
 import com.voicechat.agent.ui.DefaultParakeetEouModelInstaller
 import com.voicechat.agent.ui.DefaultSmartTurnModelInstaller
 import com.voicechat.agent.ui.settingsViewModelFactory
+import com.voicechat.agent.voice.OnnxParakeetEouSessionFactory
 import com.voicechat.agent.voice.VoiceRuntimeSelection
 import com.voicechat.agent.voice.VoiceSessionAssembly
 import kotlinx.coroutines.flow.first
@@ -110,6 +111,7 @@ class AppContainer(
             fallbackLanguageModel = languageModel,
             diagnostics = diagnosticsSink,
             turnCompletion = smartTurnDetectorProvider,
+            parakeetSessionFactory = OnnxParakeetEouSessionFactory(diagnostics = diagnosticsSink),
             selectionProvider = {
                 val settings = settingsStore.observe().first()
                 VoiceRuntimeSelection(
