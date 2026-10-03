@@ -112,9 +112,12 @@ class OnnxParakeetEouRuntime private constructor(
             encoder.run(inputs).use { result ->
                 val encodedOutput = outputFrameMatrix(result, ENCODER_OUTPUT)
                 val encodedLength = outputValue(result, ENCODER_LENGTH, IntArray::class.java)
-                val newPreCache = outputValue(result, ENCODER_NEW_PRE_CACHE, FloatArray::class.java)
-                val newCacheChannel = outputValue(result, ENCODER_NEW_CACHE_LAST_CHANNEL, FloatArray::class.java)
-                val newCacheTime = outputValue(result, ENCODER_NEW_CACHE_LAST_TIME, FloatArray::class.java)
+                // The cache outputs keep their rank ([1,128,9], [17,1,70,512],
+                // [17,1,512,8]); ONNX Runtime hands those back as nested arrays,
+                // not a flat FloatArray, so flatten them for EncoderState.
+                val newPreCache = outputFlat(result, ENCODER_NEW_PRE_CACHE)
+                val newCacheChannel = outputFlat(result, ENCODER_NEW_CACHE_LAST_CHANNEL)
+                val newCacheTime = outputFlat(result, ENCODER_NEW_CACHE_LAST_TIME)
                 val newCacheLen = outputValue(result, ENCODER_NEW_CACHE_LAST_CHANNEL_LEN, IntArray::class.java)
 
                 val availableFrames = encodedOutput.size / hidden

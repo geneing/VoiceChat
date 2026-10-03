@@ -210,7 +210,7 @@ class ParakeetStreamingDecoderTest {
     }
 
     @Test
-    fun finalizePadsTrailingSamplesOnceAndIsIdempotent() {
+    fun finalizeCommitsExistingTokensWithoutDecodingPartialTailAndIsIdempotent() {
         val runtime = ScriptedRuntime()
         runtime.jointQueue.addAll(listOf(1, blank, blank, blank, blank, blank))
         val decoder = decoder(runtime)
@@ -219,13 +219,33 @@ class ParakeetStreamingDecoderTest {
         assertEquals(0, runtime.encodeCalls)
 
         val first = decoder.finalize()
-        assertEquals(1, runtime.encodeCalls)
-        assertEquals("a", first.text)
+        // The host drops a sub-window tail instead of making a padded decode.
+        assertEquals(0, runtime.encodeCalls)
+        assertEquals("", first.text)
         assertTrue(first.isFinal)
 
         val second = decoder.finalize()
-        assertEquals(1, runtime.encodeCalls)
+        assertEquals(0, runtime.encodeCalls)
         assertEquals(first, second)
+    }
+
+    @Test
+    fun finalizeDoesNotEncodePartialOverlapAfterWholeWindows() {
+        val runtime = ScriptedRuntime()
+        runtime.jointQueue.addAll(listOf(1, blank, blank, blank, blank, blank))
+        val decoder = decoder(runtime)
+        val shiftWindows = 4
+
+        // A feed of N shifts contains N-1 host-eligible full windows and a
+        // remaining half-window. finalize must commit only those decoded tokens.
+        decoder.accept(FloatArray(shiftWindows * config.shiftSamples))
+        assertEquals(shiftWindows - 1, runtime.encodeCalls)
+
+        val result = decoder.finalize()
+
+        assertEquals(shiftWindows - 1, runtime.encodeCalls)
+        assertEquals("a", result.text)
+        assertTrue(result.isFinal)
     }
 
     @Test
