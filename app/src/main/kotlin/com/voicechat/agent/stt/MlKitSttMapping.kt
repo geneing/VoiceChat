@@ -20,8 +20,19 @@ internal fun SttEngine.toRecognizerOptions(): SpeechRecognizerOptions {
         locale = engineLocale
         preferredMode =
             when (engineMode) {
-                SttMode.BASIC -> SpeechRecognizerOptions.Mode.MODE_BASIC
-                SttMode.ADVANCED -> SpeechRecognizerOptions.Mode.MODE_ADVANCED
+                SttMode.BASIC -> {
+                    SpeechRecognizerOptions.Mode.MODE_BASIC
+                }
+
+                SttMode.ADVANCED -> {
+                    SpeechRecognizerOptions.Mode.MODE_ADVANCED
+                }
+
+                // Parakeet-EOU is a different engine family; it never reaches the
+                // ML Kit adapter. Fail loudly rather than pick an ML Kit mode.
+                SttMode.PARAKEET_EOU -> {
+                    error("SttMode.PARAKEET_EOU is not an ML Kit GenAI mode; use ParakeetEouSpeechToText")
+                }
             }
     }
 }
@@ -68,5 +79,8 @@ internal fun GenAiException.toEngineResponse(): SttEngineResponse =
     if (errorCode == GenAiException.ErrorCode.UNKNOWN) {
         SttEngineResponse.Stopped
     } else {
-        SttEngineResponse.Failure(toFailureKind())
+        SttEngineResponse.Failure(
+            kind = toFailureKind(),
+            detail = "MLKIT_GENAI_ERROR_CODE_$errorCode",
+        )
     }

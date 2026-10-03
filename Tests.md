@@ -1435,3 +1435,223 @@ installed allow-listed model id (if any).
 Unrun M20 device items are tracked as R-0215; **do not mark any row passed unless
 it was run on the device.**
 
+## Optimization branch smoke run (2026-10-01)
+
+Branch: `optimization/voice-latency`.
+
+Device: Pixel 10 (`frankel`), Android 17 / API 37,
+`google/frankel/frankel:17/CP3A.260905.009/16091614:user/release-keys`.
+
+Command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:connectedDebugAndroidTest
+```
+
+Outcome: **passed**. The JVM suite reported 917 tests, 0 failures, and 8
+skipped. The connected Pixel 10 suite reported 24 tests, 0 failures, and 0
+skipped. This included microphone/VAD capture checks, ML Kit availability,
+platform TTS initialization/stop, the local-runtime availability checks, and a
+fake-backed voice-session integration check.
+
+The real STT capability probe reported ML Kit **Advanced** as ready and **Basic**
+as requiring a download. The instrumented STT tests only checked availability
+and adapter behavior; they did not transcribe any file from `test_data`. The
+voice-session test uses fakes, and the platform TTS test is not a first-audio or
+voice-quality benchmark. No end-to-end latency or recognition-quality baseline
+was produced. The file-replay harness is tracked in
+[voice-latency-optimization.md](./docs/voice-latency-optimization.md).
+
+The first attempt was blocked at Android test compilation by a stale exhaustive
+`when` in `AndroidTtsInstrumentedTest`; the missing
+`SelectedVoiceUnavailable` branch was added before the passing run above.
+
+### Optimization branch formatted-source smoke run (2026-10-01)
+
+Command (Windows PowerShell, attached Pixel 10):
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\gradlew.bat :app:testDebugUnitTest :app:connectedDebugAndroidTest
+```
+
+Outcome: **Gradle passed**. The JVM reports contain 922 tests, 0 failures, and 8
+skipped. Pixel instrumentation completed with 24 ordinary checks passing. The
+two new paced replay methods were intentionally not run because no replay run id
+was supplied; their `AssumptionViolatedException`s appear as two failures in the
+raw Android XML report even though the connected Gradle task completed
+successfully. The dedicated replay driver supplies the opt-in arguments.
+`spotlessCheck` also passed after running `spotlessApply`.
+
+This smoke run compiled the debug-only Moonshine adapter and verified APK
+packaging with a single `libonnxruntime.so`. It did not load Moonshine models or
+transcribe corpus files, so the Moonshine/ONNX version combination and all
+candidate latency/accuracy results remain unverified.
+
+### Paced speech replay on Pixel 10 (2026-10-01)
+
+The dedicated runner stages local files into the target app's private cache,
+then invokes only the replay instrumentation method; it does not use a live
+microphone. The local `Walking*.m4a` files and the WAV fixtures remain outside
+the APK and repository. Run from PowerShell with the phone attached:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\scripts\run-stt-paced-replay.ps1 `
+  -Engine Both -Mode Both -DeviceSerial '57220DLCR002R6' `
+  -OutputCsv "$env:TEMP\voicechat-stt-mlkit.csv" `
+  -MoonshineOutputCsv "$env:TEMP\voicechat-stt-moonshine.csv" `
+  -ExportDraftLabels -ExportMoonshineDraftLabels
+```
+
+Keep all run outcomes, latency/accuracy progress, and tested source hashes in
+the single [speech latency results log](./docs/voice-latency-results.md).
+
+For the offline Parakeet comparison, fetch the pinned candidate artifacts first,
+then run the same corpus on the attached Pixel 10:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\scripts\fetch-parakeet-candidate.ps1
+.\scripts\run-stt-paced-replay.ps1 `
+  -Engine Parakeet -DeviceSerial '57220DLCR002R6' `
+  -ParakeetOutputCsv "$env:TEMP\voicechat-parakeet.csv" `
+  -ExportParakeetDraftLabels
+```
+
+This candidate is offline, so this run records model-open, audio-decode, and
+full-phrase decode time; it has no first-partial metric. The runner stages
+checksum-verified weights only to the debug app's private storage. Draft text is
+saved to an ignored local CSV for manual review.
+## LiteRT ASR CPU instrumentation spike (optimization/litert-speech-benchmark)
+
+This debug/test-only spike loads the converted sample Moonshine Tiny FP32 model
+and consumes one 5-second, 16 kHz mono PCM window through the pinned sample's
+`CompiledModel` encode/decode signatures and default token decoder. It does not
+replace production ML Kit. The sample tokenizer JNI library is not wired into
+this test target, so the test records token counts only; transcript text,
+accuracy, and first text from clip start are explicitly unavailable. File input
+is offline and unpaced, not a streaming-latency measurement.
+
+The expected ignored artifact is
+`models/litert-asr/moonshine-tiny-fp32-5s.tflite` (109,330,616 bytes,
+SHA-256 `c4f4735852d4a8de1003431c43a253376c4c91ee19713778a07bd0a446c7e930`).
+The fixture is `test_data/eng-000001-000081dd.wav`; neither file is packaged in
+the APK or test APK.
+
+After the test-only runtime and instrumented test are built, install both APKs,
+stage the inputs in app-private storage, and invoke instrumentation directly.
+Do not use `connectedDebugAndroidTest` for the staged run because Gradle
+reinstalls the app and clears its private files:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\gradlew.bat :app:assembleDebugAndroidTest
+.\gradlew.bat :app:installDebug
+```
+
+From WSL at the clean worktree root, run `bash scripts/stage-litert-asr-inputs.sh`
+after the debug app is installed. Then install the instrumentation APK from
+PowerShell and run the single test:
+
+```powershell
+adb install -r app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+adb shell am instrument -w -e class com.voicechat.agent.eval.litert.LiteRtSpeechCpuInstrumentedTest com.voicechat.agent.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+The runtime is pinned to LiteRT 2.1.5 and is an `androidTestImplementation`
+only. The test requests CPU with a CPU-only accelerator allowlist; a successful
+encode therefore records observed CPU execution with fallback disabled. Before
+the encoder completes, observed backend is `UNKNOWN`; initialization or
+inference failures remain failures and are not reported as successful fallback.
+Logcat tag: `LiteRtSpeechCpuTest`. The JSON records model/audio hashes and sizes,
+device/OS/SoC, cold load, audio read/preprocessing, encode, decoder-first-token,
+decoder-total, and thermal/battery conditions. It does not log audio or text.
+
+The current branch has no device result row unless the test is actually run with
+the verified artifact on a connected phone. A missing staged input is logged as
+`INPUTS_NOT_STAGED` and returns without timing; that is not a benchmark pass.
+
+The Android test APK also includes a minimal exhaustive
+`SelectedVoiceUnavailable` branch in the pre-existing M11 TTS instrumentation
+probe. This test-only logging case unblocks compilation after the result type
+gained that state; it does not change production TTS and is unrelated to LiteRT.
+
+### LiteRT CPU/GPU/NPU evaluation probes
+
+Five opt-in, debug-only instrumentation probes cover the LiteRT ASR spike. None
+is part of the routine suite, and none transcribes audio (the sample tokenizer
+JNI is not linked), so they produce token counts and timings only:
+
+- `LiteRtSpeechCpuInstrumentedTest` — Moonshine Tiny FP32/FP16, CPU-only allowlist.
+- `LiteRtSpeechGpuInstrumentedTest` — Moonshine Tiny FP16/FP32, GPU-only allowlist.
+- `LiteRtParakeetComparisonInstrumentedTest` — official Parakeet CTC and TDT INT8 artifacts, CPU-only allowlist.
+- `LiteRtParakeetGpuInstrumentedTest` — the same Parakeet artifacts, GPU-only allowlist.
+- `LiteRtParakeetNpuInstrumentedTest` — the upstream F32 AOT Google Tensor G5 TDT artifact, NPU-only allowlist.
+
+Stage inputs with `scripts/stage-litert-asr-inputs.sh` (`STAGE_PARAKEET=1` for the
+Parakeet INT8 set, `STAGE_PARAKEET_NPU=1` for the F32 G5 artifact). The NPU probe
+additionally needs `scripts/fetch-litert-npu-runtime.sh`, which installs the pinned
+v2.1.1 dispatch library under the gitignored `models/` tree. Every result,
+including failures, is recorded in
+[the single speech latency results log](./docs/voice-latency-results.md).
+
+**Corpus WER path.** The sample tokenizer JNI is linked so transcripts are real
+text, not token IDs:
+
+1. `scripts/fetch-litert-speech-sample.sh` then
+   `scripts/build-tokenizer-jni.sh` (needs an NDK; `ANDROID_NDK_HOME`) builds
+   `libtokenizer_jni.so` into the gitignored `models/litert-asr/tokenizer-jni/`;
+   the debug APK ships it only when present.
+2. `scripts/stage-litert-asr-inputs.sh STAGE_PARAKEET=1 STAGE_CORPUS=1` stages the
+   Parakeet models, tokenizers, and the 16 kHz `eng-*.wav` fixtures.
+3. `LiteRtParakeetFeatureParityInstrumentedTest` compares both the pure-Kotlin
+   and jlibrosa front ends against the SHA-pinned frozen TDT tensor. It reports
+   max/mean absolute error by mel bin and frame, including edge/interior
+   summaries. TDT uses the pure-Kotlin HF/NeMo-compatible profile: 512-point FFT,
+   400-sample symmetric Hann, constant center padding, Slaney area-normalized
+   mel filters, mel-major layout, and 499 valid 10 ms hops plus one zero-padded
+   frame. `SampleMelProcessor` remains the CTC/sample comparison; its jlibrosa
+   defaults are not selected for TDT.
+4. `LiteRtParakeetCorpusInstrumentedTest` preprocesses each clip on-device and
+   writes `litert-asr/<model>--<clip>.transcript.txt` sidecars in app-private
+   storage.
+5. `scripts/local-whisper-reference.sh` produces offline local Whisper
+   pseudo-references under the gitignored `test_data/litert-asr-wer/`.
+6. `scripts/run-litert-wer.ps1` scores the pulled transcripts against those
+   references with the M25 `SpeechQualityScorer` and writes a content-free CSV.
+
+A reference produced by a local model is a pseudo-reference: its WER is agreement
+with that reference, not human-reviewed gold. No audio, transcript, or model is
+committed.
+
+### R-0239 — TDT feature parity and corpus verification
+
+Do not use `connectedDebugAndroidTest` for these staged runs: it reinstalls the
+debug app and clears app-private staged files. Build/install first, stage after
+both APKs are installed, and invoke each instrumentation class directly:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest
+.\gradlew.bat :app:installDebug
+adb install -r app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+
+# Run in WSL; ADB intentionally points to the Windows executable for USB access.
+wsl -e bash -lc "SERIAL=57220DLCR002R6 ADB=/mnt/c/Users/genei/AppData/Local/Android/Sdk/platform-tools/adb.exe STAGE_PARAKEET=1 STAGE_CORPUS=1 /mnt/i/Android_Projects/VoiceChat/scripts/stage-litert-asr-inputs.sh"
+
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb logcat -c
+& $adb shell am instrument -w -e class com.voicechat.agent.eval.litert.LiteRtParakeetFeatureParityInstrumentedTest com.voicechat.agent.test/androidx.test.runner.AndroidJUnitRunner
+& $adb logcat -d -s ParakeetFeatureParity:I
+& $adb shell am instrument -w -e class com.voicechat.agent.eval.litert.LiteRtParakeetComparisonInstrumentedTest com.voicechat.agent.test/androidx.test.runner.AndroidJUnitRunner
+& $adb shell am instrument -w -e class com.voicechat.agent.eval.litert.LiteRtParakeetCorpusInstrumentedTest com.voicechat.agent.test/androidx.test.runner.AndroidJUnitRunner
+& $adb logcat -d -s LiteRtParakeetTest:I LiteRtParakeetCorpus:I
+```
+
+The parity test asserts the frozen feature SHA-256 and a max-absolute error
+below `1e-3` for the corrected TDT profile. The comparison test is the frozen
+feature control; the corpus test records `tokenCount`/`hasTranscript` and writes
+local-only transcript sidecars. TDT's 500-frame tensor has 499 valid frames in
+the frozen reference, so long clips are evaluated only over their initial 4.99 s
+feature window.

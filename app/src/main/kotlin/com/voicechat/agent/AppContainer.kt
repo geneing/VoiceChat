@@ -2,6 +2,8 @@ package com.voicechat.agent
 
 import android.content.Context
 import com.voicechat.agent.credentials.AndroidKeystoreCredentialStore
+import com.voicechat.agent.diagnostics.AppDiagnosticsRuntime
+import com.voicechat.agent.diagnostics.InMemoryTraceStore
 import com.voicechat.agent.local.AndroidLocalModelFileStore
 import com.voicechat.agent.local.CatalogLocalLanguageModelFactory
 import com.voicechat.agent.local.LocalModelInstaller
@@ -11,12 +13,14 @@ import com.voicechat.agent.providers.RegisteredProviderLanguageModelFactory
 import com.voicechat.agent.remote.OkHttpStreamingEngine
 import com.voicechat.agent.remote.RemoteTransport
 import com.voicechat.agent.settings.PreferencesSettingsStore
+import com.voicechat.agent.stt.parakeet.ParakeetEouModelStore
 import com.voicechat.agent.turn.OnnxSmartTurnEngine
 import com.voicechat.agent.turn.SmartTurnDetectorFactory
 import com.voicechat.agent.turn.SmartTurnEngineFactory
 import com.voicechat.agent.turn.SmartTurnModelStore
 import com.voicechat.agent.ui.AndroidSettingsCapabilityProvider
 import com.voicechat.agent.ui.ConversationDefaults
+import com.voicechat.agent.ui.DefaultParakeetEouModelInstaller
 import com.voicechat.agent.ui.DefaultSmartTurnModelInstaller
 import com.voicechat.agent.ui.settingsViewModelFactory
 import com.voicechat.agent.voice.VoiceRuntimeSelection
@@ -68,6 +72,13 @@ class AppContainer(
 
     val languageModel by lazy { ConversationDefaults.languageModel() }
 
+    private val diagnosticsRuntimeDelegate = lazy { AppDiagnosticsRuntime() }
+
+    /** Recent content-free traces retained in memory for developer inspection. */
+    val traceStore: InMemoryTraceStore get() = diagnosticsRuntimeDelegate.value.traceStore
+
+    internal val diagnosticsSink get() = diagnosticsRuntimeDelegate.value.sink
+
     val settingsFactory by lazy {
         settingsViewModelFactory(
             store = settingsStore,
@@ -75,6 +86,8 @@ class AppContainer(
             credentials = credentials,
             capabilityProvider = AndroidSettingsCapabilityProvider(appContext),
             smartTurnInstaller = DefaultSmartTurnModelInstaller(File(appContext.filesDir, SmartTurnModelStore.DIRECTORY_NAME)),
+            parakeetEouInstaller =
+                DefaultParakeetEouModelInstaller(File(appContext.filesDir, ParakeetEouModelStore.DIRECTORY_NAME)),
         )
     }
 
@@ -95,6 +108,7 @@ class AppContainer(
             context = appContext,
             repository = repository,
             fallbackLanguageModel = languageModel,
+            diagnostics = diagnosticsSink,
             turnCompletion = smartTurnDetectorProvider,
             selectionProvider = {
                 val settings = settingsStore.observe().first()
@@ -113,6 +127,9 @@ class AppContainer(
      * process death releases everything without running this.
      */
     fun close() {
-        runBlocking { transport.close() }
+        runBlocking {
+            if (diagnosticsRuntimeDelegate.isInitialized()) diagnosticsRuntimeDelegate.value.close()
+            transport.close()
+        }
     }
 }

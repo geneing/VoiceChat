@@ -133,6 +133,14 @@ retains a bounded window and reports `evictedEventCount` the same way.
 Both read only typed events, so an export cannot carry free-form content: the
 attribute model itself is the guarantee.
 
+The app composition root owns an `AppDiagnosticsRuntime` and passes its bounded
+sink into app-created voice sessions. The most recent events are available in
+process through `AppContainer.traceStore.snapshot()` (or `byTrace(traceId)`), and
+can be rendered with `TraceJsonExporter.export(...)`. The store is memory-only,
+bounded, and is not uploaded. There is currently no in-app trace screen or
+user-facing export action; access is limited to in-process developer tooling and
+tests.
+
 ## Redaction and opt-in content
 
 The default trace is content-free **by construction**: `DiagnosticEvent`

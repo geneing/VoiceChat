@@ -29,6 +29,16 @@ object AppLog {
     /** Default tag for app log lines. */
     const val TAG: String = "VoiceChat"
 
+    /**
+     * Stable Logcat tag for voice/STT/session failures.
+     *
+     * A developer debugging on device filters `adb logcat -s VoiceAgent`, so a
+     * session that fails to start is visible without attaching a debugger. Only
+     * stable error codes and engine facts are logged here — never transcripts,
+     * audio, or credentials (`docs/privacy-and-security.md`).
+     */
+    const val VOICE_TAG: String = "VoiceAgent"
+
     @Volatile
     @PublishedApi
     internal var enabled: Boolean = false
@@ -129,6 +139,19 @@ object AppLog {
     ) {
         if (!isLoggable(level)) return
         sink.log(level, TAG, message(), throwable)
+    }
+
+    /**
+     * Logs under [VOICE_TAG] instead of the default [TAG], so the voice/STT
+     * pipeline is filterable on device (`adb logcat -s VoiceAgent`).
+     */
+    inline fun voice(
+        level: LogLevel,
+        throwable: Throwable? = null,
+        message: () -> String,
+    ) {
+        if (!isLoggable(level)) return
+        sink.log(level, VOICE_TAG, message(), throwable)
     }
 
     @PublishedApi

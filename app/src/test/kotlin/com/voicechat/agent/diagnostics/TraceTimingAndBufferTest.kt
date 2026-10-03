@@ -14,6 +14,9 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Proves the M04 acceptance criteria for timing and for the non-blocking,
@@ -147,6 +150,78 @@ class TraceTimingAndBufferTest {
         assertEquals(listOf(1L, 3L), store.byTrace(traceA).map { it.monotonicTimeNanos })
         assertEquals(listOf(2L), store.byTrace(traceB).map { it.monotonicTimeNanos })
         assertEquals(3L, store.revision.value)
+    }
+
+    @Test
+    fun snapshotsAreIndependentOfLaterStoreMutation() {
+        val store = InMemoryTraceStore(maxEvents = 3)
+        val traceA = TraceId("a")
+        val traceB = TraceId("b")
+        store.record(event(1L).copy(traceId = traceA))
+        store.record(event(2L).copy(traceId = traceB))
+
+        val snapshot = store.snapshot()
+        val traceSnapshot = store.byTrace(traceA)
+        store.record(event(3L).copy(traceId = traceA))
+        store.clear()
+
+        assertEquals(listOf(1L, 2L), snapshot.map { it.monotonicTimeNanos })
+        assertEquals(listOf(1L), traceSnapshot.map { it.monotonicTimeNanos })
+        assertTrue(store.snapshot().isEmpty())
+    }
+
+    @Test
+    fun concurrentRecordSnapshotTraceFilterAndClearRemainConsistent() {
+        val maxEvents = 32
+        val recordCount = 5_000
+        val clearCount = 1_000
+        val store = InMemoryTraceStore(maxEvents = maxEvents)
+        val traceA = TraceId("a")
+        val traceB = TraceId("b")
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(3)
+
+        try {
+            val writer =
+                executor.submit {
+                    start.await()
+                    repeat(recordCount) { index ->
+                        val traceId = if (index % 2 == 0) traceA else traceB
+                        store.record(event(index.toLong()).copy(traceId = traceId))
+                    }
+                }
+            val reader =
+                executor.submit {
+                    start.await()
+                    repeat(recordCount) {
+                        val snapshot = store.snapshot()
+                        assertTrue(snapshot.size <= maxEvents)
+                        assertEquals(
+                            snapshot.map { it.monotonicTimeNanos }.sorted(),
+                            snapshot.map { it.monotonicTimeNanos },
+                        )
+
+                        assertTrue(store.byTrace(traceA).all { it.traceId == traceA })
+                        assertTrue(store.byTrace(traceB).all { it.traceId == traceB })
+                    }
+                }
+            val clearer =
+                executor.submit {
+                    start.await()
+                    repeat(clearCount) { store.clear() }
+                }
+
+            start.countDown()
+            writer.get(10, TimeUnit.SECONDS)
+            reader.get(10, TimeUnit.SECONDS)
+            clearer.get(10, TimeUnit.SECONDS)
+
+            assertTrue(store.snapshot().size <= maxEvents)
+            assertEquals((recordCount + clearCount).toLong(), store.revision.value)
+            assertTrue(store.evictedEventCount in 0L..recordCount.toLong())
+        } finally {
+            executor.shutdownNow()
+        }
     }
 
     private fun newRecorder(

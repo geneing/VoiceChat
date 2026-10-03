@@ -51,6 +51,20 @@ android {
         buildConfig = true
     }
 
+    // Moonshine's debug AAR bundles its OWN older/smaller libonnxruntime.so
+    // (6.3 MB, no exported OrtGetApiBase) that collides with the app-pinned
+    // onnxruntime-android (32 MB). On device the debug APK shipped Moonshine's
+    // library and the app-pinned JNI failed with
+    //   dlopen failed: cannot locate symbol "OrtGetApiBase".
+    // The pinned runtime's native libraries are therefore supplied as an
+    // explicit jniLibs source (scripts/fetch-onnxruntime-android-libs.sh) and
+    // project sources take precedence in the merge over the dependency's copy.
+    packaging {
+        jniLibs {
+            pickFirsts += "**/libonnxruntime.so"
+        }
+    }
+
     testOptions {
         unitTests {
             // Robolectric needs the merged resources and manifest to build an
@@ -58,6 +72,67 @@ android {
             isIncludeAndroidResources = true
         }
     }
+}
+
+// The pinned ONNX Runtime native libraries, extracted from the
+// onnxruntime-android AAR by scripts/fetch-onnxruntime-android-libs.sh. They are
+// supplied as an explicit jniLibs source because Moonshine's debug AAR bundles a
+// colliding `libonnxruntime.so` that cannot be resolved by dependency order (see
+// the packaging block above). Absent from clean checkouts; a clean build then
+// simply has no ONNX runtime and the Smart Turn / Parakeet engines report
+// unavailable rather than shipping a broken library.
+val onnxRuntimeLibsDir = rootProject.file("models/onnxruntime-android/jniLibs")
+if (onnxRuntimeLibsDir.isDirectory) {
+    android.sourceSets
+        .getByName("debug")
+        .jniLibs
+        .directories
+        .add(onnxRuntimeLibsDir.absolutePath)
+}
+
+// The Parakeet candidate is intentionally opt-in and local-only. Its source set
+// and runtime are enabled only after the pinned sherpa-onnx AAR has been fetched
+// into the gitignored models/ directory.
+val sherpaOnnxParakeetAar = rootProject.file("models/sherpa-onnx-1.13.8.aar")
+if (sherpaOnnxParakeetAar.isFile) {
+    android.sourceSets
+        .getByName("androidTest")
+        .kotlin.directories
+        .add("src/parakeetAndroidTest/kotlin")
+}
+
+// The LiteRT Tensor G5 NPU dispatch library is a vendor runtime spike, opt-in
+// and local-only. Fetch it with scripts/fetch-litert-npu-runtime.sh; it is
+// packaged into debug builds only when present and is never committed.
+val litertNpuDispatchDir = rootProject.file("models/litert-asr/npu-dispatch")
+if (litertNpuDispatchDir.isDirectory) {
+    android.sourceSets
+        .getByName("debug")
+        .jniLibs.directories
+        .add(litertNpuDispatchDir.absolutePath)
+
+    // The NPU dispatch library must be extracted to the app's native library
+    // directory for the runtime to dlopen it by name. This is scoped to the
+    // debug variant and only applies while the local spike is present, so a
+    // clean checkout keeps the default packaging.
+    androidComponents {
+        onVariants(selector().withBuildType("debug")) { variant ->
+            variant.packaging.jniLibs.useLegacyPackaging
+                .set(true)
+        }
+    }
+}
+
+// The LiteRT sample tokenizer JNI (libtokenizer_jni.so) turns ASR token IDs into
+// text for the WER harness. It is built by scripts/build-tokenizer-jni.sh into
+// the gitignored models/ tree and packaged, like the NPU library, only when
+// present; a clean checkout still configures and builds.
+val litertTokenizerJniDir = rootProject.file("models/litert-asr/tokenizer-jni")
+if (litertTokenizerJniDir.isDirectory) {
+    android.sourceSets
+        .getByName("debug")
+        .jniLibs.directories
+        .add(litertTokenizerJniDir.absolutePath)
 }
 
 // Export the Room schema so migrations have a checked-in contract to review.
@@ -101,6 +176,23 @@ dependencies {
     // the JVM tests never load the native runtime.
     implementation(libs.onnxruntime.android)
 
+    // Moonshine is an evaluation candidate only. Its adapter and native/model
+    // dependency are debug-only until the Pixel benchmark and quality review.
+    // Its bundled libonnxruntime is excluded above in favour of the pinned one.
+    debugImplementation(libs.moonshine.voice)
+    if (sherpaOnnxParakeetAar.isFile) {
+        // Device-evaluation-only AAR (48 MB); absent from clean checkouts and
+        // release builds. The Parakeet model itself stays outside all APKs.
+        debugImplementation(
+            fileTree(
+                mapOf(
+                    "dir" to sherpaOnnxParakeetAar.parentFile,
+                    "include" to listOf(sherpaOnnxParakeetAar.name),
+                ),
+            ),
+        )
+    }
+
     // On-device LLM runtimes (M20). AICore/Gemini Nano discovery uses the ML Kit
     // GenAI Prompt API; the LiteRT-LM artifact backs the optional, allow-listed
     // local `.litertlm` path. All vendor types stay inside the
@@ -142,6 +234,18 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.rules)
+    // LiteRT ASR benchmark spike only. Keep the production app and ML Kit path
+    // independent of this sample-pinned runtime.
+    androidTestImplementation(libs.litert.asr.test)
+    // The pinned sample's mel front end (jlibrosa), opt-in and local-only. Fetch
+    // it with scripts/fetch-jlibrosa.sh; the JAR is gitignored and only wired when
+    // present so a clean checkout builds without it. The fetch script strips the
+    // fat-jar's bundled junit/maven/commons classes, leaving only jlibrosa's own.
+    val jlibrosaDir = rootProject.file("models/litert-asr/jlibrosa/libs")
+    val jlibrosaJar = jlibrosaDir.listFiles()?.firstOrNull { it.name.endsWith(".jar") }
+    if (jlibrosaJar != null) {
+        androidTestImplementation(files(jlibrosaJar))
+    }
     // Compose instrumented UI tests reuse the BOM-managed Compose UI test library;
     // ui-test-manifest is already a debugImplementation for both test hosts.
     androidTestImplementation(platform(libs.androidx.compose.bom))

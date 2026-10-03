@@ -35,6 +35,10 @@ ktlint = "1.8.0"
 # https://dl.google.com/dl/android/maven2/com/google/mlkit/genai-speech-recognition/1.0.0-alpha1/genai-speech-recognition-1.0.0-alpha1.pom
 mlkitGenaiSpeech = "1.0.0-alpha1"
 
+# Debug-only STT candidate for on-device model comparison. Keep the runtime out
+# of release APKs until the Pixel 10 benchmark and quality review are complete.
+moonshineVoice = "0.1.5"
+
 # On-device LLM runtime discovery (M20). ML Kit GenAI Prompt API is the supported
 # AICore/Gemini Nano surface; its status API (checkStatus) is the runtime
 # discovery gate. Beta release, verified on Google Maven 2026-09-29:
@@ -47,6 +51,9 @@ mlkitGenaiPrompt = "1.0.0-beta4"
 # 2.2.0, published 2026-08-13:
 # https://dl.google.com/dl/android/maven2/com/google/ai/edge/litert/litert/maven-metadata.xml
 litert = "2.2.0"
+# LiteRT runtime used only by the pinned speech-recognition instrumentation
+# spike. The sample pins 2.1.5; keep this out of app production dependencies.
+litertAsrTest = "2.1.5"
 
 # LiteRT-LM — the optional local-LLM runtime for `.litertlm` bundles
 # (docs/decisions.md §2.3). The M00 note described v0.16.0 from the guide; the
@@ -111,6 +118,8 @@ androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref =
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 # ML Kit GenAI Speech Recognition: the single on-device STT engine (M08).
 mlkit-genai-speech-recognition = { module = "com.google.mlkit:genai-speech-recognition", version.ref = "mlkitGenaiSpeech" }
+# Moonshine Voice Android binding, wired only with debugImplementation below.
+moonshine-voice = { module = "ai.moonshine:moonshine-voice", version.ref = "moonshineVoice" }
 # ONNX Runtime for Android, scoped to the pinned Smart Turn v3.2 artifact only (M10).
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 # ML Kit GenAI Prompt API: the supported AICore/Gemini Nano runtime discovery and
@@ -119,6 +128,7 @@ mlkit-genai-prompt = { module = "com.google.mlkit:genai-prompt", version.ref = "
 # LiteRT base runtime + LiteRT-LM `.litertlm` runtime (M20). Kept behind the
 # `local` package so no vendor type reaches the app contract.
 litert = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
+litert-asr-test = { module = "com.google.ai.edge.litert:litert", version.ref = "litertAsrTest" }
 litertlm-android = { module = "com.google.ai.edge.litertlm:litertlm-android", version.ref = "litertlm" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }

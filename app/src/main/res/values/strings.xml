@@ -40,6 +40,15 @@
     <string name="notice_llm_network">The network request failed.</string>
     <string name="notice_persistence_failed">Could not save the conversation.</string>
     <string name="notice_generic_error">Something went wrong.</string>
+    <string name="notice_stt_unavailable">On-device speech recognition is unavailable on this device.</string>
+    <string name="notice_stt_model_not_ready">The speech recognition model is still getting ready. Try again shortly.</string>
+    <string name="notice_stt_recognition_failed">Speech recognition failed.</string>
+    <string name="notice_model_unavailable">The on-device model is not installed. Install it in Settings, then try again.</string>
+    <string name="notice_model_corrupt">The on-device model is damaged and must be reinstalled.</string>
+    <string name="notice_model_download_failed">The on-device model could not be downloaded.</string>
+    <string name="notice_audio_permission_denied">Microphone access is required to talk.</string>
+    <string name="notice_audio_capture_failed">The microphone could not be started.</string>
+    <string name="notice_tts_no_on_device_voice">No on-device voice is installed, so replies stay text-only.</string>
 
     <!-- Provider status strings (M23). The app deliberately shows provider facts
          only; there is no transfer/retention notice card, because configuring the

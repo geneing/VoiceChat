@@ -15,10 +15,18 @@ import java.io.File
  *
  * Two files are the recognized HTTP boundaries: the LLM streaming engine and the
  * M10 Smart Turn model download (`OkHttpSmartTurnModelSource.kt`), which reuses
- * OkHttp but stays behind the pure `turn.SmartTurnModelSource` interface.
+ * OkHttp but stays behind the pure `turn.SmartTurnModelSource` interface. The
+ * Parakeet-EOU model download (`ParakeetEouModelSource.kt`) is the same kind of
+ * boundary: OkHttp behind the pure `stt.parakeet.ParakeetEouModelSource`
+ * interface.
  */
 class RemoteSourcePurityTest {
-    private val okHttpFiles = setOf("OkHttpStreamingEngine.kt", "OkHttpSmartTurnModelSource.kt")
+    private val okHttpFiles =
+        setOf(
+            "OkHttpStreamingEngine.kt",
+            "OkHttpSmartTurnModelSource.kt",
+            "ParakeetEouModelSource.kt",
+        )
     private val jsonFiles = setOf("RemoteJson.kt")
 
     @Test

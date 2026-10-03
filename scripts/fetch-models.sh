@@ -30,10 +30,17 @@ FORCE="${FORCE:-0}"
 # Fields, tab-separated: id | filename | url | size | sha256 | license | source
 # The size/sha256 are the exact values from the publishers' APIs (verified
 # 2026-09-30). Do not change one without re-verifying and updating the docs.
-# Only the Smart Turn semantic end-of-turn model is pinned; no local LLM
-# (.litertlm) is shipped (docs/decisions.md, docs/local-models.md).
+# Smart Turn is the semantic end-of-turn model; the parakeet-eou* rows are the
+# five pinned Parakeet-EOU streaming files (hf revision "main"; see
+# ParakeetEouArtifact.PINNED). No local LLM (.litertlm) is shipped
+# (docs/decisions.md, docs/local-models.md).
 CATALOG=$(cat <<'EOF'
 smart-turn	smart-turn-v3.2-int8.onnx	https://huggingface.co/soniqo/Smart-Turn-v3.2-ONNX/resolve/b48fdbe20772bcec1fef02f4a1a355236ef6359e/smart-turn-v3.2-int8.onnx	11123370	00cd131551e8d1e9011f31345edb632a26116dd83e159782c4ddff610718ea31	BSD-2-Clause	soniqo/Smart-Turn-v3.2-ONNX@b48fdbe20772bcec1fef02f4a1a355236ef6359e
+parakeet-eou-encoder	parakeet-eou-encoder.onnx	https://huggingface.co/soniqo/Parakeet-EOU-120M-ONNX-INT8/resolve/main/parakeet-eou-encoder.onnx	131741896	fcd0452f27a49d266a7b13a048f603798c66afe453838cd1ac685b30c1bae55c	cc-by-4.0	soniqo/Parakeet-EOU-120M-ONNX-INT8@main
+parakeet-eou-decoder	parakeet-eou-decoder.onnx	https://huggingface.co/soniqo/Parakeet-EOU-120M-ONNX-INT8/resolve/main/parakeet-eou-decoder.onnx	15757826	205cd7d44b5320f81d82dd6683e49e05ba4d72e0564151eb21a86e172f69f488	cc-by-4.0	soniqo/Parakeet-EOU-120M-ONNX-INT8@main
+parakeet-eou-joint	parakeet-eou-joint.onnx	https://huggingface.co/soniqo/Parakeet-EOU-120M-ONNX-INT8/resolve/main/parakeet-eou-joint.onnx	5589132	6fb4b7674c2988ff8a4aa9c9181c6f06990d318a828e9696c4619505d2c08457	cc-by-4.0	soniqo/Parakeet-EOU-120M-ONNX-INT8@main
+parakeet-eou-config	config.json	https://huggingface.co/soniqo/Parakeet-EOU-120M-ONNX-INT8/resolve/main/config.json	524	db0d95f8575e6610f4f524c87d647d5bcd5a868ed5102044e5ccdf4352d5da4b	cc-by-4.0	soniqo/Parakeet-EOU-120M-ONNX-INT8@main
+parakeet-eou-vocab	vocab.json	https://huggingface.co/soniqo/Parakeet-EOU-120M-ONNX-INT8/resolve/main/vocab.json	17437	83fd42ad33dae1bd3ceee6c0bb6c625f314cf0b2dc8430be441ac1e2643d5c36	cc-by-4.0	soniqo/Parakeet-EOU-120M-ONNX-INT8@main
 EOF
 )
 

@@ -145,6 +145,23 @@ enum class DiagnosticAttribute {
 
     /** Model integrity/verdict status code (`VERIFIED`, `MISSING`, `CORRUPT`, `LOAD_FAILED`, …). */
     MODEL_INTEGRITY,
+
+    /*
+     * Parakeet-EOU streaming decode attributes (stream 3). They carry measured
+     * timings and counts only — never a transcript, a token id, or a sample.
+     */
+
+    /** Number of audio chunks decoded in the session. */
+    DECODE_CHUNK_COUNT,
+
+    /** Measured mean decode time per chunk, in milliseconds, for the session. */
+    DECODE_CHUNK_MILLIS,
+
+    /** Measured worst-case decode time for one chunk, in milliseconds. */
+    DECODE_MAX_CHUNK_MILLIS,
+
+    /** Number of confirmed model `<EOU>` observations in the session. */
+    EOU_CONFIRMED_COUNT,
 }
 
 /**

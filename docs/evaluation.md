@@ -5,9 +5,13 @@ results that exist. It is deliberately split into a reproducible, host-only part
 (the `com.voicechat.agent.eval` harness) and a device-only part (the Pixel 10
 matrix), because the two have very different evidence strength.
 
-**Status.** The harness and its tests are implemented. There is **no** Pixel 10
-numeric baseline yet: no row below is passed, and no performance budget is fixed.
-Smart Turn stays opt-in and default-off until the device rows meet the
+**Status.** The host harness and its tests are implemented. Historical Pixel 10
+STT measurements exist in [`voice-latency-results.md`](./voice-latency-results.md)
+for ML Kit replay attempts, Moonshine streaming, and sherpa-onnx Parakeet offline
+recognition; those rows are separate from this document's still-empty endpoint
+sweep and full voice-loop latency tables. The current LiteRT benchmark branch
+has no Pixel inference measurements yet. No performance budget is fixed.
+Smart Turn stays opt-in and default-off until the endpoint/device rows meet the
 acceptance criteria stated here (`docs/smart-turn.md`, R-0190, R-0192).
 
 ## What is measured
@@ -120,3 +124,5 @@ row out rather than guessing a value.
 - Endpointing policy: [vad-endpointing.md](./vad-endpointing.md)
 - Smart Turn: [smart-turn.md](./smart-turn.md)
 - Device test matrix: [Tests.md](../Tests.md)
+- End-to-end latency and engine comparison plan:
+  [voice-latency-optimization.md](./voice-latency-optimization.md)

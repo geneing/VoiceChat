@@ -5,6 +5,7 @@ import com.voicechat.agent.contracts.DiagnosticsSink
 import com.voicechat.agent.contracts.NoOpDiagnosticsSink
 import com.voicechat.agent.log.AppLog
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,10 +28,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * stalled therefore degrades into an observable drop count instead of stalling
  * capture or rendering.
  *
- * **Ownership and lifecycle.** The sink is app-scoped; [scope] must outlive it.
- * Cancelling [scope] stops draining (and further [record] calls are dropped and
- * counted). The buffer is not closed explicitly because the sink is expected to
- * live for the process lifetime.
+ * **Ownership and lifecycle.** The owner must keep [scope] alive until [close]
+ * has drained the queue. Cancelling [scope] first stops draining and can discard
+ * queued events; further [record] calls are counted as drops.
  *
  * @param capacity number of events buffered before drops begin.
  */
@@ -62,13 +62,16 @@ class BoundedDiagnosticsSink(
      */
     val droppedEventCount: StateFlow<Long> get() = droppedState.asStateFlow()
 
+    private val drainJob: Job
+
     init {
         AppLog.d { "diagnostics: bounded sink started capacity=$capacity" }
-        scope.launch {
-            for (event in channel) {
-                downstream.record(event)
+        drainJob =
+            scope.launch {
+                for (event in channel) {
+                    downstream.record(event)
+                }
             }
-        }
     }
 
     override fun record(event: DiagnosticEvent) {
@@ -78,6 +81,15 @@ class BoundedDiagnosticsSink(
                 AppLog.w { "diagnostics: buffer full; events are being dropped" }
             }
         }
+    }
+
+    /**
+     * Stops accepting events and waits for the queued events to reach [downstream].
+     * The owner can then cancel [scope] without discarding the retained tail.
+     */
+    suspend fun close() {
+        channel.close()
+        drainJob.join()
     }
 
     companion object {

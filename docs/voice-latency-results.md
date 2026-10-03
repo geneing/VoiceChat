@@ -1,0 +1,302 @@
+# Voice Latency and Accuracy Results
+
+This is the single running record of measured progress. Each run records the
+source commit whose code was tested. Raw audio remains on the phone; timing
+reports contain file IDs and engine metadata only. The ML Kit, Moonshine, and
+Parakeet rows below are historical results from optimization/voice-latency and
+do not measure LiteRT; append new LiteRT runs to this same file under a separate
+section. The separately requested OpenAI reference step may upload only the
+user-owned Walking recordings; record its API time separately from device
+latency. Machine-generated transcript drafts are separate, local, Git-ignored
+files and are not ground truth.
+
+## Test setup
+
+- Branch: `optimization/voice-latency`.
+- Phone: Pixel 10 (`frankel`), Android 17 / API 37, build
+  `google/frankel/frankel:17/CP3A.260905.009/16091614:user/release-keys`.
+- Replay is a paced file feed; no microphone or speaker route participates.
+  During the full corpus run the phone was at 80% battery, battery temperature
+  28.4 C, and Android thermal status 0 (none); charging state was `not
+  charging`. These readings were sampled during the run, not before it.
+- Corpus present at start: ten root WAV files (16 kHz, mono, PCM16; about 79.7
+  seconds total) and two `Walking*.m4a` outdoor recordings. None has a reviewed
+  reference transcript. Do not calculate WER/CER until labels are reviewed.
+- Initial ML Kit availability check: Advanced `Ready`; Basic
+  `DownloadRequired` (2026-10-01). This is availability, not a transcription or
+  latency result.
+
+## LiteRT benchmark branch status
+
+- Branch: optimization/litert-speech-benchmark, created from clean master at source hash 2edaf78017b802a83f24a8c4b804f151ca025cb6.
+- The historical setup, checkpoint table, and existing run log document the prior optimization/voice-latency branch and its sherpa ONNX Parakeet candidate, not LiteRT.
+- Two host conversion smoke exports are recorded below (Moonshine Tiny and Whisper Tiny). On-device LiteRT CPU inference now exists: four cold Moonshine Tiny FP32 single-window runs, two Whisper Tiny/Small runs (30 s graph, host-extracted features, decode capped at 16 steps), and a GPU attempt that failed delegate compilation on both FP16 and FP32 Moonshine artifacts. GPU/NPU execution, multi-window/streaming timing, transcription text, and accuracy are still not measured. Add only runs that were actually attempted; use explicit unavailable/failure outcomes for unsupported lanes.
+
+## Significant checkpoints
+
+| Commit | Change | Progress |
+| --- | --- | --- |
+| `ffd905b053156eba5788807574111df2771667aa` | Added app-scoped trace diagnostics, first LLM text timing after request construction, paced WAV/M4A STT replay, local draft sidecars, and debug-only Moonshine candidates. | Initial implementation checkpoint; replay staging issue recorded below. |
+| `acdce6ef505ee2b60745d88daa95939ef7ff0358` | Fixed replay staging through app-private cache and direct instrumentation. | One-file smoke passed; subsequent cold and full-corpus rows below. |
+| `ab5f33c9a291584a8c75306f0ad0588f3dc42108` | Recorded initial Pixel ML Kit failures and added R-0235. | Interim measurement checkpoint; later full-corpus rows supersede its pending-run note. |
+| `2ec3b2e71cab990b0b28e910302e2dd020c0f037` | Updated the plan, test instructions, and this log with the completed 12-file baseline results and model survey. | Documentation checkpoint; source results remain tied to their tested hashes in the run table. |
+| `d652cdcfc3adcf763466e0af6c46278e57f205d9` | Changed Moonshine's debug update cadence to 100 ms for a controlled replay comparison. | Pixel replay completed; full measurements and outcome are below. |
+| `711769bbc2afe9f9e44e74090c6de84d41f06baf` | Restored the 500 ms Moonshine default after the 100 ms comparison showed no material first-partial gain. | `:app:testDebugUnitTest` and `spotlessCheck` passed. The behavior matches the earlier 500 ms device baseline; no separate device pass was run. |
+| `f4cb3d8979b453754bff18705766cb71529b06ab` | Consolidated run outcomes, hashes, and model progress into this single file; left `Tests.md` with replay instructions only. | Documentation checkpoint. |
+| `0edf380` (`0edf380c138601ad4f92b7af3e390a80d8edb051`) | Added opt-in sherpa-onnx 1.13.8 / Parakeet TDT-CTC 110M offline replay, SHA-256-pinned local artifacts, debug-only AAR packaging, model staging, batch latency rows, and unverified draft-label export. | `:app:testDebugUnitTest`, `:app:assembleDebugAndroidTest`, and `spotlessCheck` passed. APK inspection found sherpa JNI and one app-pinned ONNX Runtime library per ABI. Pixel inference and accuracy review remain pending. |
+
+## Run log
+
+| Date | Tested source commit | Change at checkpoint | Device / engine | Latency result | Accuracy result | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-01 | `2edaf78017b802a83f24a8c4b804f151ca025cb6` (base; worktree was dirty) | Started the `optimization/voice-latency` work: app-scoped diagnostics wiring, paced WAV/M4A harness, and debug-only Moonshine Tiny/Small candidate were under development. | Pixel 10; ML Kit Advanced reported ready, Basic required download. | No corpus replay had been run. No latency claim. | No reviewed references or accuracy score. | The recorded source hash is the base commit; the source diff for this early status was uncommitted, so this row is status only and is not a reproducible benchmark. |
+| 2026-10-01 | `ffd905b053156eba5788807574111df2771667aa` | Added app-scoped diagnostics, opt-in real-time WAV/M4A replay for ML Kit and Moonshine Tiny/Small, and separate local draft-label exports. JVM/Pixel smoke and formatting checks passed before the replay attempt. | Pixel 10, Android 17/API 37; ML Kit Advanced + Moonshine Tiny/Small. | No rows: both instrumentation runs stopped before decoding because the app-specific external-cache replay directory was missing. | No labels or accuracy result; the failed run wrote no sidecars. | Run attempted with `-Engine Both -Mode Advanced -ExportDraftLabels -ExportMoonshineDraftLabels`. Harness staging/installation order is being corrected. The app code tested was this commit; route, battery, and thermal conditions were not measured. |
+| 2026-10-01 | `acdce6ef505ee2b60745d88daa95939ef7ff0358` | Changed replay staging to app-private cache via `run-as` and direct instrumentation so Android scoped storage and Gradle test installation do not hide staged files. | Pixel 10; ML Kit Advanced; fixture `eng-000129-002077dd.wav` (4,307 ms). | ML Kit failed after 627 ms / 5 frames, before input completed; `STT_RECOGNITION_FAILED`. No valid TTFS or finalization latency. | No final transcript and no reviewed reference; no score. | One-file harness smoke. The source in this checkpoint was exercised; model status had previously reported Advanced `Ready`. |
+| 2026-10-01 | `acdce6ef505ee2b60745d88daa95939ef7ff0358` | Same private-cache harness checkpoint; Moonshine Voice debug candidate, cold first use. | Pixel 10; fixture `eng-000129-002077dd.wav` (4,307 ms); Tiny and Small streaming models. | Tiny: model open 17,441 ms; first partial 2,367 ms after audio start; final 215 ms after audio end; wall time 26,039 ms, RTF 6.046 including cold model setup. Small: model open 34,114 ms; first partial 2,371 ms; no final before timeout at 42,937 ms. | Tiny reached a final-result event, but the transcript was not exported and no reviewed reference exists; no WER/CER. Small timed out without a final result. | Single-clip cold run. Model open includes first-run model acquisition/setup; not a warm-inference comparison. Draft labels were not exported in this smoke. |
+| 2026-10-01 | `acdce6ef505ee2b60745d88daa95939ef7ff0358` | Full-corpus ML Kit replay after the cache fix; 12 top-level files (10 WAV, two Walking M4A), each paced in 20 ms frames. | Pixel 10; ML Kit Advanced and Basic; 24 rows. | Advanced: 12/12 failed with `STT_RECOGNITION_FAILED`. Basic: 12/12 failed with `STT_MODEL_NOT_READY`. No valid TTFS, finalization, or RTF comparison. | No final hypotheses for review from these ML Kit attempts; no WER/CER. | Instrumentation completed successfully, but recognizer outcomes failed. Basic had reported `DownloadRequired` in the prior availability check. |
+| 2026-10-01 | `acdce6ef505ee2b60745d88daa95939ef7ff0358` | Full-corpus Moonshine streaming STT pass; warmed Tiny/Small models after a separate cold-first-use smoke. | Pixel 10; Moonshine Voice 0.1.5; Tiny Streaming and Small Streaming; 12 source files/model, all paced at 20 ms. | Tiny: 12/12 `FINAL`; first partial p50 2,184.5 ms / p90 7,750.9 ms; end-to-final p50 59.0 ms / p90 322.4 ms; RTF p50 1.823 / p90 2.020. Small: 12/12 `FINAL`; first partial p50 2,276.5 ms / p90 7,878.0 ms; end-to-final p50 74.0 ms / p90 1,063.8 ms; RTF p50 2.022 / p90 2.094. | Draft sidecars exported locally for both engines (24 rows each) and verified Git-ignored. No human review yet; no WER/CER. | Tested code hash above. Percentiles use linear interpolation at `(n-1)*p`; 12 cases/model, so p90 is descriptive and sensitive to the two outdoor Walking clips. Their first-partial latencies were about 9.78/8.36 s for Tiny and 9.99/8.49 s for Small. Model-open time was 584 ms for the first Tiny case and 1,114 ms for the first Small case, then 0–4 ms; cold first-use smoke separately measured 17.441 s/34.114 s including model acquisition/setup. Reports are local temp CSVs; no transcript text copied here. |
+| 2026-10-02 | `d652cdcfc3adcf763466e0af6c46278e57f205d9` | Changed Moonshine's debug candidate update interval from 500 ms to 100 ms; reran the full corpus. | Pixel 10; Moonshine Voice 0.1.5; Tiny and Small Streaming; 12 source files/model, paced at 20 ms. Device was USB-powered/charging at 80%, battery 28.6 °C during and 29.2 °C after the run; thermal status remained 0. Instrumentation took 505.681 s. | Tiny: 12/12 `FINAL`; first partial p50 2,168.5 ms / p90 7,738.6 ms; end-to-final p50 32 ms / p90 314.5 ms; RTF p50 1.83 / p90 1.98. Small: 12/12 `FINAL`; first partial p50 2,310 ms / p90 7,819.4 ms; end-to-final p50 69 ms / p90 466.3 ms; RTF p50 2.05 / p90 2.17. | No reviewed reference; no WER/CER. For diagnostic consistency only, exact draft-output agreement with the earlier 500 ms run was 7/12 Tiny and 8/12 Small; this is not an accuracy score. New Moonshine draft sidecar is local and Git-ignored. | Relative to the 500 ms run, Tiny first-partial p50 improved only 16 ms and p90 12 ms; Small p50 regressed 33.5 ms while p90 improved 58.6 ms. The more frequent updates did not make first speech meaningfully faster and changed several hypotheses. Use 500 ms for the next comparison. Run report is local temp CSV `voicechat-moonshine-100ms-d652cdc.csv`; no transcript text copied here. |
+| 2026-10-02 | `711769bbc2afe9f9e44e74090c6de84d41f06baf` | Repeated the 500 ms Tiny/Small corpus pass after restoring the default. | Pixel 10; Moonshine Voice 0.1.5; 12 source files/model; USB-powered/charging at 80%, battery 29.2 °C after run, thermal status 0. Instrumentation took 503.331 s. | Tiny: 12/12 `FINAL`; first partial p50 2,183.5 ms / p90 7,773.4 ms; end-to-final p50 55 ms / p90 388.5 ms; RTF p50 1.8 / p90 2.0. Small: 12/12 `FINAL`; first partial p50 2,228.5 ms / p90 7,773.3 ms; end-to-final p50 40.5 ms / p90 573.2 ms; RTF p50 2.0 / p90 2.2. | No draft sidecar or reviewed reference in this repeat; no WER/CER. | First-partial p50 repeated within 34.5 ms per clip for Tiny and 53 ms for Small (median absolute difference versus the first 500 ms pass); max per-clip difference was 135 ms Tiny and 244 ms Small. This supports similar medians but p90 is sensitive to outdoor clips. Report is local temp CSV `voicechat-moonshine-repeat-500ms-711769b.csv`; no transcript text copied here. |
+| 2026-10-02 | source `0edf380ed1bcfea29eb17b1abc3425c15733938e` (HEAD `cdb7d6674a73bfae254f12f4e5f37242ba538c5a`, docs-only after source) | First Pixel 10 full-corpus run of optional offline Parakeet 110M int8 through sherpa-onnx; added its Android replay harness and verified model/runtime packaging. | Pixel 10, Android 17/API 37; Parakeet NeMo 110M int8, sherpa-onnx 1.13.8. 12 files; USB-powered/charging, 80%, 27.7 °C before and after, thermal status 0. | 12/12 final. Shared model initialization 1,153 ms. Audio decode p50 3 ms / p90 1,690.2 ms; inference p50 235 ms / p90 512 ms; decode-plus-inference wall time p50 321 ms / p90 2,300.4 ms. Full-phrase real-time factor p50 0.040 / p90 0.094; inference-only RTF p50 0.026 / p90 0.038. | No partial streaming is exposed by this offline recognizer, so first-partial latency is unavailable. Draft labels exported locally for review; no reviewed references or WER/CER. | Output `voicechat-parakeet-0edf380.csv` in local temp. M4A audio decoding drives the high p90 wall time; do not compare that metric directly to streaming first-partial latency. |
+
+## Measurement definitions
+
+- `input_start_to_first_partial_ms`: paced audio start to the first interim
+  transcript. This is the primary streaming STT responsiveness measure.
+- `input_end_to_final_ms`: end of paced audio to final transcript.
+- `model_open_ms`: model load/download time reported separately where the
+  engine exposes it. Keep cold setup separate from warm inference.
+- `wall_time_ms` and real-time factor describe the entire replay operation;
+  decoding/setup inclusion is noted with each run.
+- Accuracy is reported as WER/CER and critical-meaning errors only against
+  reviewed reference labels. Machine drafts remain explicitly unverified.
+- Percentiles use linear interpolation at `(n-1)*p`; sample count is reported
+  with each run. Small corpora are descriptive rather than a stable population
+  estimate.
+
+## Draft labels and review status
+
+The user requested local draft labels for review. The run wrote two ignored
+sidecars under `test_data/` (24 rows each, one result row per model and source
+file). Both were checked with Git ignore rules. They contain unverified model
+outputs and are not ground truth; no text was copied into tracked documentation.
+Review/edits are still required before measuring WER/CER.
+
+## Next run
+
+The 100 ms Moonshine update interval did not improve first-partial latency enough
+to justify the changed hypotheses and extra callbacks; the debug candidate is
+restored to 500 ms. The first Parakeet offline run completed all 12 files, but
+has no native partial timing; its p50 inference was 235 ms and p90 was 512 ms,
+and its hypotheses are now scored: mean WER 0.184 over the ten untruncated clips,
+with the two high rows explained by number formatting. Next repeat the full
+Parakeet corpus to check timing stability and continue reviewing its locally
+exported draft labels. Investigate ML Kit Advanced failure and Basic model
+availability. Do not move to TTS latency optimization until a
+streaming STT candidate has materially lower first-partial latency without an
+unacceptable accuracy or resource regression. Continue to record each run's
+tested source hash and concise change description here.
+
+## LiteRT run record (optimization/litert-speech-benchmark)
+
+This section records only real device runs, each with the exact tested source hash
+and backend evidence. Placement is never inferred from the requested delegate:
+a completed run without placement evidence stays UNKNOWN, and a failed
+accelerator compile is a failed lane rather than fallback success.
+
+| Date | Source commit | Model / quantization | Device / requested backend | Confirmed backend / outcome | Latency / accuracy | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-02 | `3c277877913d2a22e4ed7e3bbaa50a81b65c8266` (LiteRT CPU harness code introduced at `43e8b4ec0cca773a3c7c7a949dc28cb430aed8b2`) | Moonshine Tiny FP32, no quantization (`UsefulSensors/moonshine-tiny`, HF revision `390624ed33d594443aa4aa221f5b9f283b545b5a`). Artifact 109,330,616 B, SHA-256 `c4f4735852d4a8de1003431c43a253376c4c91ee19713778a07bd0a446c7e930`. Single 5.0 s window of `test_data/eng-000001-000081dd.wav` (80,000 samples at 16 kHz; audio SHA-256 `76f42445cb298c8d16b5f44e28537e730bee86054020554dd11e1ef3fda4867d`). LiteRT `com.google.ai.edge.litert:litert:2.1.5`. | Pixel 10 (`frankel`), Tensor G5, Android 17 / API 37, build `CP3A.260905.009`, fingerprint `google/frankel/frankel:17/CP3A.260905.009/16091614:user/release-keys`. Requested backend CPU; observed backend **CPU**, evidence `CPU_ONLY_COMPILED_MODEL_ALLOWLIST`, fallback disabled. Thermal status 0 before and after; battery 26.9 C, USB-powered (`plugged=2`), power save off. | Four independent cold-process single-window runs (fresh instrumentation process each; no warm-up). Cold model load + buffer setup 80-99 ms. Preprocess (WAV read to PCM window) 13-19 ms. Encode 111-113 ms. Decoder first token 103-106 ms; decoder total 1343-1363 ms (p50 1,358); encode+decode 1,454-1,475 ms. Decoder terminated after 15 tokens. Offline, unpaced file input: not a streaming or first-text latency measurement. | No transcript, WER/CER, or accuracy: the sample tokenizer JNI is not linked in the test target, so only token counts are recorded. | Single-window spike with no overlap merge (`NOT_APPLICABLE_SINGLE_WINDOW`). Results were highly repeatable across the four cold runs. Raw logcat records were only local; no audio or transcript text copied here. |
+| 2026-10-02 | `a1b4a68583a45eee9ff1a1689835cbc82a66e48e` | Moonshine Tiny FP16-weight (`59a3701c…d39826`, 55,271,072 B) and FP32 (`c4f47358…c7e930`, 109,330,616 B) artifacts, GPU-only accelerator allowlist, no CPU entry; GPU precision FP16 for the FP16 artifact and FP32 for the FP32 artifact. | Pixel 10 (`frankel`), Tensor G5, Android 17 / API 37, build `CP3A.260905.009`. Requested backend GPU; observed backend **UNKNOWN** — the runtime exposes no per-op placement query. Runtime logs: NPU accelerator could not be loaded/registered (`npu_registry.cc:34`); GPU accelerator loaded via `libLiteRtClGlAccelerator.so`, OpenCL unsupported so it used OpenGL; for the FP16 artifact 354/395 nodes were GPU-eligible (41 CPU) and for FP32 281/356 (75 CPU); then `delegate_opengl.cc:218 Shader compilation failed` and `Restored original execution plan after delegate application failure`. | **INFERENCE_FAILED**, placement **UNKNOWN** (no per-op query). Both candidates failed before any encode. | No GPU latency or accuracy (no encode ran); not a CPU fallback result. | Evidence that GPU execution did **not** occur for Moonshine Tiny under LiteRT 2.1.5 on this device; the OpenGL (ML Drift) delegate kernel failed shader compilation for both artifacts. NPU is not a candidate for Moonshine here and its accelerator did not register. |
+| 2026-10-02 | `ad8501998f1b81e3401291ce9dd88c6f20998bb8` | Whisper Tiny FP32-30s (`6e160e3b…f50ed`, 151,149,520 B) and Whisper Small FP32-30s (`157f637f…1ed1b4a`, 967,516,352 B), CPU-only allowlist, fallback disabled. Input features are the pinned sample's `TransformersProcessor` log-Mel `(1, 80, 3000)`, SHA-256 `9a92bc4e…2ca0a62`, extracted on the host. Sample metadata start/stop tokens 50258/50257. | Pixel 10 (`frankel`), Tensor G5, Android 17 / API 37, build `CP3A.260905.009`. Requested backend CPU; observed backend **CPU**, evidence `CPU_ONLY_COMPILED_MODEL_ALLOWLIST`. Thermal status 0; battery 27.0→28.5 C, USB-powered, power save off. | Two cold-process runs. Tiny: load 144 ms; encode 930 ms; first decoder token 573 ms; decoder 8,489 ms for 16 steps (530.6 ms/step). Small: load 501-883 ms; encode 8,043-8,393 ms; first decoder token 3,045-3,073 ms; decoder 47,795-47,883 ms for 16 steps (~2,987-2,993 ms/step). Decode **capped at 16 steps** in both (`terminatedByStopToken:false`), so this is not full-transcription or first-text latency. | No transcript or accuracy: the sample tokenizer JNI is not linked. Preprocessing is host-side, so these are model-graph timings and exclude feature extraction. | The 30 s Whisper decode graph reprocesses the full 256-token sequence per step, so a complete decode would take minutes; the bounded 16-step figures report step cost, not end-to-end latency. Small is roughly 8.6x Tiny per encode and 5.6x per decoder step. |
+| 2026-10-02 | `1ea196682c669270750406a491a98eef652d5c8e` | Parakeet CTC 0.6B INT8 (596,365,072 B, SHA-256 `3d0799f625842fded4580c9b51d321667f0bd5f334cb325fb1b9051c6534e102`) and Parakeet TDT 0.6B v3 INT8 stateful (614,261,072 B, SHA-256 `334745b8bc7fd372b1c213516f0b6338bb827b1a2abb3e77ad35fe6fea5cd16b`), CPU-only allowlist, fallback disabled; host-extracted 5 s features (`parakeet-ctc-features-5s.f32` `647222df…c460`, `parakeet-tdt-features-5s.f32` `8434cd7f…f441`). LiteRT `com.google.ai.edge.litert:litert:2.1.5`. | Pixel 10 (`frankel`), Tensor G5, Android 17 / API 37, build `CP3A.260905.009`. Requested backend CPU; observed backend **CPU**, evidence `CPU_ONLY_COMPILED_MODEL_ALLOWLIST`. One cold process, CTC then TDT; thermal status 0 before and after; battery 35.6 C, USB-powered (`plugged=2`), power save off. | CTC: model construct 857 ms; encode 331 ms; decode 28 ms; encode+decode 359 ms; 63 decode iterations; 18 tokens. TDT: model construct 905 ms; encode 345 ms; decode 335 ms; encode+decode 680 ms; 31 decode iterations; 23 tokens. | No transcript, WER/CER, or accuracy: the sample tokenizer JNI is not linked in the test target; token IDs only (`…-tokens.txt`). | First successful TDT decode after the `logitsPer` stride fix at `1ea1966`. Both runs are offline, single-window, unpaced; neither is a streaming or first-text latency measurement, and the CTC/TDT token streams are not an accuracy comparison. |
+| 2026-10-02 | `ed504d8f6298057099b95f51ea242e152bf11969` | Parakeet CTC 0.6B INT8 (596,365,072 B) and TDT 0.6B v3 INT8 stateful (614,261,072 B) — same artifacts as the CPU row — requested with a GPU-only accelerator allowlist and no CPU entry; default GPU options. | Pixel 10 (`frankel`), Tensor G5, Android 17 / API 37, build `CP3A.260905.009`. Requested backend GPU; observed backend **UNKNOWN** (the runtime exposes no per-op placement query). Runtime logs: NPU accelerator did not register (`npu_registry.cc:34`); GPU loaded via `libLiteRtClGlAccelerator.so` using OpenGL (OpenCL unsupported). CTC replaced 1790/1790 nodes then reported `Restored original execution plan after delegate application failure` and `Failed to compile model`. TDT replaced 1790/1790 (subgraph 0), 163/163 (subgraph 1), 63/63 (subgraph 2), then `Failed to create input buffers` (`litert_compiled_model.h:1656`). | **INFERENCE_FAILED** for both lanes; placement **UNKNOWN**; no encode ran. | No GPU latency or accuracy; not a CPU-fallback result. Extends the Moonshine GPU finding: the Parakeet INT8 graphs also do not run on the LiteRT 2.1.5 OpenGL GPU delegate on this device, and the NPU accelerator is not registered. |
+| 2026-10-02 | `cfa1111b4a093fe9620aef8251c45a125c5b2140` | Parakeet TDT 0.6B v3 F32 AOT stateful for Google Tensor G5 (`parakeet_tdt_0.6b_v3_5s_f32_stateful_Google_Tensor_G5.tflite`, 1,292,830,512 B, SHA-256 `5d720a785a90991eec74a898049c4a8e86f78c6fe5b6bba02aea0e59a2c10184`; **F32, not the project's INT8 candidate**), NPU-only accelerator allowlist, no CPU entry. Dispatch library `libLiteRtDispatch_GoogleTensor.so` (SHA-256 `5731f46e9ac6e016113524a7a15fe9feb7bb55e03a0ce1c1b9aee7d5aab46fad`) from `litert_npu_runtime_libraries.zip` (LiteRT v2.1.1), packaged into the debug APK. | Pixel 10 (`frankel`), Tensor G5, Android 17 / API 37, build `CP3A.260905.009`. Requested backend NPU; observed backend **UNKNOWN**. Runtime: `npu_registry.cc:34` — NPU accelerator could not be loaded/registered (`kLiteRtStatusErrorInvalidArgument`); then `Encountered unresolved custom op: DISPATCH_OP` and `Node number 0 (DISPATCH_OP) failed to prepare`. | **INFERENCE_FAILED**; placement **UNKNOWN**; no NPU inference ran. | Matches the documented LiteRT runtime/dispatcher protocol mismatch: the last release that ships `litert_npu_runtime_libraries.zip` is v2.1.1, and its dispatcher does not register with the pinned `litert:2.1.5` runtime, so the AOT G5 model's `DISPATCH_OP` kernel is unresolved. No compatible Tensor-G5 dispatch/runtime pairing is available here; recorded UNAVAILABLE, not INT8, and not a CPU fallback. |
+
+### Parakeet CTC accuracy (local Whisper pseudo-reference)
+
+The sample tokenizer JNI is now linked, so the corpus run decodes token IDs to
+text and the M25 `SpeechQualityScorer` computes WER/CER against a local, offline
+Whisper (`small.en`, faster-whisper, CPU) pseudo-reference. The reference is a
+machine transcript, not human-reviewed gold: a WER here is agreement with that
+reference.
+
+- Run commit: `fd39960` (tokenizer JNI + WER harness). Device: Pixel 10
+  (`frankel`), Tensor G5, Android 17 / API 37, build `CP3A.260905.009`.
+- Model: Parakeet CTC 0.6B INT8 (`3d0799f6…e102`), CPU-only allowlist, features
+  computed on-device with the sample's log-Mel front end. Full corpus of 12
+  `eng-*` WAV fixtures; on-device preprocess + encode ≈ 320-520 ms per clip.
+- All 12 clips produced text. The model window is 5 s, so prompts longer than the
+  window are truncated; the full-corpus WER is dominated by truncation, not
+  recognition error. The scored clips:
+
+| Clip | Audio | Ref words | WER | CER | Note |
+| --- | --- | --- | --- | --- | --- |
+| eng-000072-0011eab3 | 4.23 s | 7 | 0.000 | 0.000 | in window; word-perfect |
+| eng-000251-003ab093 | 2.45 s | 5 | 0.000 | 0.000 | in window; word-perfect |
+| eng-000112-001d218c | 7.18 s | 10 | 0.200 | 0.119 | truncated tail |
+| eng-000004-00021667 | 5.51 s | 10 | 0.300 | 0.125 | marginal; trailing repeats dropped |
+| eng-000129-002077dd | 4.31 s | 5 | 0.400 | 0.029 | in window; hyphenation split |
+| eng-000016-00043f22 | 10.12 s | 29 | 0.517 | 0.492 | truncated |
+| eng-000001-000081dd | 12.97 s | 30 | 0.567 | 0.600 | truncated |
+| eng-000058-000ee09a | 13.33 s | 32 | 0.594 | 0.606 | truncated |
+| eng-000031-0007fc28 | 14.70 s | 30 | 0.700 | 0.693 | truncated |
+| eng-000017-00054cf4 | 4.91 s | 5 | 0.800 | 1.000 | in window; `$2,500` vs "two thousand five hundred" formatting, not misrecognition |
+
+The five clips that fit the window (2.45-4.91 s) score WER 0.00, 0.00, 0.20,
+0.40, 0.80 — with the 0.80 case a number-formatting convention rather than an
+acoustic error. Parakeet CTC is a strong candidate for short, in-window
+utterances; long prompts need windowing/merge (beyond this 5 s spike).
+
+### Parakeet TDT-CTC 110M accuracy (same pseudo-reference)
+
+The sherpa-onnx 110M candidate already exported a hypothesis sidecar in its
+offline replay run (see the run log above); the later `ec192cd` change scores it
+against the identical local Whisper references with the same M25
+`SpeechQualityScorer`. No new device run was made.
+
+- Model: `parakeet-tdt-ctc-110m-int8` (sherpa-onnx, offline batch, INT8), CPU.
+- The full corpus is scored for every clip whose sidecar transcript is not
+  sentence-truncated. Ten clips qualify; the two `Walking*` M4A recordings
+  (~22.7 s / ~31.4 s) are cut off mid-sentence, so their WER is not meaningful.
+
+| Clip | Audio | Ref words | WER | CER | Note |
+| --- | --- | --- | --- | --- | --- |
+| eng-000016-00043f22 | 10.12 s | 29 | 0.000 | 0.000 | full phrase, word-perfect |
+| eng-000112-001d218c | 7.18 s | 10 | 0.000 | 0.000 | word-perfect |
+| eng-000251-003ab093 | 2.45 s | 5 | 0.000 | 0.000 | word-perfect |
+| eng-000001-000081dd | 12.97 s | 30 | 0.033 | 0.044 | "16" → "sixteen" only |
+| eng-000058-000ee09a | 13.33 s | 32 | 0.063 | 0.012 | dropped one word |
+| eng-000004-00021667 | 5.51 s | 10 | 0.100 | 0.042 | trailing repeats differ |
+| eng-000031-0007fc28 | 14.70 s | 30 | 0.100 | 0.033 | "misplayed" → "misplayed" |
+| eng-000072-0011eab3 | 4.23 s | 7 | 0.143 | 0.063 | "coverage for contact messes" |
+| eng-000129-002077dd | 4.31 s | 5 | 0.400 | 0.029 | hyphen split and a merge |
+| eng-000017-00054cf4 | 4.91 s | 5 | 1.000 | 1.045 | `$2,500` vs "two thousand five hundred" |
+
+Unlike the 5 s-window CTC spike, the 110M offline recognizer sees the whole
+phrase, so long prompts are no longer truncated. The two 1.00/0.40 rows are
+number-formatting and tokenization conventions, not acoustic errors. Across the
+ten in-window clips the mean WER is 0.184 and the median is 0.081. This is still
+agreement with a machine pseudo-reference, not gold accuracy.
+
+### LiteRT Parakeet TDT feature parity and corpus run (R-0239 resolved)
+
+Tested source: `22766a7` on the Pixel 10 (`frankel`, Tensor G5), Android 17/API
+37, build `CP3A.260905.009`. The CPU-only frozen-feature control and corpus runs
+used LiteRT 2.1.5; the adjacent environment snapshot recorded thermal status 0,
+battery 28.2 C, USB power, and power-save off. The frozen TDT feature file was
+verified as 256,000 bytes with SHA-256
+`8434cd7f5cdfd562de7cb777b908ec07fa1307946b25fa7b095d13baeb1fd441`.
+
+The focused on-device parity test used `eng-000001-000081dd.wav` (16 kHz mono,
+the first five-second window). Before the fix, directly comparing the old
+frame-major output against the frozen mel-major tensor gave:
+
+| Front end | Raw flat max abs | Raw flat mean abs | Aligned max abs | Aligned mean abs | Edge mean abs | Interior mean abs |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Pure Kotlin | 5.9926624 | 1.1226038 | 5.4071398 | 0.1306500 | 0.1595412 | 0.1294462 |
+| jlibrosa | 5.9926615 | 1.1226038 | 5.4071364 | 0.1306499 | 0.1595412 | 0.1294461 |
+
+The raw-flat columns expose the incorrect axis order. The aligned comparison
+shows the remaining feature mismatch was distributed through the tensor rather
+than being only an edge effect; mel bins 0/1/3 and frames 498/499 held the largest
+errors.
+
+The inspected Parakeet feature configuration is 16 kHz, `n_fft=512`,
+`win_length=400`, `hop_length=160`, 128 mel bins, Hann with `periodic=false`,
+constant center padding, Slaney mel scale with Slaney area norm, `fmin=0`,
+`fmax=8000`, power 2, log-add guard `2^-24`, preemphasis 0.97 (first sample
+unchanged), and per-mel sample-standard-deviation normalization with `1e-5`
+epsilon. The TDT tensor is mel-major `[1,128,500]`. The frozen file's last frame
+is exactly zero in every mel bin: its feature window contains **499 valid hops**
+(79,840 samples / 4.99 s) and one zero-padded frame. The old path instead used
+`transpose=true`, a 512-sample periodic Hann/reflect padding, and 500 valid
+frames. The corrected `LogMelConfig.parakeetTdt()` uses the matching layout,
+window, padding, and valid-frame limit; `SampleMelProcessor` remains available
+for the CTC/sample comparison but is not selected for TDT.
+
+Official configuration references inspected 2026-10-02:
+[Hugging Face `ParakeetFeatureExtractor`](https://github.com/huggingface/transformers/blob/main/src/transformers/models/parakeet/feature_extraction_parakeet.py)
+and [NeMo `FilterbankFeatures`](https://github.com/NVIDIA/NeMo/blob/main/nemo/collections/asr/parts/preprocessing/features.py).
+
+After the fix, the same on-device parity test measured **max abs `0.0002205372`**
+and **mean abs `0.0000006845`**, below the `1e-3` target. The worst coordinate was
+frame 248 / mel 0; edge-frame mean abs was `0.000000387` and interior mean abs
+was `0.000000697`. The frozen-feature control still completed with 23 TDT tokens
+and decoded text (`hasTranscript=true`), proving the reference model/decoder
+path remained healthy.
+
+The on-device corpus test completed 10 clips in two consecutive runs of the
+committed source with matching per-clip token counts. TDT emitted text for 9/10;
+all four clips that fit the 5 s feature window emitted text:
+
+| Clip | Audio duration | TDT tokens | Local Whisper pseudo-ref WER | CER |
+| --- | ---: | ---: | ---: | ---: |
+| `eng-000017-00054cf4` | 4.91 s | 14 | 0.200 | 0.136 |
+| `eng-000072-0011eab3` | 4.23 s | 14 | 0.143 | 0.063 |
+| `eng-000129-002077dd` | 4.31 s | 11 | 0.400 | 0.400 |
+| `eng-000251-003ab093` | 2.45 s | 7 | 0.000 | 0.000 |
+
+Mean in-window agreement was WER `0.186` / CER `0.150` (`n=4`). These are
+scores against unreviewed local Whisper pseudo-references, not human accuracy.
+Five of the six longer clips also emitted text from the initial 4.99 s:
+`eng-000001-000081dd`, `eng-000004-00021667`, `eng-000016-00043f22`,
+`eng-000031-0007fc28`, and `eng-000058-000ee09a`. The 7.18 s
+`eng-000112-001d218c` clip returned zero tokens. Long-clip outputs are truncated
+and are not scored. This bounded-window result is separate from the feature-parity
+resolution.
+
+Exact device commands and logcat filters are in [Tests.md](../Tests.md#r-0239--tdt-feature-parity-and-corpus-verification).
+Content-free logcat captures are local under
+`C:\Users\genei\AppData\Local\Temp\opencode\r0239-*.log`; no audio or transcript
+text was copied into this report. The WER harness command was
+`.\gradlew.bat :app:testDebugUnitTest --tests com.voicechat.agent.eval.litert.LiteRtWerHarnessTest --rerun-tasks --console=plain`
+with `JAVA_TOOL_OPTIONS` selecting the Git-ignored TDT hypotheses, local Whisper
+references, and a 5 s clip-duration filter; it passed and wrote
+`build/r0239-wer-22766a7.csv`.
+
+### Tokenizer JNI and WER harness (new tooling)
+
+- `scripts/litert-tokenizer-jni/` — a tracked JNI shim (its own C++ symbol names)
+  linking the pinned sample's prebuilt `libtokenizers_c.a`.
+- `scripts/build-tokenizer-jni.sh` — builds `libtokenizer_jni.so` (arm64-v8a)
+  into the Git-ignored `models/` tree; the debug APK ships it only when present.
+- `scripts/fetch-jlibrosa.sh` — fetches and repackages the sample's jlibrosa JAR
+  (strips its bundled junit/maven classes so it does not collide with test deps).
+- `scripts/local-whisper-reference.sh` — offline local Whisper transcription
+  (faster-whisper, CPU, ffmpeg decode) producing Git-ignored pseudo-references.
+- `scripts/run-litert-wer.ps1` — scores local hypotheses against references with
+  the M25 `SpeechQualityScorer`.
+- On-device: `LiteRtParakeetCorpusInstrumentedTest` (preprocess + transcribe) and
+  `LiteRtParakeetComparisonInstrumentedTest` (single-window, now with tokenizer
+  text); `LogMelSpectrogram` (pure Kotlin) and `SampleMelProcessor` (jlibrosa).
+
+Inputs are local and Git-ignored: `test_data/litert-asr-wer/` (hypotheses,
+references, `cases.csv`) and `models/litert-asr/{tokenizer-jni,jlibrosa}/`. No
+audio, transcript, or model binary is committed.
+
+## LiteRT setup checkpoints
+
+| Date | Source commit | Change description | Environment / outcome | Timing and accuracy |
+| --- | --- | --- | --- | --- |
+| 2026-10-02 | dd857417a2ee1894cfdc8e0937858a9378293367 | Pinned the LiteRT speech sample source revision and added a Linux/WSL isolated conversion environment with a CPU-only PyTorch wheel. | WSL2 Ubuntu, CPython 3.12.3. Pinned sample source: 07d62e59e235274425863262918eb8794482662c. Shell syntax and source checkout checks passed. Pinned package installation is still running; no ASR model weights were requested. Android preflight found zero connected devices. OPENAI_API_KEY was absent, so no Walking audio was uploaded. | No model conversion, device inference, timing, or accuracy measurement yet. |
+| 2026-10-02 | 95ff477b7a4ddcf8267b1762e7d840b9bc2dfd3a | Added guarded wrappers for the sample-listed converter models and a separate Whisper Small extension; documented WSL-native venv override and the sample’s non-FP16/non-static-INT8 quantization limits. | WSL2 Ubuntu, CPython 3.12.3; pinned sample source checkout matches 07d62e59e235274425863262918eb8794482662c. Shell syntax and wrapper help passed. `pip check` reported no broken requirements, but the first converter CLI invocation failed at import with `ModuleNotFoundError: No module named 'absl'`; setup was incomplete and is being retried. `adb devices -l` listed zero devices. | No model conversion, device inference, latency, or accuracy result. No API request or audio upload. |
+| 2026-10-02 | 98d5dfc7c9fc4fe74a2eadf0b3186b3bc48bbd97 | Completed the CPU-only conversion environment in WSL-native `/tmp/litert-asr-venv`; converter help/import succeeded. First five-second Moonshine Tiny conversion attempt exposed a wrapper path check that rejected a not-yet-created output directory; corrected in `8461ca976f2cab28fe000513353a3b0fcf29705d`. | WSL2 Ubuntu, CPython 3.12.3, torch 2.13.0+cpu, litert-torch 0.9.4, pinned sample commit 07d62e59e235274425863262918eb8794482662c. `pip check` passed. The conversion stopped before downloading model weights or creating an artifact. | No model artifact, conversion time, inference timing, or accuracy result. No device or API request. |
+| 2026-10-02 | `8461ca976f2cab28fe000513353a3b0fcf29705d` (conversion run HEAD `de7bc8fb1aecf4eb7a905b7edadc19a266621a0f`; docs-only after code) | Converted and LiteRT-loaded a five-second Moonshine Tiny FP32 sample artifact after fixing new-output path validation. | WSL2 Ubuntu, CPython 3.12.3, CPU-only PyTorch 2.13.0+cpu; LiteRT Torch 0.9.4; pinned sample 07d62e59e235274425863262918eb8794482662c. The CLI converted `UsefulSensors/moonshine-tiny`, resolved HF revision `390624ed33d594443aa4aa221f5b9f283b545b5a`, input `test_data/eng-000001-000081dd.wav` at 16 kHz/5 s, output 109,330,616 bytes, SHA-256 `c4f4735852d4a8de1003431c43a253376c4c91ee19713778a07bd0a446c7e930`. LiteRT Python loaded `encode` and `decode` signatures; no inference was run. | Converter reported 22 s in its graph-conversion stage only; this is not model inference latency. No phone, backend benchmark, accuracy result, or API upload. |
+| 2026-10-02 | `96f5bd8daa5a06fb37c7db3a70e92e54d723ec65` (conversion run HEAD; later evaluation-doc-only commit) | Converted and LiteRT-loaded a five-second Whisper Tiny FP32 sample artifact. | WSL2 Ubuntu, CPython 3.12.3, CPU-only PyTorch 2.13.0+cpu; LiteRT Torch 0.9.4; pinned sample 07d62e59e235274425863262918eb8794482662c. The CLI converted `openai/whisper-tiny`, resolved HF revision `169d4a4341b33bc18d8881c4b69c2e104e1cc0af`, using `test_data/eng-000001-000081dd.wav` at 16 kHz/5 s. Output is 150,848,568 bytes, SHA-256 `76787da04065c1bf39a36b42b4e5e6c8e0a730c43d0b4e08ed1d30b9d673c9ba`; LiteRT Python loaded `encode` and `decode` signatures, without inference. | Converter reported 14 s in its graph-conversion stage only; this is not inference latency. ADB still lists no device and `OPENAI_API_KEY` is absent. No device timing, accuracy, or API upload. |
+| 2026-10-02 | `43e8b4ec0cca773a3c7c7a949dc28cb430aed8b2` | Added a test-only LiteRT 2.1.5 Moonshine Tiny CPU instrumentation spike, sample-compatible PCM window reader/decoder, and app-private staging helper. Also added an exhaustive `SelectedVoiceUnavailable` test branch to unblock the existing Android TTS test compile; production TTS is unchanged. | Windows Gradle validation: `.\gradlew.bat spotlessCheck :app:assembleDebugAndroidTest --console=plain` passed. The Android SDK's `adb devices -l` returned no attached devices. The staged-input path and CPU inference test were not run. | No model inference timing, transcript, or accuracy result. Requested/observed backend and runtime placement are unmeasured until the test runs on a device. |
+| 2026-10-02 | `49ba463316e028ec1d81cdacd69f4845520c34fc` | Added `FLOAT_CASTING` FP16-weight and calibrated `static_wi8_ai8` artifact tooling, signature/operator audits, and local temporary Walking-audio preparation. | WSL2 Ubuntu, CPython 3.12.3, AI Edge Quantizer 0.9.0, pinned sample `07d62e59e235274425863262918eb8794482662c`. Source was `UsefulSensors/moonshine-tiny@390624ed33d594443aa4aa221f5b9f283b545b5a`, FP32 artifact 109,330,616 B, SHA-256 `c4f4735852d4a8de1003431c43a253376c4c91ee19713778a07bd0a446c7e930`. FP16-weight output: 55,271,072 B, SHA-256 `59a3701c307eb0d6ec6d3dc40654b8de3a3c66d67647cd43c25f2aa941d39826`; 100 FP16 constant tensors; signatures `encode`/`decode` preserved; FP32 arithmetic and public I/O. No FP16 inference/MSE was measured. Static INT8 output: 67,207,248 B, SHA-256 `d555fef2e44aab24dfd391b1d0b1af371a36a9cd345f95fff15f652dc62ac37a`; two five-second calibration windows, one each from the user-described `Walking .m4a` (source SHA-256 `c39124643479d97387167489849b8d7fc7e6b68c537c7103064a242780fb2fd4`, local 16 kHz mono PCM derivative SHA-256 `cd0c2a8bcef6cf0f3a36d6da9bfe84b9fe053074bb03854a6c5fe3d62d64ac36`) and `Walking headphones .m4a` (source SHA-256 `f36b011e4d4ee5d8b65173db082e54372578328186226b1268911950d50999ab`, derivative SHA-256 `16e3d9254f2860dabebcc50d840671a61b353a4e814ca64b70db0ef6cea63c43`). FFmpeg 6.1.1 decoded/resampled only into `/tmp`; source audio was not modified or uploaded. Exact named-signature input shapes/dtypes validated for `encode` and `decode`; each had two CPU comparisons after external INT8 quantize/dequantize. Graph audit found 899/1,767 internal numeric operator outputs INT8 (50.88%) and 868 still FP32, so this is a partial exploratory artifact, not a full INT8 or NPU candidate. An earlier probe using two unmanifested top-level WAV fixtures was superseded; their provenance/license remains unresolved under R-0037 and they were not used for this final calibration. | No latency, GPU/NPU placement, transcript, WER/CER, or endpoint accuracy result. CPU signature-output MSE on the two Walking calibration clips: `encode` 0.096388 (max abs error 3.14836; 119,232 values) and `decode` 6.93100 (max abs error 30.09169; 4,194,304 values); these are graph-level numeric differences, not speech accuracy. FP16 output error is unmeasured. `adb devices -l` printed only `List of devices attached`; no phone is connected. `OPENAI_API_KEY` was absent in both Windows and WSL, so no endpoint request or audio upload occurred. |
+| 2026-10-02 | `3c277877913d2a22e4ed7e3bbaa50a81b65c8266` (harness code at `43e8b4ec0cca773a3c7c7a949dc28cb430aed8b2`) | First successful on-device execution of the staged LiteRT CPU spike on the connected Pixel 10: built/installed the debug + androidTest APKs, staged the verified Moonshine Tiny FP32 artifact and WAV via `scripts/stage-litert-asr-inputs.sh`, and ran `am instrument` for `LiteRtSpeechCpuInstrumentedTest` (four cold repeats). | Windows Gradle `:app:installDebug :app:assembleDebugAndroidTest` succeeded; the WSL staging script's device-count probe misread the CRLF-terminated `adb devices` output and needed `SERIAL` set. Pixel 10 reported as `57220DLCR002R6`/`frankel`, Tensor G5, Android 17/API 37. Observed backend CPU with a CPU-only allowlist. | Four independent cold single-window runs: encode 111-113 ms, decoder total 1343-1363 ms, encode+decode 1,454-1,475 ms, load 80-99 ms. No transcript or accuracy (tokenizer JNI not linked). Full row in the LiteRT run record. |
+| 2026-10-02 | `cd1f77db1446585c652079f2cea7d6e4a8c21640` | Added a tracked compatibility shim (`scripts/litert_asr_parakeet_compat.py`) that patches only the Parakeet CTC encoder forward for the transformers 5.18 `ParakeetEncoderCTCHead` contract and then runs the pinned sample converter unchanged; routed `parakeet-ctc`/`parakeet-tdt` through it in `convert-litert-asr-sample.sh`. The downloaded sample was not edited. | WSL2 Ubuntu, CPython 3.12.3, transformers 5.18.0, torch 2.13.0+cpu, litert-torch 0.9.4, pinned sample 07d62e59e235274425863262918eb8794482662c. The original failure was `RuntimeError: expected input[1, 163, 1024] to have 1024 channels` from double-transposing at the CTC head; the shim pass returns encoder output `(1, 63, 1025)`. Converted Parakeet CTC 0.6B FP32 at a 5 s window: output 2,348,590,064 B, SHA-256 `eb0c88f17838bc2c7c8fecda5e01050103bb6310e26baefb130c15c590e0bc62`; host `encode` signature input `(1, 500, 80)` float32, output `(1, 63, 1025)`. A host encode with zero input ran in 14.064 s on WSL CPU with no non-finite values (this is a host graph-execution check, not device latency or accuracy). | No device inference, backend placement, transcript, or accuracy. The FP32 artifact is ~2.35 GB, so device staging/RAM is a separate gate. |
+| 2026-10-02 | n/a (blocked before conversion) | Attempted Parakeet TDT conversion (`nvidia/parakeet-tdt-0.6b-v3`). | The sample's `ParakeetTDT` wrapper imports `nemo.collections.asr`; `nemo_toolkit` is not installed in the isolated conversion venv (confirmed `pip list` shows no `nemo` package). The failure occurs at import, before any weights are downloaded, so no TDT artifact was produced. | No TDT artifact, conversion time, device inference, or accuracy. Exact missing component: `nemo_toolkit` (NeMo ASR) in the pinned environment. |
+| 2026-10-02 | conversion run (docs-only update; converter code at `cd1f77db1446585c652079f2cea7d6e4a8c21640`) | Converted the sample-compatible 30-second Whisper Tiny and the Whisper Small extension (`scripts/litert_asr_whisper_small_converter.py`), both FP32 with the pinned sample contracts. | WSL2 Ubuntu, CPython 3.12.3, torch 2.13.0+cpu, litert-torch 0.9.4, transformers 5.18.0. Whisper Tiny 30 s: 151,149,520 B, SHA-256 `6e160e3b992a7af2adab32c0d4942aec417698b83d77e456339fe1c89fff50ed`. Whisper Small 30 s: 967,516,352 B, SHA-256 `157f637fafbc6a2fef9e5c81c33d3a478d9100b7e176da10cdfac3a791ed1b4a`. Host `encode` input `(1, 80, 3000)` float32 → output `(1, 1500, 384)` (Tiny) and `(1, 1500, 768)` (Small); `decode` inputs encoder + tokens `(1, 256)` int32 + causal mask `(1, 1, 256, 256)`. Host zero-input encode ran in 0.962 s (Tiny) and 6.099 s (Small) on WSL CPU. | No device inference, backend placement, transcript, or accuracy. These are host graph checks, not device latency or recognition quality. |
+| 2026-10-02 | `a1b4a68583a45eee9ff1a1689835cbc82a66e48e` | Added a test-only GPU instrumentation spike with a GPU-only accelerator allowlist and no CPU entry, generalized the sample runner to accept an accelerator set, and extended staging to install the FP16-weight artifact. Ran both FP16 and FP32 candidates on the Pixel 10. | Windows Gradle `spotlessApply :app:assembleDebugAndroidTest` passed; CPU test re-run passed after the runner refactor. GPU: NPU did not register; GPU loaded but used OpenGL (no OpenCL); both artifacts failed at `delegate_opengl.cc:218 Shader compilation failed` and the compiled model was not created. | No GPU timing or accuracy; both lanes are FAILED with placement UNKNOWN. Full row in the LiteRT run record. |
+| 2026-10-02 | `ad8501998f1b81e3401291ce9dd88c6f20998bb8` | Added `scripts/litert_asr_dump_features.py` (host extraction with the pinned sample's own `TransformersProcessor`), renamed the runner to `SampleAsrRunner` with metadata-driven start/stop tokens (Moonshine 1/2, Whisper 50258/50257), and added a test-only Whisper CPU spike that consumes frozen host features. Extended staging with an opt-in `STAGE_WHISPER=1` set. | Host feature dumps: Whisper 30 s `(1, 80, 3000)` float32, 960,000 B, SHA-256 `9a92bc4e39afec7e170daa22ea67fbf1325b0e10b09ed187280e463982ca0a62` (Tiny and Small share the mel front-end); Parakeet CTC 5 s `(1, 500, 80)` float32, 160,000 B, SHA-256 `647222dfb72e123aedbd8a4244079b779af94a4184d6aa3c63ab1ec506b8c460`. Gradle build and formatting passed; staging of the Whisper set succeeded. | Device timing for the Whisper spike is now recorded in the LiteRT run record (Tiny and Small, CPU, decode capped at 16 steps); preprocessing is host-side, so those are model-graph timings only. |
+| 2026-10-02 | `74c57d2a8610287032c4ec23128089ab0b157145` | Post-benchmark cleanup. Removed the experimental Whisper implementation: on the primary checkout `I:\Android_Projects\VoiceChat` (branch `optimization/voice-latency`) deleted the untracked `WhisperSmallOfflineReplayInstrumentedTest.kt` and the `fetch-`/`push-whisper-small-candidate.ps1` scripts; on this branch deleted the test-only `LiteRtSpeechWhisperInstrumentedTest.kt` and `scripts/litert_asr_dump_features.py`, removed the `STAGE_WHISPER` staging block, and reverted the runner to `SampleMoonshineRunner`. The Whisper conversion script and the recorded results were kept. | Windows Gradle `spotlessCheck :app:assembleDebugAndroidTest` passed after the revert. The primary checkout remains otherwise dirty and was not touched beyond the three authorized untracked deletions; its tracked `scripts/run-stt-paced-replay.ps1` still has `-Engine WhisperSmall` wiring and was left as-is. | No change to any measured value; the Whisper Tiny/Small device rows and all conversion hashes remain in the run record and setup checkpoints above. |
+| 2026-10-02 | `6851321b35382521e2144c6ada3e18c8e8561dcf` | Reduced the Parakeet CTC 0.6B artifact with `scripts/quantize-litert-asr-artifact.sh`: FLOAT_CASTING FP16 weights and a calibrated `static_wi8_ai8` INT8 path, applying the tracked CTC compat shim during INT8 calibration. | WSL2 Ubuntu, CPython 3.12.3, AI Edge Quantizer 0.9.0, pinned sample `07d62e59e235274425863262918eb8794482662c`. Source FP32 2,348,590,064 B, SHA-256 `eb0c88f17838bc2c7c8fecda5e01050103bb6310e26baefb130c15c590e0bc62`. **FP16:** 1,182,980,304 B (50.37% of FP32), SHA-256 `9bd270e90ffbd4d507eddd66a93be22cc7e084aa689fe498c5a2ad3a59720106`, 271 FP16 constant tensors, `encode` signature and public I/O dtypes preserved; FP16 inference error unmeasured. **INT8:** 601,453,712 B (25.61% of FP32), SHA-256 `ec639b2631832eb947571a8f6ef8abf75050d6c5b1ac04757975a270fdbf87ed`, 392 INT8 constant tensors, `encode` only; internal INT8 operator-output coverage 1,554/3,931 = 39.53%, so `PARTIAL_OR_FLOAT_FALLBACK`; public I/O INT8; CPU encode-output MSE 366.19 (max abs 42.85) across the two calibration windows. Calibration used the same two local `Walking*` derivatives as the Moonshine run. | No device inference, backend placement, transcript, or accuracy. This is a size reduction only: the INT8 artifact remains a partial exploratory graph, not a full-INT8 or NPU candidate, and the INT8/FP16 numeric checks are graph comparisons, not WER/CER. |
+| 2026-10-02 | `1ea196682c669270750406a491a98eef652d5c8e` | Fixed the Parakeet TDT decoder stride: removed the extra `/ NUM_DURATIONS` from `logitsPer` in `ParakeetRunner.tdt()` (6 → 8198), which had made the token/duration argmax windows empty and stalled the decoder. | Windows Gradle `:app:installDebug :app:assembleDebugAndroidTest` passed; Pixel 10 instrumentation `LiteRtParakeetComparisonInstrumentedTest` passed (1 test). Inputs staged from WSL with `stage-litert-asr-inputs.sh STAGE_PARAKEET=1`, using the Windows `adb.exe` because the WSL `adb` server could not see the USB device. | Full TDT/CTC CPU run recorded above; token IDs only, no transcript or accuracy. |
+| 2026-10-02 | `ed504d8f6298057099b95f51ea242e152bf11969` | Added GPU support to `ParakeetRunner` (accelerator allowlist, GPU options, advertised-accelerator query) and a `LiteRtParakeetGpuInstrumentedTest` that probes the CTC and TDT INT8 artifacts on a GPU-only allowlist. | Windows Gradle `spotlessCheck :app:installDebug :app:assembleDebugAndroidTest` passed; Pixel 10 instrumentation passed (1 test). Both lanes `INFERENCE_FAILED`, placement UNKNOWN. | GPU row recorded above; no GPU timing or accuracy. |
+| 2026-10-02 | `cfa1111b4a093fe9620aef8251c45a125c5b2140` | Added `scripts/fetch-litert-npu-runtime.sh` (pinned v2.1.1 Tensor-G5 dispatch library, size+sha256 verified), a debug-only jniLibs opt-in plus debug-only `useLegacyPackaging`, `STAGE_PARAKEET_NPU` staging, and `LiteRtParakeetNpuInstrumentedTest` for the upstream F32 G5 AOT artifact. | Windows Gradle `spotlessApply spotlessCheck :app:installDebug :app:assembleDebugAndroidTest` passed; the debug APK ships `lib/arm64-v8a/libLiteRtDispatch_GoogleTensor.so`; Pixel 10 instrumentation passed (1 test). NPU accelerator did not register; `DISPATCH_OP` unresolved. | NPU row recorded above; artifact is F32 (not INT8); no NPU timing or accuracy. |
+| 2026-10-02 | `ec192cd` (docs-only; no source change) | Added a `docs/voice-latency-results.md` section that scores the 110M sherpa-onnx hypothesis sidecar against the same local Whisper pseudo-reference. | Pixel 10 (`frankel`), Android 17/API 37, build `CP3A.260905.009`. Model: Parakeet TDT-CTC 110M INT8, sherpa-onnx 1.13.8 offline batch. Reuses the existing `parakeet-110m-int8--*.hypothesis.txt` sidecar (run `0edf380`) — no new device run; device conditions were not resampled. | 10/12 clips produced in-window full-phrase text with no truncation: WER 0.033/0.100/0.000/0.143/0.100/0.063/0.000/0.400/0.000/1.000. The two >16 s outdoor clips are sentence-truncated in the sidecar and were not scored. No new latency. | WER is agreement with a machine pseudo-reference, not human-reviewed gold. The 1.00 row is the `$2,500`↔"two thousand five hundred" number-formatting convention (S/D/I 2/0/3), not misrecognition; combined with the 0.40 `self-cleaning`→"self cleaning" repeat, exact word tokens already match on ≤5-word clips. No transcript text copied here. |
+| 2026-10-02 | `fd39960` | Linked the sample tokenizer JNI (tracked JNI shim + build script), decoded token IDs to text on-device, added the on-device Parakeet corpus runner, a pure-Kotlin log-Mel port plus a jlibrosa-backed variant, a Git-ignored local-Whisper reference script, and the host WER harness. | Windows Gradle `spotlessApply spotlessCheck :app:testDebugUnitTest :app:assembleDebugAndroidTest` passed; Pixel 10 corpus run transcribed all 12 clips with Parakeet CTC. Tokenizer JNI built with NDK 28.2 into `models/litert-asr/tokenizer-jni`. | CTC corpus WER recorded above; R-0239 TDT feature parity was subsequently resolved at `22766a7`; no committed audio/transcript/model. |
+| 2026-10-02 | `22766a7` | Matched the pure-Kotlin Parakeet TDT preprocessor to the frozen 499-valid-frame, mel-major tensor; added an on-device parity diagnostic and made it the TDT corpus default. | Pixel 10 (`frankel`), Android 17/API 37, LiteRT 2.1.5 CPU-only. `LiteRtParakeetFeatureParityInstrumentedTest`, frozen `LiteRtParakeetComparisonInstrumentedTest`, and two `LiteRtParakeetCorpusInstrumentedTest` runs passed. Frozen-control TDT: 23 tokens/text. Corpus: 9/10 TDT hypotheses, 4/4 in-window; all 10 CTC hypotheses still emitted text. | On-device feature parity max/mean abs `0.0002205372 / 0.0000006845` versus pre-fix raw-flat `5.9926624 / 1.1226038`; aligned pre-fix `5.4071398 / 0.1306500`. The four in-window TDT pseudo-reference rows are above (mean WER 0.186/CER 0.150); the reference is local Whisper, not human-reviewed. |

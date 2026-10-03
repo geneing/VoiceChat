@@ -15,12 +15,21 @@ import java.util.Locale
  * platform session honors it or reports the selected option unavailable — it
  * never silently substitutes another mode or voice.
  *
- * [ttsVoiceId] is carried for wiring; a device with no embedded voice still
- * surfaces the typed `TTS_NO_ON_DEVICE_VOICE`/initialization state (R-0180).
+ * [stt] is the **resolved** STT choice (which engine family and mode), computed
+ * from the runtime availability the app boundary read; `null` means "no
+ * preference, prefer the first available engine" for a caller that did not
+ * resolve. [ttsVoiceId] is carried for wiring; a device with no embedded voice
+ * still surfaces the typed `TTS_NO_ON_DEVICE_VOICE`/initialization state
+ * (R-0180).
  */
 data class VoiceRuntimeSelection(
     /** The selected STT mode, or `null` to prefer the first available mode. */
     val sttMode: SttMode? = null,
+    /**
+     * The resolved STT engine/error for this session, or `null` to resolve from
+     * [sttMode] against a fresh availability read at session start.
+     */
+    val stt: VoiceSttSelection? = null,
     /** STT/TTS locale; defaults to the single-engine default. */
     val locale: Locale = SttEngines.DEFAULT_LOCALE,
     /** The selected embedded TTS voice id, or `null` for the locale default. */
@@ -29,6 +38,9 @@ data class VoiceRuntimeSelection(
     init {
         require(locale.toLanguageTag().isNotBlank()) { "locale must have a non-blank language tag" }
     }
+
+    /** True when the resolved selection actually names a ready engine. */
+    val hasReadyStt: Boolean get() = stt is VoiceSttSelection.Ready
 
     companion object {
         /** The honest default: no mode/voice preference, the engine default locale. */
