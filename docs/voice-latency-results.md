@@ -179,12 +179,81 @@ number-formatting and tokenization conventions, not acoustic errors. Across the
 ten in-window clips the mean WER is 0.184 and the median is 0.081. This is still
 agreement with a machine pseudo-reference, not gold accuracy.
 
-Parakeet TDT did **not** produce text over the corpus: its stateful decoder is
-sensitive to the log-Mel statistics, and the on-device front end (both the pure
-Kotlin port and the pinned jlibrosa JAR) differs from the frozen
-`parakeet-tdt-features-5s.f32` by ~5 (max abs). TDT does decode the frozen file,
-so this is a preprocessing-parity gap, tracked as R-0239, not a decoder bug. No
-TDT WER is claimed.
+### LiteRT Parakeet TDT feature parity and corpus run (R-0239 resolved)
+
+Tested source: `22766a7` on the Pixel 10 (`frankel`, Tensor G5), Android 17/API
+37, build `CP3A.260905.009`. The CPU-only frozen-feature control and corpus runs
+used LiteRT 2.1.5; the adjacent environment snapshot recorded thermal status 0,
+battery 28.2 C, USB power, and power-save off. The frozen TDT feature file was
+verified as 256,000 bytes with SHA-256
+`8434cd7f5cdfd562de7cb777b908ec07fa1307946b25fa7b095d13baeb1fd441`.
+
+The focused on-device parity test used `eng-000001-000081dd.wav` (16 kHz mono,
+the first five-second window). Before the fix, directly comparing the old
+frame-major output against the frozen mel-major tensor gave:
+
+| Front end | Raw flat max abs | Raw flat mean abs | Aligned max abs | Aligned mean abs | Edge mean abs | Interior mean abs |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Pure Kotlin | 5.9926624 | 1.1226038 | 5.4071398 | 0.1306500 | 0.1595412 | 0.1294462 |
+| jlibrosa | 5.9926615 | 1.1226038 | 5.4071364 | 0.1306499 | 0.1595412 | 0.1294461 |
+
+The raw-flat columns expose the incorrect axis order. The aligned comparison
+shows the remaining feature mismatch was distributed through the tensor rather
+than being only an edge effect; mel bins 0/1/3 and frames 498/499 held the largest
+errors.
+
+The inspected Parakeet feature configuration is 16 kHz, `n_fft=512`,
+`win_length=400`, `hop_length=160`, 128 mel bins, Hann with `periodic=false`,
+constant center padding, Slaney mel scale with Slaney area norm, `fmin=0`,
+`fmax=8000`, power 2, log-add guard `2^-24`, preemphasis 0.97 (first sample
+unchanged), and per-mel sample-standard-deviation normalization with `1e-5`
+epsilon. The TDT tensor is mel-major `[1,128,500]`. The frozen file's last frame
+is exactly zero in every mel bin: its feature window contains **499 valid hops**
+(79,840 samples / 4.99 s) and one zero-padded frame. The old path instead used
+`transpose=true`, a 512-sample periodic Hann/reflect padding, and 500 valid
+frames. The corrected `LogMelConfig.parakeetTdt()` uses the matching layout,
+window, padding, and valid-frame limit; `SampleMelProcessor` remains available
+for the CTC/sample comparison but is not selected for TDT.
+
+Official configuration references inspected 2026-10-02:
+[Hugging Face `ParakeetFeatureExtractor`](https://github.com/huggingface/transformers/blob/main/src/transformers/models/parakeet/feature_extraction_parakeet.py)
+and [NeMo `FilterbankFeatures`](https://github.com/NVIDIA/NeMo/blob/main/nemo/collections/asr/parts/preprocessing/features.py).
+
+After the fix, the same on-device parity test measured **max abs `0.0002205372`**
+and **mean abs `0.0000006845`**, below the `1e-3` target. The worst coordinate was
+frame 248 / mel 0; edge-frame mean abs was `0.000000387` and interior mean abs
+was `0.000000697`. The frozen-feature control still completed with 23 TDT tokens
+and decoded text (`hasTranscript=true`), proving the reference model/decoder
+path remained healthy.
+
+The on-device corpus test completed 10 clips in two consecutive runs of the
+committed source with matching per-clip token counts. TDT emitted text for 9/10;
+all four clips that fit the 5 s feature window emitted text:
+
+| Clip | Audio duration | TDT tokens | Local Whisper pseudo-ref WER | CER |
+| --- | ---: | ---: | ---: | ---: |
+| `eng-000017-00054cf4` | 4.91 s | 14 | 0.200 | 0.136 |
+| `eng-000072-0011eab3` | 4.23 s | 14 | 0.143 | 0.063 |
+| `eng-000129-002077dd` | 4.31 s | 11 | 0.400 | 0.400 |
+| `eng-000251-003ab093` | 2.45 s | 7 | 0.000 | 0.000 |
+
+Mean in-window agreement was WER `0.186` / CER `0.150` (`n=4`). These are
+scores against unreviewed local Whisper pseudo-references, not human accuracy.
+Five of the six longer clips also emitted text from the initial 4.99 s:
+`eng-000001-000081dd`, `eng-000004-00021667`, `eng-000016-00043f22`,
+`eng-000031-0007fc28`, and `eng-000058-000ee09a`. The 7.18 s
+`eng-000112-001d218c` clip returned zero tokens. Long-clip outputs are truncated
+and are not scored. This bounded-window result is separate from the feature-parity
+resolution.
+
+Exact device commands and logcat filters are in [Tests.md](../Tests.md#r-0239--tdt-feature-parity-and-corpus-verification).
+Content-free logcat captures are local under
+`C:\Users\genei\AppData\Local\Temp\opencode\r0239-*.log`; no audio or transcript
+text was copied into this report. The WER harness command was
+`.\gradlew.bat :app:testDebugUnitTest --tests com.voicechat.agent.eval.litert.LiteRtWerHarnessTest --rerun-tasks --console=plain`
+with `JAVA_TOOL_OPTIONS` selecting the Git-ignored TDT hypotheses, local Whisper
+references, and a 5 s clip-duration filter; it passed and wrote
+`build/r0239-wer-22766a7.csv`.
 
 ### Tokenizer JNI and WER harness (new tooling)
 
@@ -229,5 +298,5 @@ audio, transcript, or model binary is committed.
 | 2026-10-02 | `ed504d8f6298057099b95f51ea242e152bf11969` | Added GPU support to `ParakeetRunner` (accelerator allowlist, GPU options, advertised-accelerator query) and a `LiteRtParakeetGpuInstrumentedTest` that probes the CTC and TDT INT8 artifacts on a GPU-only allowlist. | Windows Gradle `spotlessCheck :app:installDebug :app:assembleDebugAndroidTest` passed; Pixel 10 instrumentation passed (1 test). Both lanes `INFERENCE_FAILED`, placement UNKNOWN. | GPU row recorded above; no GPU timing or accuracy. |
 | 2026-10-02 | `cfa1111b4a093fe9620aef8251c45a125c5b2140` | Added `scripts/fetch-litert-npu-runtime.sh` (pinned v2.1.1 Tensor-G5 dispatch library, size+sha256 verified), a debug-only jniLibs opt-in plus debug-only `useLegacyPackaging`, `STAGE_PARAKEET_NPU` staging, and `LiteRtParakeetNpuInstrumentedTest` for the upstream F32 G5 AOT artifact. | Windows Gradle `spotlessApply spotlessCheck :app:installDebug :app:assembleDebugAndroidTest` passed; the debug APK ships `lib/arm64-v8a/libLiteRtDispatch_GoogleTensor.so`; Pixel 10 instrumentation passed (1 test). NPU accelerator did not register; `DISPATCH_OP` unresolved. | NPU row recorded above; artifact is F32 (not INT8); no NPU timing or accuracy. |
 | 2026-10-02 | `ec192cd` (docs-only; no source change) | Added a `docs/voice-latency-results.md` section that scores the 110M sherpa-onnx hypothesis sidecar against the same local Whisper pseudo-reference. | Pixel 10 (`frankel`), Android 17/API 37, build `CP3A.260905.009`. Model: Parakeet TDT-CTC 110M INT8, sherpa-onnx 1.13.8 offline batch. Reuses the existing `parakeet-110m-int8--*.hypothesis.txt` sidecar (run `0edf380`) — no new device run; device conditions were not resampled. | 10/12 clips produced in-window full-phrase text with no truncation: WER 0.033/0.100/0.000/0.143/0.100/0.063/0.000/0.400/0.000/1.000. The two >16 s outdoor clips are sentence-truncated in the sidecar and were not scored. No new latency. | WER is agreement with a machine pseudo-reference, not human-reviewed gold. The 1.00 row is the `$2,500`↔"two thousand five hundred" number-formatting convention (S/D/I 2/0/3), not misrecognition; combined with the 0.40 `self-cleaning`→"self cleaning" repeat, exact word tokens already match on ≤5-word clips. No transcript text copied here. |
-| 2026-10-02 | `fd39960` | Linked the sample tokenizer JNI (tracked JNI shim + build script), decoded token IDs to text on-device, added the on-device Parakeet corpus runner, a pure-Kotlin log-Mel port plus a jlibrosa-backed variant, a Git-ignored local-Whisper reference script, and the host WER harness. | Windows Gradle `spotlessApply spotlessCheck :app:testDebugUnitTest :app:assembleDebugAndroidTest` passed; Pixel 10 corpus run transcribed all 12 clips with Parakeet CTC. Tokenizer JNI built with NDK 28.2 into `models/litert-asr/tokenizer-jni`. | CTC corpus WER recorded above; TDT blocked on feature parity (R-0239); no committed audio/transcript/model. |
-| 2026-10-02 | `fd39960` | Linked the sample tokenizer JNI (tracked JNI shim + build script), decoded token IDs to text on-device, added the on-device Parakeet corpus runner, a pure-Kotlin log-Mel port plus a jlibrosa-backed variant, a Git-ignored local-Whisper reference script, and the host WER harness. | Windows Gradle `spotlessApply spotlessCheck :app:testDebugUnitTest :app:assembleDebugAndroidTest` passed; Pixel 10 corpus run transcribed all 12 clips with Parakeet CTC. Tokenizer JNI built with NDK 28.2 into `models/litert-asr/tokenizer-jni`. | CTC corpus WER recorded above; TDT blocked on feature parity (R-0239); no committed audio/transcript/model. |
+| 2026-10-02 | `fd39960` | Linked the sample tokenizer JNI (tracked JNI shim + build script), decoded token IDs to text on-device, added the on-device Parakeet corpus runner, a pure-Kotlin log-Mel port plus a jlibrosa-backed variant, a Git-ignored local-Whisper reference script, and the host WER harness. | Windows Gradle `spotlessApply spotlessCheck :app:testDebugUnitTest :app:assembleDebugAndroidTest` passed; Pixel 10 corpus run transcribed all 12 clips with Parakeet CTC. Tokenizer JNI built with NDK 28.2 into `models/litert-asr/tokenizer-jni`. | CTC corpus WER recorded above; R-0239 TDT feature parity was subsequently resolved at `22766a7`; no committed audio/transcript/model. |
+| 2026-10-02 | `22766a7` | Matched the pure-Kotlin Parakeet TDT preprocessor to the frozen 499-valid-frame, mel-major tensor; added an on-device parity diagnostic and made it the TDT corpus default. | Pixel 10 (`frankel`), Android 17/API 37, LiteRT 2.1.5 CPU-only. `LiteRtParakeetFeatureParityInstrumentedTest`, frozen `LiteRtParakeetComparisonInstrumentedTest`, and two `LiteRtParakeetCorpusInstrumentedTest` runs passed. Frozen-control TDT: 23 tokens/text. Corpus: 9/10 TDT hypotheses, 4/4 in-window; all 10 CTC hypotheses still emitted text. | On-device feature parity max/mean abs `0.0002205372 / 0.0000006845` versus pre-fix raw-flat `5.9926624 / 1.1226038`; aligned pre-fix `5.4071398 / 0.1306500`. The four in-window TDT pseudo-reference rows are above (mean WER 0.186/CER 0.150); the reference is local Whisper, not human-reviewed. |
