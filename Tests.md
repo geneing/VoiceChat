@@ -1228,6 +1228,40 @@ What the JVM suite proves (details in the linked document):
 device-testing policy it is compiled only, and it is a structural smoke check
 with inline fakes, not a voice-quality or timing measurement.
 
+### Parakeet-EOU full path, file-driven (run on Pixel 10, 2026-10-03)
+
+The complete `capture → VAD/onset → Parakeet-EOU STT → provider LLM → on-device
+TTS` path was run on a physical Pixel 10 with the UI in the foreground and the
+talk control tapped. Audio came from a staged 16 kHz mono PCM16 WAV through the
+debug-only `DebugFileAudioInput` (selected when `files/debug-audio/input.wav`
+exists; release ignores it), so no live speech was needed. Observed in logcat:
+
+```
+vad: SPEECH_STARTED reason=ONSET_RMS at=40ms
+vad: turn held reason=SEMANTIC_INCOMPLETE at=13588ms   # EOU corroborator, mid-turn
+vad: turn endpointed reason=SILENCE_CAP at=15588ms
+stt: parakeet session end outcome=COMPLETED frames=777 chunks=25 dropped=0 chars=193
+orchestration: turn start source=VOICE provider=opencode-go model=longcat-2.5-preview-free
+llm: request provider=opencode-go model=… streaming=true
+tts: synthesis start chars=… voice=en-us-x-tpf-local
+```
+
+The dialog showed the user bubble (recognized transcript), the streaming
+assistant bubble, and the `Speaking…` state. This proves the wiring and
+truthfulness of the path, **not** recognition accuracy; accuracy and per-chunk
+decode timing remain unmeasured (R-0240/R-0241).
+
+```powershell
+# Installs the debug APK, stages the WAV (and an optional developer credential),
+# taps the talk control, and writes a logcat capture plus screenshots.
+.\scripts\run-parakeet-eou-voice-loop.ps1 `
+  -InputPath "test_data/eng-000058-000ee09a.wav" -ListenSeconds 45
+```
+
+The decoder-only streaming replay (`ParakeetEouReplayInstrumentedTest`, steps 1-2
+above) is unchanged and is driven by `scripts/run-parakeet-eou-replay.ps1`; see
+[docs/parakeet-eou-streaming.md](./docs/parakeet-eou-streaming.md).
+
 ### Pixel 10 checks (marked NOT run)
 
 **Device testing is deferred for M24; none of the following was run.** The

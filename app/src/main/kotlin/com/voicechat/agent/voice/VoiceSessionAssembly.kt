@@ -2,6 +2,7 @@ package com.voicechat.agent.voice
 
 import android.content.Context
 import com.voicechat.agent.audio.MicrophoneAudioCapture
+import com.voicechat.agent.contracts.AudioInput
 import com.voicechat.agent.contracts.ConversationRepository
 import com.voicechat.agent.contracts.DiagnosticsSink
 import com.voicechat.agent.contracts.LanguageModel
@@ -78,6 +79,14 @@ object VoiceSessionAssembly {
          * unavailable is reported, never substituted.
          */
         selectionProvider: suspend () -> VoiceRuntimeSelection = { VoiceRuntimeSelection(locale = locale) },
+        /**
+         * Overrides the microphone capture source for one session. Production
+         * leaves this `null` and capture comes from [MicrophoneAudioCapture]; the
+         * debug build injects a file-backed source so the whole voice loop can be
+         * exercised from a staged WAV without a live microphone. It is never a
+         * silent substitution: a supplied factory is used exactly as given.
+         */
+        audioInputFactory: (() -> AudioInput)? = null,
     ): VoiceSessionFactory =
         VoiceSessionFactory { listener, providerSource ->
             PlatformVoiceSession(
@@ -92,6 +101,7 @@ object VoiceSessionAssembly {
                 parakeetModelStore = ParakeetEouModelStore(File(context.applicationContext.filesDir, ParakeetEouModelStore.DIRECTORY_NAME)),
                 parakeetSessionFactory = parakeetSessionFactory,
                 selectionProvider = selectionProvider,
+                audioInputFactory = audioInputFactory,
             )
         }
 }
@@ -113,6 +123,7 @@ private class PlatformVoiceSession(
     private val parakeetModelStore: ParakeetEouModelStore,
     private val parakeetSessionFactory: ParakeetEouSessionFactory,
     private val selectionProvider: suspend () -> VoiceRuntimeSelection,
+    private val audioInputFactory: (() -> AudioInput)? = null,
 ) : VoiceSessionController,
     VoiceSessionListener {
     private val _state = MutableStateFlow(VoiceSessionState.IDLE)
@@ -178,7 +189,9 @@ private class PlatformVoiceSession(
             parakeetSession = null
             speechToText = MlKitSpeechToText(engine = engine, diagnostics = diagnostics, clock = clock)
         }
-        val audioInput = MicrophoneAudioCapture.create(context = context, diagnostics = diagnostics, clock = clock)
+        val audioInput =
+            audioInputFactory?.invoke()
+                ?: MicrophoneAudioCapture.create(context = context, diagnostics = diagnostics, clock = clock)
         val textToSpeech: TextToSpeech? =
             try {
                 OnDeviceTts.create(

@@ -1,6 +1,7 @@
 package com.voicechat.agent
 
 import android.content.Context
+import com.voicechat.agent.contracts.AudioInput
 import com.voicechat.agent.credentials.AndroidKeystoreCredentialStore
 import com.voicechat.agent.diagnostics.AppDiagnosticsRuntime
 import com.voicechat.agent.diagnostics.InMemoryTraceStore
@@ -49,6 +50,13 @@ import java.io.File
  */
 class AppContainer(
     context: Context,
+    /**
+     * Debug-only override for the per-session microphone source. Production passes
+     * `null` (the microphone is used); the debug application injects a file-backed
+     * source so the full voice loop can be exercised from a WAV. See
+     * `docs/parakeet-eou-streaming.md`.
+     */
+    private val voiceAudioInputFactory: (() -> AudioInput)? = null,
 ) {
     private val appContext: Context = context.applicationContext
 
@@ -112,6 +120,7 @@ class AppContainer(
             diagnostics = diagnosticsSink,
             turnCompletion = smartTurnDetectorProvider,
             parakeetSessionFactory = OnnxParakeetEouSessionFactory(diagnostics = diagnosticsSink),
+            audioInputFactory = voiceAudioInputFactory,
             selectionProvider = {
                 val settings = settingsStore.observe().first()
                 VoiceRuntimeSelection(

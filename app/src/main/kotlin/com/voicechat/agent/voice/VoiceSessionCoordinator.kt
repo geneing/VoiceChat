@@ -181,6 +181,16 @@ class VoiceSessionCoordinator(
                     turn.job?.cancel()
                 }
                 activeListening = null
+                // An endpoint can arrive exactly as capture ends (the policy emits
+                // CAPTURE_ENDED when its input closes). Let that finalization settle —
+                // bounded, and only until the recognizer's own completion cap — before
+                // cancelling it, so a file-fed or unplugged capture still commits its
+                // trailing turn instead of racing teardown.
+                finalizationJob?.let { job ->
+                    if (withTimeoutOrNull(STT_COMPLETION_TIMEOUT_MILLIS) { job.join() } == null) {
+                        AppLog.d { "voice: capture ended before the pending turn finalized" }
+                    }
+                }
                 finalizationJob?.cancel()
                 finalizationJob = null
                 val inFlightGeneration =

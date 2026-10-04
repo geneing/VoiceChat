@@ -25,4 +25,14 @@ class DebugVoiceChatApplication : VoiceChatApplication() {
         val store = AndroidKeystoreCredentialStore.create(this)
         debugScope.launch { DebugCredentialImport.importIfPresent(this@DebugVoiceChatApplication, store) }
     }
+
+    /**
+     * Debug-only: when a WAV has been staged at
+     * `files/debug-audio/input.wav`, run the voice loop from it instead of the
+     * microphone so the full `VAD → Parakeet-EOU STT → LLM → TTS` path can be
+     * driven without speaking. With nothing staged this returns `null` and the
+     * real microphone is used, exactly like release.
+     */
+    override fun voiceAudioInputFactory(): (() -> com.voicechat.agent.contracts.AudioInput)? =
+        DebugFileAudioInputFactory.factoryIfPresent(this)
 }

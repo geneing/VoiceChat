@@ -144,3 +144,55 @@ files.
 
 `parakeet_eou_host.py` (in this repo's `scripts/`) reproduces mean WER 0.331 /
 0.846 and is the cross-check oracle for stream 1's Kotlin port.
+
+## Verified end-to-end on Pixel 10 (2026-10-03)
+
+The full voice path was run on a physical Pixel 10 (`57220DLCR002R6`) with the
+debug build, the pinned model installed in app-private storage, and the UI in the
+foreground:
+
+1. **Capture from a file, not the microphone.** `DebugFileAudioInput`
+   (`app/src/debug/.../debug/DebugFileAudioInput.kt`) replays a staged 16 kHz mono
+   PCM16 WAV as 20 ms frames at real time, then keeps emitting silence so capture
+   never ends on its own. It is selected by
+   `DebugVoiceChatApplication.voiceAudioInputFactory()` when
+   `files/debug-audio/input.wav` exists; with nothing staged the real microphone
+   is used. It is compiled into the debug source set only.
+2. **VAD/onset.** `EnergyVoiceActivityDetector` +
+   `BoundedTurnEndpointPolicy` (built through `PolicyVoiceTurnDetector`) reported
+   `SPEECH_STARTED` (onset), held a mid-utterance `CANDIDATE_PAUSE` as
+   `SEMANTIC_INCOMPLETE` (EOU corroborator), and committed the trailing turn with
+   `SILENCE_CAP`.
+3. **Recognition.** `ParakeetEouSpeechToText` over the real ONNX runtime finished
+   with `outcome=COMPLETED frames=777 chunks=25 dropped=0 chars=193`.
+4. **LLM.** The committed transcript was passed to the persisted provider
+   (`opencode-go` / `longcat-2.5-preview-free`) over the shared remote transport
+   (`orchestration: turn start source=VOICE`, `llm: request … streaming=true`) and
+   streamed back.
+5. **TTS.** The streamed reply was synthesized by the on-device platform TTS
+   (`tts: synthesis start … voice=en-us-x-tpf-local`); the dialog showed the user
+   bubble, the streaming assistant bubble, and the `Speaking…` state.
+
+The decoder-only replay (`scripts/run-parakeet-eou-replay.ps1`) is unchanged and
+remains the content-free timing/accuracy harness. The end-to-end UI run is driven
+by `scripts/run-parakeet-eou-voice-loop.ps1`, which installs the debug APK, stages
+the WAV (and an optional developer credential), taps the talk control, and writes
+a logcat capture plus periodic screenshots under `build/screens/`.
+
+```powershell
+.\scripts\run-parakeet-eou-voice-loop.ps1 `
+  -InputPath "test_data/eng-000058-000ee09a.wav" -ListenSeconds 45
+```
+
+### Remaining open items (not blockers for the path)
+
+- **Real-audio accuracy is not gated.** The end-to-end run proves the pipeline
+  produces a transcript, not that the transcript is accurate; the only accuracy
+  numbers are the 10 local pseudo-labeled clips (R-0240/R-0241).
+- **EOU still commits rarely.** In the device runs the EOU corroborator reported
+  `SEMANTIC_INCOMPLETE` and the silence cap ended the turn, consistent with the
+  host measurements; the EOU window/capacity remain provisional (R-0240).
+- **Long replies exceed the TTS delivery wait.** A ~2 000-character reply hit the
+  60 s `TurnOrchestrator` delivery timeout before playback finished; the turn
+  still settled truthfully. This is a TTS/delivery bound, not a Parakeet issue.
+
