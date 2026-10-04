@@ -2,6 +2,8 @@ package com.voicechat.agent.debug
 
 import com.voicechat.agent.VoiceChatApplication
 import com.voicechat.agent.credentials.AndroidKeystoreCredentialStore
+import com.voicechat.agent.log.AndroidLogging
+import com.voicechat.agent.log.LogLevel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,6 +24,8 @@ class DebugVoiceChatApplication : VoiceChatApplication() {
 
     override fun onCreate() {
         super.onCreate()
+        // Debug builds log everything, including the per-chunk STT/decoder trace.
+        AndroidLogging.install(minLevel = LogLevel.VERBOSE)
         val store = AndroidKeystoreCredentialStore.create(this)
         debugScope.launch { DebugCredentialImport.importIfPresent(this@DebugVoiceChatApplication, store) }
     }

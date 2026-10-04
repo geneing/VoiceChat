@@ -28,7 +28,7 @@ calls `AndroidLogging.install()` before any component runs.
 
 | Level | Use |
 | --- | --- |
-| `VERBOSE` | Very chatty tracing; off by default even in debug. |
+| `VERBOSE` | Very chatty tracing; per-chunk STT results and every recognizer callback. Enabled in the **debug** build (`DebugVoiceChatApplication`), off in release. |
 | `DEBUG` | Developer detail: session start/stop, state transitions, counts. |
 | `INFO` | Notable lifecycle facts (capture started, model status, repository open). |
 | `WARN` | Recoverable problems (permission revoked, buffer overflow, persistence retry). |
@@ -39,10 +39,12 @@ calls `AndroidLogging.install()` before any component runs.
   `android.util.Log` sink only for debug builds, so a release build never calls a
   sink and never builds a message. `buildFeatures.buildConfig = true` in
   `app/build.gradle.kts` generates `BuildConfig.DEBUG`.
-- **Minimum level.** The default minimum is `DEBUG`; `VERBOSE` is available but
-  suppressed unless raised. Raising the level is a one-line change at the app
-  boundary (`AndroidLogging.install(minLevel = LogLevel.VERBOSE)`) or, for a
-  one-off debug session, via `AppLog.configure(...)`.
+- **Minimum level.** `AndroidLogging.install()` defaults to `DEBUG`; the
+  `DebugVoiceChatApplication` raises the debug build to `LogLevel.VERBOSE` so the
+  full per-chunk/per-callback STT trace is visible. Raising or lowering it is a
+  one-line change at the app boundary
+  (`AndroidLogging.install(minLevel = LogLevel.VERBOSE)`) or, for a one-off debug
+  session, via `AppLog.configure(...)`.
 - **No blocking.** A sink is called synchronously only after the enabled check;
   sinks must be cheap and must not throw. Nothing on the audio or UI path blocks
   on a log call.
@@ -81,7 +83,7 @@ construction; the logger relies on these rules and on review.
 | Area | Examples |
 | --- | --- |
 | Capture (M07) | session start (source/format/route), stop with frame/drop counts, permission denial/revocation, read errors, route changes, audio focus acquire/loss/abandon. |
-| STT (M08) | availability result, start/refuse-to-start, input-end stop, session end with outcome/frame counts, model download progress/failure. |
+| STT (M08) | availability result, start/refuse-to-start, input-end stop, session end with outcome/frame counts, model download progress/failure. At `VERBOSE`, every recognizer callback: ML Kit response kind/character count and each emitted event; Parakeet-EOU session config, each captured/dequeued chunk, each decoded chunk (decode ms, character count, final/EOU flags, segment, confidence), each EOU confirmation, each emitted event, and dropped-chunk counts. Never transcript text. |
 | TTS (M11) | engine availability (voice counts, selected embedded voice id, resolved engine), synthesis start/failure by character count, playback first-audible/completed/interrupted with delivered-vs-total counts and route kind, immediate stop, no-on-device-voice refusal. Never assistant text. |
 | Persistence (M05) | repository open, per-operation load/save/delete success/failure, process-death recovery. |
 | Credentials (M13) | store/replace/remove by provider id and kind and the failure reason by exception *type* only; never the credential value. `Credential.toString()` is redacted and `CredentialRedactionTest` proves the path stays clean. |
@@ -107,10 +109,11 @@ Logging is intentionally not per audio frame and not per UI recomposition.
    adb logcat -s VoiceChat:V
    ```
 
-3. For maximum detail, raise the level (temporary, debug-only) by passing
-   `minLevel = LogLevel.VERBOSE` to `AndroidLogging.install` in
-   `VoiceChatApplication`, or in a debug-only code path call
-   `AppLog.configure(sink = AndroidLogSink, enabled = true, minLevel = LogLevel.VERBOSE)`.
+3. The debug build already logs everything (`DebugVoiceChatApplication`
+   installs `minLevel = LogLevel.VERBOSE`). To change it for a run, pass a
+   different `minLevel` to `AndroidLogging.install` in the application, or call
+   `AppLog.configure(sink = AndroidLogSink, enabled = true, minLevel = LogLevel.VERBOSE)`
+   from a debug-only code path.
 
 ## Confirming it is off in release
 

@@ -19,6 +19,7 @@ import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.diagnostics.SystemMonotonicClock
 import com.voicechat.agent.domain.AudioFrame
 import com.voicechat.agent.domain.EngineId
+import com.voicechat.agent.domain.Transcript
 import com.voicechat.agent.log.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -124,7 +125,13 @@ class MlKitSpeechToText(
                             try {
                                 recognizer
                                     .startRecognition(speechRecognizerRequest { audioSource = AudioSource.fromPfd(readEnd) })
-                                    .collect { response -> responses.trySend(response.toEngineResponse()) }
+                                    .collect { response ->
+                                        val mapped = response.toEngineResponse()
+                                        AppLog.v {
+                                            "stt: recognizer response kind=${mapped.logKind()} chars=${mapped.logChars()}"
+                                        }
+                                        responses.trySend(mapped)
+                                    }
                                 responses.close()
                             } catch (cancellation: CancellationException) {
                                 // A sibling cancelled this collection; leave the
@@ -154,6 +161,11 @@ class MlKitSpeechToText(
                     try {
                         for (response in responses) {
                             assembler.onResponse(response).forEach { event ->
+                                AppLog.v {
+                                    "stt: emit final=${event.transcriptOrNull()?.isFinal} " +
+                                        "chars=${event.transcriptOrNull()?.text?.length ?: 0} " +
+                                        "code=${event.failureCodeOrNull().orEmpty()}"
+                                }
                                 when (event) {
                                     is SttEvent.Result -> {
                                         if (event.transcript.isFinal) {
@@ -196,6 +208,10 @@ class MlKitSpeechToText(
                     // The engine can end without a `Completed` response (for
                     // example when capture stops first); finalize anyway.
                     assembler.finish().forEach { event ->
+                        AppLog.v {
+                            "stt: emit (finalize) final=${event.transcriptOrNull()?.isFinal} " +
+                                "chars=${event.transcriptOrNull()?.text?.length ?: 0}"
+                        }
                         if (outcome != DiagnosticOutcome.FAILED && event is SttEvent.Result) {
                             outcome = DiagnosticOutcome.COMPLETED
                             finalCharacterCount = event.transcript.text.length
@@ -302,3 +318,28 @@ class MlKitSpeechToText(
         const val STOP_COMPLETION_TIMEOUT_MILLIS = 3_000L
     }
 }
+
+/**
+ * Content-free descriptions of one engine response and one emitted event, for the
+ * verbose STT trace. They carry only the kind and character counts — never the
+ * recognized text (`docs/logging.md`, `docs/privacy-and-security.md`).
+ */
+private fun SttEngineResponse.logKind(): String =
+    when (this) {
+        is SttEngineResponse.Partial -> "partial"
+        is SttEngineResponse.Final -> "final_segment"
+        is SttEngineResponse.Failure -> "failure:${kind.name}"
+        SttEngineResponse.Stopped -> "stopped"
+        SttEngineResponse.Completed -> "completed"
+    }
+
+private fun SttEngineResponse.logChars(): Int =
+    when (this) {
+        is SttEngineResponse.Partial -> text.length
+        is SttEngineResponse.Final -> text.length
+        else -> 0
+    }
+
+private fun SttEvent.transcriptOrNull(): Transcript? = (this as? SttEvent.Result)?.transcript
+
+private fun SttEvent.failureCodeOrNull(): String? = (this as? SttEvent.Failed)?.error?.code?.name
