@@ -110,7 +110,11 @@ class ParakeetEouSpeechToText(
             var failed = false
             var outcome = DiagnosticOutcome.CANCELLED
             var errorCode: String? = null
-            AppLog.d { "stt: parakeet session start engine=${engineId.value}" }
+            AppLog.d {
+                "stt: parakeet session start engine=${engineId.value} " +
+                    "chunkSamples=${config.chunkSamples} queueCapacity=${config.chunkQueueCapacity} " +
+                    "eouDebounceMs=${config.eouDebounceMillis}"
+            }
             record(
                 outcome = DiagnosticOutcome.STARTED,
                 startedAtNanos = startedAtNanos,
@@ -174,6 +178,9 @@ class ParakeetEouSpeechToText(
                                         while (buffer.size > config.chunkQueueCapacity) {
                                             buffer.removeFirst()
                                             droppedChunks++
+                                            AppLog.v {
+                                                "stt: parakeet chunk dropped total=$droppedChunks (decode consumer behind)"
+                                            }
                                         }
                                     }
                                 }
@@ -192,6 +199,9 @@ class ParakeetEouSpeechToText(
                                 }
                             }
                             chunks.close()
+                            AppLog.d {
+                                "stt: parakeet capture ended frames=$frameCount droppedChunks=$droppedChunks"
+                            }
                         }
 
                     val decode =
@@ -203,26 +213,58 @@ class ParakeetEouSpeechToText(
                             try {
                                 for (chunk in chunks) {
                                     val decodeStartedAtNanos = clock.nanoTime()
+                                    AppLog.v {
+                                        "stt: parakeet chunk#$chunkCount samples=${chunk.size} dequeued; decoding"
+                                    }
                                     val result = session.accept(chunk)
                                     val decodeNanos = clock.nanoTime() - decodeStartedAtNanos
                                     totalDecodeNanos += decodeNanos
                                     if (decodeNanos > maxDecodeNanos) maxDecodeNanos = decodeNanos
                                     chunkCount++
+                                    AppLog.v {
+                                        "stt: parakeet chunk#$chunkCount decoded decodeMs=${decodeNanos / 1_000_000L} " +
+                                            "chars=${result.text.length} final=${result.isFinal} " +
+                                            "eou=${result.eouDetected} segment=${result.segmentIndex} " +
+                                            "confidence=${result.confidence}"
+                                    }
 
                                     if (result.eouDetected) {
-                                        if (eouSignal.confirmEou(
+                                        val confirmed =
+                                            eouSignal.confirmEou(
                                                 offsetMillis = chunkCount.toLong() * chunkDurationMillis(config),
                                                 confidence = result.confidence,
                                                 debounceMillis = config.eouDebounceMillis,
                                             )
-                                        ) {
+                                        if (confirmed) {
                                             eouConfirmedCount++
+                                            AppLog.v {
+                                                "stt: parakeet eou confirmed count=$eouConfirmedCount " +
+                                                    "offsetMs=${chunkCount.toLong() * chunkDurationMillis(config)} " +
+                                                    "confidence=${result.confidence}"
+                                            }
+                                        } else {
+                                            AppLog.v {
+                                                "stt: parakeet eou refresh (within debounce) " +
+                                                    "offsetMs=${chunkCount.toLong() * chunkDurationMillis(config)}"
+                                            }
                                         }
                                     }
 
-                                    eventFor(result, revision++)?.let {
-                                        if (it is SttEvent.Result && it.transcript.isFinal) terminalSent = true
-                                        events.send(it)
+                                    eventFor(result, revision++)?.let { event ->
+                                        if (event is SttEvent.Result) {
+                                            if (event.transcript.isFinal) terminalSent = true
+                                            AppLog.v {
+                                                "stt: parakeet emit revision=${revision - 1} " +
+                                                    "final=${event.transcript.isFinal} " +
+                                                    "chars=${event.transcript.text.length} " +
+                                                    "confidence=${event.transcript.confidence}"
+                                            }
+                                        } else if (event is SttEvent.Failed) {
+                                            AppLog.v {
+                                                "stt: parakeet emit failed code=${event.error.code}"
+                                            }
+                                        }
+                                        events.send(event)
                                     }
                                 }
 
@@ -234,6 +276,10 @@ class ParakeetEouSpeechToText(
                                 // delivered and there is nothing to add.
                                 if (!failed && !terminalSent) {
                                     val tail = session.finalize()
+                                    AppLog.d {
+                                        "stt: parakeet finalize chars=${tail.text.length} final=${tail.isFinal} " +
+                                            "eou=${tail.eouDetected} confidence=${tail.confidence}"
+                                    }
                                     if (tail.eouDetected) {
                                         if (eouSignal.confirmEou(
                                                 offsetMillis = chunkCount.toLong() * chunkDurationMillis(config),
@@ -244,7 +290,16 @@ class ParakeetEouSpeechToText(
                                             eouConfirmedCount++
                                         }
                                     }
-                                    eventFor(tail, revision++, forceFinal = true)?.let { events.send(it) }
+                                    eventFor(tail, revision++, forceFinal = true)?.let { event ->
+                                        if (event is SttEvent.Result) {
+                                            AppLog.v {
+                                                "stt: parakeet emit (finalize) final=${event.transcript.isFinal} " +
+                                                    "chars=${event.transcript.text.length} " +
+                                                    "confidence=${event.transcript.confidence}"
+                                            }
+                                        }
+                                        events.send(event)
+                                    }
                                 }
                             } catch (cancellation: CancellationException) {
                                 throw cancellation

@@ -372,13 +372,23 @@ class VoiceSessionCoordinator(
     ) {
         when (event) {
             is SttEvent.Result -> {
+                AppLog.v {
+                    "voice: stt event turn=${turn.turnId.value} final=${event.transcript.isFinal} " +
+                        "revision=${event.transcript.revision.value} chars=${event.transcript.text.length} " +
+                        "confidence=${event.transcript.confidence}"
+                }
                 if (event.transcript.isFinal) {
                     turn.final = event.transcript
                 } else {
                     // Interim revisions must be strictly newer; a stale guess is
                     // dropped, never applied (mirrors the M21 revision rule).
                     val previous = turn.provisional
-                    if (previous != null && event.transcript.revision.value <= previous.revision.value) return
+                    if (previous != null && event.transcript.revision.value <= previous.revision.value) {
+                        AppLog.v {
+                            "voice: stt interim revision=${event.transcript.revision.value} dropped as stale"
+                        }
+                        return
+                    }
                     turn.provisional = event.transcript
                     // Only the active turn's interim text reaches the dialog; a late
                     // revision from a superseded turn is dropped, never applied.
@@ -389,6 +399,7 @@ class VoiceSessionCoordinator(
             }
 
             is SttEvent.Failed -> {
+                AppLog.v { "voice: stt event turn=${turn.turnId.value} failed code=${event.error.code}" }
                 turn.failure = event.error
             }
         }
