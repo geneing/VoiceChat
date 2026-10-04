@@ -1,6 +1,7 @@
 package com.voicechat.agent
 
 import android.app.Application
+import com.voicechat.agent.contracts.AudioInput
 import com.voicechat.agent.log.AndroidLogging
 
 /**
@@ -16,13 +17,21 @@ import com.voicechat.agent.log.AndroidLogging
  * unchanged.
  */
 open class VoiceChatApplication : Application() {
-    private val containerDelegate = lazy { AppContainer(this) }
+    private val containerDelegate = lazy { AppContainer(this, voiceAudioInputFactory()) }
 
     /**
      * The app-scoped dependency container (M26). Lazy so nothing is built until a
      * screen needs it; one instance per process.
      */
     val container: AppContainer by containerDelegate
+
+    /**
+     * Debug-only per-session audio-source override, read once when the container is
+     * first built. The release build returns `null` (real microphone capture); the
+     * debug [com.voicechat.agent.debug.DebugVoiceChatApplication] may return a
+     * file-backed source when one has been staged.
+     */
+    protected open fun voiceAudioInputFactory(): (() -> AudioInput)? = null
 
     override fun onCreate() {
         super.onCreate()
