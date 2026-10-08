@@ -124,7 +124,7 @@ class ParakeetEouSpeechToTextTest {
                     override fun close() = Unit
                 }
             val (factory, _) = listener(session)
-            val adapter = ParakeetEouSpeechToText(decoderFactory = factory, config = config)
+            val adapter = ParakeetEouSpeechToText(decoderFactory = factory, config = config, inputGain = ParakeetInputGain.PASSTHROUGH)
 
             adapter.transcribe(flowOf(frame(1000, -2000, 32767, -32768))).toList()
 

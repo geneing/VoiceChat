@@ -184,6 +184,27 @@ a logcat capture plus periodic screenshots under `build/screens/`.
   -InputPath "test_data/eng-000058-000ee09a.wav" -ListenSeconds 45
 ```
 
+### Input level normalization (2026-10-07)
+
+The pinned bundle feeds **raw** log-mel with no normalization, so recognition is
+sensitive to absolute input level and quiet live microphone audio could decode to
+nothing. `ParakeetInputGain` now scales each 640 ms decode chunk toward a bounded
+peak (`DEFAULT_TARGET_PEAK = 0.8`, `maxGain = 16`) before the streaming decoder
+splits it into overlapping encoder windows; a chunk below the silence floor is
+left untouched so near-silence is not inflated.
+
+A Pixel 10 attenuation sweep on a staged microphone capture (16.14 s, source rms
+0.081, peak 0.75) located the raw-decode cliff between **~0.09 peak** (decodes)
+and **~0.06 peak** (no tokens). With the normalizer the same clip decoded at every
+tested level down to **~0.03 peak**. `ParakeetEouQuietClipInstrumentedTest`
+(`-e parakeetQuietRunId <id> [-e parakeetQuietGain <f>]`) attenuates the staged
+`files/mic-fixtures/probe.wav` into that zone and asserts the raw path drops it
+while the normalized adapter recovers text; `ParakeetInputGainTest` covers the
+gain/clamp/silence rules on the JVM.
+
+This proves the level mechanism, not live-speech accuracy: real-microphone
+end-to-end recognition remains covered by the open items below and R-0240/R-0241.
+
 ### Remaining open items (not blockers for the path)
 
 - **Real-audio accuracy is not gated.** The end-to-end run proves the pipeline

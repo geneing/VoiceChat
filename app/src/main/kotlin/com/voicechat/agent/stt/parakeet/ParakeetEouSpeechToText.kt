@@ -83,6 +83,14 @@ class ParakeetEouSpeechToText(
     override val engineId: EngineId = ENGINE_ID,
     private val decoderFactory: ParakeetDecoderSessionFactory,
     private val config: ParakeetEouSpeechToTextConfig = ParakeetEouSpeechToTextConfig.default(),
+    /**
+     * Input level normalizer applied to each capture chunk before decode. The
+     * pinned model feeds raw log-mel with no normalization, so quiet microphone
+     * audio must be brought toward the level it was evaluated at; see
+     * [ParakeetInputGain]. Tests that assert the raw PCM conversion pass
+     * [ParakeetInputGain.PASSTHROUGH].
+     */
+    private val inputGain: ParakeetInputGain = ParakeetInputGain(),
     private val diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
     private val clock: MonotonicClock = SystemMonotonicClock,
     private val decodeDispatcher: CoroutineDispatcher = Dispatchers.Default,
@@ -162,6 +170,12 @@ class ParakeetEouSpeechToText(
                                     pendingCount += take
                                     index += take
                                     if (pendingCount == config.chunkSamples) {
+                                        val gain = inputGain.gainFor(pending, pendingCount)
+                                        inputGain.apply(pending, pendingCount, gain)
+                                        AppLog.v {
+                                            "stt: parakeet input chunk normalized gain=$gain " +
+                                                "(target=${ParakeetInputGain.DEFAULT_TARGET_PEAK})"
+                                        }
                                         buffer.addLast(pending)
                                         pending = FloatArray(config.chunkSamples)
                                         pendingCount = 0
@@ -188,7 +202,9 @@ class ParakeetEouSpeechToText(
                             // Flush any trailing partial chunk on input end so no
                             // captured sample is silently discarded.
                             if (pendingCount > 0) {
-                                buffer.addLast(pending.copyOf(pendingCount))
+                                val tail = pending.copyOf(pendingCount)
+                                inputGain.apply(tail, pendingCount)
+                                buffer.addLast(tail)
                             }
                             while (buffer.isNotEmpty()) {
                                 if (chunks.trySend(buffer.first()).isSuccess) {
