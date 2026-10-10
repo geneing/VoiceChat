@@ -4,36 +4,14 @@ import com.voicechat.agent.stt.SttEngines
 import com.voicechat.agent.stt.SttMode
 import java.util.Locale
 
-/**
- * The validated on-device runtime the voice loop should use for one session
- * (M26, R-0181).
- *
- * M24's assembly picked the first runtime-ready STT engine for the locale and
- * constructed TTS from the locale alone, so a persisted STT mode or voice choice
- * was not authoritative. This value type is the resolution seam: the app
- * boundary maps the persisted `VoiceSettings` into it once per session, and the
- * platform session honors it or reports the selected option unavailable — it
- * never silently substitutes another mode or voice.
- *
- * [stt] is the **resolved** STT choice (which engine family and mode), computed
- * from the runtime availability the app boundary read; `null` means "no
- * preference, prefer the first available engine" for a caller that did not
- * resolve. [ttsVoiceId] is carried for wiring; a device with no embedded voice
- * still surfaces the typed `TTS_NO_ON_DEVICE_VOICE`/initialization state
- * (R-0180).
- */
+/** The validated on-device STT runtime the voice session should use. */
 data class VoiceRuntimeSelection(
     /** The selected STT mode, or `null` to prefer the first available mode. */
     val sttMode: SttMode? = null,
-    /**
-     * The resolved STT engine/error for this session, or `null` to resolve from
-     * [sttMode] against a fresh availability read at session start.
-     */
+    /** A resolved STT choice, or `null` to resolve availability at session start. */
     val stt: VoiceSttSelection? = null,
-    /** STT/TTS locale; defaults to the single-engine default. */
+    /** STT locale; defaults to the engine's default locale. */
     val locale: Locale = SttEngines.DEFAULT_LOCALE,
-    /** The selected embedded TTS voice id, or `null` for the locale default. */
-    val ttsVoiceId: String? = null,
 ) {
     init {
         require(locale.toLanguageTag().isNotBlank()) { "locale must have a non-blank language tag" }
@@ -43,7 +21,7 @@ data class VoiceRuntimeSelection(
     val hasReadyStt: Boolean get() = stt is VoiceSttSelection.Ready
 
     companion object {
-        /** The honest default: no mode/voice preference, the engine default locale. */
+        /** The default: no mode preference and the engine default locale. */
         fun default(): VoiceRuntimeSelection = VoiceRuntimeSelection()
     }
 }

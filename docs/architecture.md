@@ -21,6 +21,12 @@ stages only when the user experience requires it. For example, VAD may improve
 turn boundaries and power use, but STT must still handle incomplete, empty, or
 interrupted captures.
 
+The current `dev/STT` microphone session is intentionally isolated at finalized
+transcript persistence: it uses capture, VAD, on-device STT, and optional Smart
+Turn, with no provider resolution, LLM generation, assistant response, or TTS
+connection. TTS remains implemented but is not constructed by the voice-session
+assembly. The separate text-entry provider path remains available.
+
 ## Component boundaries
 
 Keep platform and provider details out of conversation policy and UI. The

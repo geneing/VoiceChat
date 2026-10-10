@@ -92,8 +92,8 @@ data class ConversationDialogState(
      */
     val provider: ProviderDisclosure = ProviderDisclosure.NONE,
     /**
-     * Session state of the M24 voice loop. [VoiceSessionState.IDLE] when no voice
-     * session is running, so the dialog renders the manual text path unchanged.
+     * Session state of the STT-only voice session. [VoiceSessionState.IDLE] when
+     * no voice session is running.
      */
     val voiceState: VoiceSessionState = VoiceSessionState.IDLE,
     /** True when a voice session can be started (the app attached a voice factory). */
@@ -102,7 +102,7 @@ data class ConversationDialogState(
     /** True while an LLM request is streaming. */
     val isGenerating: Boolean get() = phase == TurnPhase.GENERATING
 
-    /** True while the voice loop is listening, working, or speaking. */
+    /** True while the voice capture session is active. */
     val isVoiceActive: Boolean get() = voiceState != VoiceSessionState.IDLE && voiceState != VoiceSessionState.STOPPED
 
     /** True when the last request was cancelled or failed and can be re-run. */

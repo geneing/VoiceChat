@@ -36,14 +36,10 @@ import com.voicechat.agent.providers.ProviderCapabilityRegistry
 import com.voicechat.agent.providers.ProviderDisclosure
 import com.voicechat.agent.providers.ProviderLanguageModelFactory
 import com.voicechat.agent.settings.VoiceSettings
-import com.voicechat.agent.voice.BargeInTiming
-import com.voicechat.agent.voice.VoiceInterruptionRecovery
 import com.voicechat.agent.voice.VoiceSessionController
 import com.voicechat.agent.voice.VoiceSessionFactory
 import com.voicechat.agent.voice.VoiceSessionListener
 import com.voicechat.agent.voice.VoiceSessionState
-import com.voicechat.agent.voice.VoiceTurnProvider
-import com.voicechat.agent.voice.VoiceTurnProviderSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -129,8 +125,7 @@ class ConversationViewModel(
     private val localModelFactory: com.voicechat.agent.local.LocalLanguageModelFactory? = null,
 ) : ViewModel(),
     ConversationActions,
-    VoiceSessionListener,
-    VoiceTurnProviderSource {
+    VoiceSessionListener {
     private val orchestrator =
         TurnOrchestrator(
             repository = repository,
@@ -252,7 +247,7 @@ class ConversationViewModel(
      * Until this is called the dialog shows no voice control and behaves exactly
      * as the M06/M23 text path — so the voice loop is additive and never changes
      * existing behavior. The [ConversationViewModel] is both the session's UI
-     * [VoiceSessionListener] and its [VoiceTurnProviderSource].
+     * [VoiceSessionListener].
      */
     fun attachVoiceSession(factory: VoiceSessionFactory) {
         voiceFactory = factory
@@ -274,7 +269,6 @@ class ConversationViewModel(
                 if (activeVoiceSession != null || generationJob?.isActive == true) return
                 Any().also { activeVoiceSession = it }
             }
-        refreshDisclosure()
         val now = wallClock()
         val base =
             currentConversation?.copy()
@@ -287,19 +281,19 @@ class ConversationViewModel(
         _uiState.update { state ->
             state.copy(
                 dialog =
-                    (state.dialog ?: ConversationDialogState(provider = currentDisclosure)).copy(
+                    (state.dialog ?: ConversationDialogState()).copy(
                         conversationId = base.id,
                         provisionalUserText = null,
-                        liveAssistantText = "",
+                        liveAssistantText = null,
                         phase = TurnPhase.LISTENING,
                         notice = null,
-                        provider = currentDisclosure,
+                        provider = ProviderDisclosure.NONE,
                         voiceAvailable = true,
                         voiceState = VoiceSessionState.LISTENING,
                     ),
             )
         }
-        val controller = factory.create(SessionVoiceListener(sessionToken, this), this)
+        val controller = factory.create(SessionVoiceListener(sessionToken, this))
         synchronized(voiceLock) { voiceController = controller }
         val job =
             coroutineScope().launch(dispatcher) {
@@ -349,11 +343,13 @@ class ConversationViewModel(
         _uiState.update { state ->
             state.copy(
                 dialog =
-                    state.dialog?.copy(
-                        voiceState = VoiceSessionState.IDLE,
-                        provisionalUserText = null,
-                        phase = if (state.dialog?.isGenerating == true) state.dialog.phase else TurnPhase.IDLE,
-                    ),
+                    state.dialog?.let { dialog ->
+                        dialog.copy(
+                            voiceState = VoiceSessionState.IDLE,
+                            provisionalUserText = null,
+                            phase = if (dialog.isGenerating) dialog.phase else TurnPhase.IDLE,
+                        )
+                    },
             )
         }
     }
@@ -374,16 +370,6 @@ class ConversationViewModel(
         job?.cancel()
     }
 
-    /** Resolves the adapter/identity for the next voice turn from the persisted selection. */
-    override fun providerFor(conversation: Conversation): VoiceTurnProvider {
-        val active = activeProvider(conversation.id)
-        return VoiceTurnProvider(
-            selection = active.selection,
-            reasoning = active.reasoning,
-            languageModel = active.languageModel,
-        )
-    }
-
     // endregion
 
     // region VoiceSessionListener (voice loop -> dialog)
@@ -394,7 +380,7 @@ class ConversationViewModel(
                 dialog =
                     current.dialog?.copy(
                         voiceState = state,
-                        phase = state.toTurnPhase(current.dialog?.phase ?: TurnPhase.IDLE),
+                        phase = state.toTurnPhase(),
                     ),
             )
         }
@@ -424,15 +410,8 @@ class ConversationViewModel(
         transcript: Transcript,
     ) {
         _uiState.update { state ->
-            state.copy(dialog = state.dialog?.copy(provisionalUserText = null, phase = TurnPhase.GENERATING))
+            state.copy(dialog = state.dialog?.copy(provisionalUserText = null, phase = TurnPhase.IDLE))
         }
-    }
-
-    override fun onAssistantText(
-        turnId: TurnId,
-        text: String,
-    ) {
-        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(liveAssistantText = text)) }
     }
 
     override fun onConversationChanged(conversation: Conversation) {
@@ -449,73 +428,16 @@ class ConversationViewModel(
         }
     }
 
-    override fun onTurnFinished(result: TurnResult) {
-        currentConversation = result.conversation
-        val record = result.record
-        val error = record?.failure
-        val outcome = record?.outcome
-        val notice =
-            when {
-                result.persistenceFailure != null -> {
-                    ConversationNotice.Failure(ErrorCode.PERSISTENCE_FAILED, retryable = true)
-                }
-
-                outcome is TurnOutcome.ProviderError && error != null -> {
-                    error.toNotice()
-                }
-
-                outcome is TurnOutcome.TtsFailure && error != null -> {
-                    error.toNotice()
-                }
-
-                else -> {
-                    null
-                }
-            }
-        _uiState.update { state ->
-            state.copy(
-                dialog =
-                    state.dialog?.copy(
-                        turns = result.conversation.turns,
-                        liveAssistantText = null,
-                        phase = record?.phase ?: TurnPhase.IDLE,
-                        notice = notice,
-                    ),
-            )
-        }
-    }
-
-    override fun onBargeIn(timing: BargeInTiming) {
-        AppLog.d { "ui: voice barge-in stop=${timing.onsetToStopNanos}ns" }
-        // The interrupted reply settles asynchronously and is persisted with only
-        // its delivered prefix; the dialog is not told a false completed turn.
-        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(notice = ConversationNotice.RequestCancelled)) }
-    }
-
-    override fun onInterruptionRecovered(recovery: VoiceInterruptionRecovery) {
-        if (recovery == VoiceInterruptionRecovery.NO_USABLE_SPEECH) {
-            AppLog.d { "ui: barge-in recovery: noise/no-speech" }
-            // A false/noise interruption commits no turn; the dialog stays usable.
-            _uiState.update { state -> state.copy(dialog = state.dialog?.copy(notice = null)) }
-        }
-    }
-
     override fun onError(error: VoiceAgentError) {
         AppLog.voice(LogLevel.WARN) { "voice: session error code=${error.code} detail=${error.detail}" }
         _uiState.update { state -> state.copy(dialog = state.dialog?.copy(notice = error.toNotice())) }
     }
 
-    override fun onTextToSpeechUnavailable(error: VoiceAgentError) {
-        AppLog.w { "ui: voice session is text-only code=${error.code}" }
-        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(notice = error.toNotice())) }
-    }
-
-    private fun VoiceSessionState.toTurnPhase(current: TurnPhase): TurnPhase =
+    private fun VoiceSessionState.toTurnPhase(): TurnPhase =
         when (this) {
             VoiceSessionState.LISTENING -> TurnPhase.LISTENING
-            VoiceSessionState.WORKING, VoiceSessionState.SPEAKING -> TurnPhase.GENERATING
             VoiceSessionState.FAILED -> TurnPhase.FAILED
-            VoiceSessionState.IDLE, VoiceSessionState.STOPPED -> if (current == TurnPhase.SPEAKING) current else TurnPhase.IDLE
+            VoiceSessionState.IDLE, VoiceSessionState.STOPPED -> TurnPhase.IDLE
         }
 
     // endregion
@@ -1132,27 +1054,8 @@ class ConversationViewModel(
             if (isCurrent()) delegate.onUtteranceCommitted(turnId, transcript)
         }
 
-        override fun onAssistantText(
-            turnId: TurnId,
-            text: String,
-        ) {
-            if (isCurrent()) delegate.onAssistantText(turnId, text)
-        }
-
         override fun onConversationChanged(conversation: Conversation) {
             if (isCurrent()) delegate.onConversationChanged(conversation)
-        }
-
-        override fun onTurnFinished(result: TurnResult) {
-            if (isCurrent()) delegate.onTurnFinished(result)
-        }
-
-        override fun onBargeIn(timing: BargeInTiming) {
-            if (isCurrent()) delegate.onBargeIn(timing)
-        }
-
-        override fun onInterruptionRecovered(recovery: VoiceInterruptionRecovery) {
-            if (isCurrent()) delegate.onInterruptionRecovered(recovery)
         }
 
         override fun onNoSpeech() {
@@ -1161,10 +1064,6 @@ class ConversationViewModel(
 
         override fun onError(error: VoiceAgentError) {
             if (isCurrent()) delegate.onError(error)
-        }
-
-        override fun onTextToSpeechUnavailable(error: VoiceAgentError) {
-            if (isCurrent()) delegate.onTextToSpeechUnavailable(error)
         }
     }
 

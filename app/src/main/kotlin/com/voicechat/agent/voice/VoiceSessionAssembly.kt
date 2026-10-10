@@ -5,10 +5,8 @@ import com.voicechat.agent.audio.MicrophoneAudioCapture
 import com.voicechat.agent.contracts.AudioInput
 import com.voicechat.agent.contracts.ConversationRepository
 import com.voicechat.agent.contracts.DiagnosticsSink
-import com.voicechat.agent.contracts.LanguageModel
 import com.voicechat.agent.contracts.NoOpDiagnosticsSink
 import com.voicechat.agent.contracts.SpeechToText
-import com.voicechat.agent.contracts.TextToSpeech
 import com.voicechat.agent.contracts.TurnCompletionDetector
 import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.diagnostics.SystemMonotonicClock
@@ -17,11 +15,8 @@ import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.Transcript
 import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.domain.VoiceAgentError
-import com.voicechat.agent.domain.VoiceAgentException
 import com.voicechat.agent.log.AppLog
 import com.voicechat.agent.log.LogLevel
-import com.voicechat.agent.orchestration.TurnOrchestrator
-import com.voicechat.agent.orchestration.TurnResult
 import com.voicechat.agent.stt.MlKitSpeechToText
 import com.voicechat.agent.stt.MlKitSttStatus
 import com.voicechat.agent.stt.ParakeetEouSttCatalog
@@ -30,7 +25,6 @@ import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttEngineFamily
 import com.voicechat.agent.stt.SttEngines
 import com.voicechat.agent.stt.parakeet.ParakeetEouModelStore
-import com.voicechat.agent.tts.OnDeviceTts
 import com.voicechat.agent.turn.NoSmartTurnDetectorProvider
 import com.voicechat.agent.turn.SmartTurnDetectorProvider
 import kotlinx.coroutines.CancellationException
@@ -44,15 +38,15 @@ import java.util.Locale
  * App-boundary factory for the production M24 voice session.
  *
  * This is deliberately the *only* file in the `voice` package that touches
- * platform types (`Context`, `MlKitSpeechToText`, `MicrophoneAudioCapture`,
- * `OnDeviceTts`); the coordinator and its seams stay `android.*`-free and
- * JVM-testable (`VoiceSourcePurityTest`).
+ * platform types (`Context`, `MlKitSpeechToText`, `MicrophoneAudioCapture`); the
+ * coordinator and its seams stay `android.*`-free and JVM-testable
+ * (`VoiceSourcePurityTest`). TTS is not created or connected here.
  *
- * It builds the M07 capture, M08 recognizer, and M11 TTS behind the M02
- * contracts, the M09 bounded endpoint policy, and a fresh M21 orchestrator per
- * session. STT availability is read from the runtime (`MlKitSttStatus.check`), so
- * a device with no provisioned model reports a typed `STT_UNAVAILABLE` instead of
- * a fabricated session.
+ * It builds M07 capture and M08 STT behind the M02 contracts, plus the M09
+ * bounded endpoint policy and optional M10 Smart Turn detector. The voice path
+ * does not resolve an LLM provider or initialize TTS. STT availability is read
+ * from the runtime (`MlKitSttStatus.check`), so a device with no provisioned
+ * model reports a typed `STT_UNAVAILABLE` instead of a fabricated session.
  *
  * Device testing is deferred: this path is compiled and wired but has not been
  * run on hardware (see `Tests.md`).
@@ -62,7 +56,6 @@ object VoiceSessionAssembly {
     fun platformFactory(
         context: Context,
         repository: ConversationRepository,
-        fallbackLanguageModel: LanguageModel,
         diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
         clock: MonotonicClock = SystemMonotonicClock,
         locale: Locale = Locale.getDefault(),
@@ -74,7 +67,7 @@ object VoiceSessionAssembly {
          */
         parakeetSessionFactory: ParakeetEouSessionFactory = UnavailableParakeetEouSessionFactory,
         /**
-         * Resolves the persisted STT mode/locale/voice for one session (R-0181).
+         * Resolves the persisted STT mode and locale for one session (R-0181).
          * Called once per session on the caller's coroutine; a selection that is
          * unavailable is reported, never substituted.
          */
@@ -88,15 +81,13 @@ object VoiceSessionAssembly {
          */
         audioInputFactory: (() -> AudioInput)? = null,
     ): VoiceSessionFactory =
-        VoiceSessionFactory { listener, providerSource ->
+        VoiceSessionFactory { listener ->
             PlatformVoiceSession(
                 context = context.applicationContext,
                 repository = repository,
-                fallbackLanguageModel = fallbackLanguageModel,
                 diagnostics = diagnostics,
                 clock = clock,
                 downstream = listener,
-                providerSource = providerSource,
                 turnCompletion = turnCompletion,
                 parakeetModelStore = ParakeetEouModelStore(File(context.applicationContext.filesDir, ParakeetEouModelStore.DIRECTORY_NAME)),
                 parakeetSessionFactory = parakeetSessionFactory,
@@ -107,18 +98,16 @@ object VoiceSessionAssembly {
 }
 
 /**
- * One platform-backed voice session. It owns the capture/STT/TTS lifetime for a
+ * One platform-backed STT session. It owns the capture/STT lifetime for a
  * single [VoiceSessionController.run] and mirrors the coordinator's state to the
  * UI listener and flow.
  */
 private class PlatformVoiceSession(
     private val context: Context,
     private val repository: ConversationRepository,
-    private val fallbackLanguageModel: LanguageModel,
     private val diagnostics: DiagnosticsSink,
     private val clock: MonotonicClock,
     private val downstream: VoiceSessionListener,
-    private val providerSource: VoiceTurnProviderSource,
     private val turnCompletion: SmartTurnDetectorProvider,
     private val parakeetModelStore: ParakeetEouModelStore,
     private val parakeetSessionFactory: ParakeetEouSessionFactory,
@@ -192,26 +181,6 @@ private class PlatformVoiceSession(
         val audioInput =
             audioInputFactory?.invoke()
                 ?: MicrophoneAudioCapture.create(context = context, diagnostics = diagnostics, clock = clock)
-        val textToSpeech: TextToSpeech? =
-            try {
-                OnDeviceTts.create(
-                    context = context,
-                    locale = selection.locale,
-                    voiceId = selection.ttsVoiceId,
-                    diagnostics = diagnostics,
-                    clock = clock,
-                )
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (failure: Throwable) {
-                // Do not silently degrade: report the typed no-voice/init failure so
-                // the dialog can explain that this session is text-only (R-0180).
-                val error =
-                    (failure as? VoiceAgentException)?.error
-                        ?: VoiceAgentError(ErrorCode.TTS_PLAYBACK_FAILED, "the on-device TTS engine could not be initialized")
-                downstream.onTextToSpeechUnavailable(error)
-                null
-            }
         // M10/M-Parakeet: resolve the optional semantic detector once per session.
         // For Parakeet-EOU the model's own EOU head is the corroborator; otherwise
         // the M10 Smart Turn detector applies. A missing/failed detector returns
@@ -221,24 +190,14 @@ private class PlatformVoiceSession(
         val session =
             VoiceSessionCoordinator(
                 audioInput = audioInput,
+                repository = repository,
                 speechToText = speechToText,
-                textToSpeech = textToSpeech,
                 turnDetector =
                     PolicyVoiceTurnDetector.forRoute(
                         diagnostics = diagnostics,
                         clock = clock,
                         semanticDetector = semanticDetector,
                     ),
-                orchestratorFactory = {
-                    TurnOrchestrator(
-                        repository = repository,
-                        languageModel = fallbackLanguageModel,
-                        textToSpeech = textToSpeech,
-                        diagnostics = diagnostics,
-                        clock = clock,
-                    )
-                },
-                providerSource = providerSource,
                 listener = this,
                 diagnostics = diagnostics,
                 clock = clock,
@@ -271,13 +230,6 @@ private class PlatformVoiceSession(
                 } catch (ignored: Throwable) {
                     // Release best-effort; the session already ended.
                 }
-            }
-            try {
-                textToSpeech?.close()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (ignored: Throwable) {
-                // Release best-effort.
             }
             try {
                 audioInput.close()
@@ -340,24 +292,11 @@ private class PlatformVoiceSession(
         transcript: Transcript,
     ) = downstream.onUtteranceCommitted(turnId, transcript)
 
-    override fun onAssistantText(
-        turnId: TurnId,
-        text: String,
-    ) = downstream.onAssistantText(turnId, text)
-
     override fun onConversationChanged(conversation: Conversation) = downstream.onConversationChanged(conversation)
-
-    override fun onTurnFinished(result: TurnResult) = downstream.onTurnFinished(result)
-
-    override fun onBargeIn(timing: BargeInTiming) = downstream.onBargeIn(timing)
-
-    override fun onInterruptionRecovered(recovery: VoiceInterruptionRecovery) = downstream.onInterruptionRecovered(recovery)
 
     override fun onNoSpeech() = downstream.onNoSpeech()
 
     override fun onError(error: VoiceAgentError) = downstream.onError(error)
-
-    override fun onTextToSpeechUnavailable(error: VoiceAgentError) = downstream.onTextToSpeechUnavailable(error)
 
     // endregion
 }

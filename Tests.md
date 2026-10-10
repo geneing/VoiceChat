@@ -78,7 +78,7 @@ they do not fake availability, and none requires a human speaker.
 | `ui.ConversationAppInstrumentedTest` | **Removed.** The app-launch/Compose smoke check is not automatable on Android 17 with `androidx.test.ext:junit` 1.3.0 (Espresso `InputManager.getInstance()` reflection fails). The Compose surface is covered by Robolectric JVM tests; launch is a manual step. |
 | `credentials.AndroidKeystoreCredentialStoreInstrumentedTest` | The real AndroidKeyStore-backed store stores/replaces/removes a credential against the device KeyStore; a second store instance reads the persisted value (restart proxy); the app-private preferences file holds only ciphertext, never the plaintext secret. |
 | `orchestration.TurnOrchestrationInstrumentedTest` | Runs the real M21 `TurnOrchestrator`/`TurnStateMachine` on device with an inline fake provider and an in-memory repository: one text turn completes and persists a truthful assistant turn. No network, credential, microphone, or real TTS; a structural smoke check, not a provider/voice measurement. |
-| `voice.VoiceSessionInstrumentedTest` | Runs the real M24 `VoiceSessionCoordinator` on device with inline fakes (audio, endpoint, STT, provider) and an in-memory repository: one voice turn commits and persists a truthful assistant turn. No network, credential, microphone, or real STT/TTS; a structural smoke check, not a voice-quality measurement. |
+| `voice.VoiceSessionInstrumentedTest` | Runs the STT-only `VoiceSessionCoordinator` on device with inline fakes (audio, endpoint, STT) and an in-memory repository: one finalized transcript persists as a user turn, with no assistant generation. No network, credential, microphone, or real STT; a structural smoke check, not a voice-quality measurement. |
 | `settings.PreferencesSettingsStoreInstrumentedTest` | The real DataStore (Preferences)-backed settings store persists a validated selection to the app-private file and a second store instance reads it (restart proxy); the file holds no credential value. |
 
 > **Not automated on device:** the Compose conversation surface is tested under
@@ -303,8 +303,9 @@ shape. Suggested future entries:
   the [M20 section](#m20--local-model-runtimes-and-curated-catalog) below for
   availability, unprovisioned/corrupt/insufficient-resource paths, and the manual
   memory/thermal/STT-TTS-contention rows.
-- **M21/M24 voice loop and barge-in** — end-to-end STT → LLM → TTS, live
-  transcript, barge-in stop/cancel timing, delivered-vs-generated history.
+- **Current `dev/STT` voice path** — capture → VAD → STT → optional Smart Turn →
+  persisted transcript, plus latency/accuracy measurement. LLM, assistant
+  generation, and TTS are not connected to this microphone path.
 - **M25 quality/latency evaluation** — labeled corpus per condition, per-stage
   p50/tail latency with full configuration metadata.
 - **M26 release hardening** — the full permission/network/model/process-death
@@ -467,9 +468,10 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 milestone; per the device-testing policy it is compiled only, and it is a
 structural smoke check with a fake provider, not a voice-quality measurement.
 
-The live capture -> VAD -> STT -> orchestration loop, TTS chunk overlap, and
-barge-in onset timing remain **manual/device** work for M24/M25 (R-0080–R-0083);
-do not claim them from the JVM suite.
+Live capture -> VAD -> STT -> transcript persistence and the STT latency/accuracy
+measurements remain **manual/device** work for M25; do not claim them from the
+JVM suite. LLM/TTS response and barge-in behavior are outside the current
+`dev/STT` microphone path.
 
 ## M22 — Settings and capability-aware selection
 
@@ -1175,6 +1177,10 @@ R-0138, R-0161, and the M17 section. **Do not mark any of these passed unless
 the run was actually performed.**
 
 ## M24 — Voice loop and responsive barge-in
+
+This section records the earlier M24 voice-response implementation. The current
+`dev/STT` microphone path is narrowed to capture, VAD, on-device STT, optional
+Smart Turn, and transcript persistence; see [voice-loop.md](docs/voice-loop.md).
 
 M24 is a **JVM-first** milestone. The voice loop is a pure-Kotlin coordinator
 (`com.voicechat.agent.voice`) wired over the M02 contracts, so the acceptance

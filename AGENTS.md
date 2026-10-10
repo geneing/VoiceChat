@@ -22,15 +22,17 @@ OpenRouter (M15), DeepSeek (M16), OpenCode Go (M17), OpenCode Zen (M18), and
 Hermes (M19) adapters over a shared remote HTTP/JSON/SSE transport,
 capability-aware settings with DataStore persistence (M22), a text-first
 end-to-end provider slice that drives the selected adapter through orchestration
-(M23), a voice-loop coordinator with responsive barge-in (M24), and optional
+(M23), a voice-loop coordinator (M24; currently narrowed on `dev/STT` to capture,
+VAD, on-device STT, optional Smart Turn, and transcript persistence, with no
+LLM or TTS connection), and optional
 Smart Turn v3.2 semantic end-of-turn detection through ONNX Runtime (M10,
 opt-in and default off), plus eligible on-device local LLM runtimes with a
 curated (currently empty) model catalog and explicit local-versus-remote
 selection (M20). Speech/latency evaluation (M25) now has a pure-Kotlin harness
 (`eval/`) with host tests, but its Pixel 10 result rows are empty, so no latency
 or accuracy claim exists. Release hardening (M26) is in progress: the voice loop
-bounds a stalled recognizer, surfaces a typed text-only state, and honors the
-persisted STT mode; the transport bounds in-flight calls; and app-scoped
+bounds a stalled recognizer, surfaces typed STT errors, and honors the persisted
+STT mode; the transport bounds in-flight calls; and app-scoped
 resources are owned by `AppContainer`. The on-device matrix in `Tests.md` is
 still **not run**. Treat the product
 documents as
@@ -192,7 +194,7 @@ app/                        the only application module
     turn/                   Smart Turn v3.2 ONNX detector + model lifecycle (M10)
     ui/                     Compose conversation + settings UI (M06/M22)
     vad/                    measured-audio VAD/onset + endpointing (M09)
-    voice/                  voice session coordinator + barge-in (M24)
+    voice/                  STT-only session coordinator, VAD, and Smart Turn wiring on `dev/STT`
   schemas/                  exported Room schema JSON (M05)
   src/main/res/                              strings, theme, launcher icon, rules
   src/test/kotlin/com/voicechat/agent/

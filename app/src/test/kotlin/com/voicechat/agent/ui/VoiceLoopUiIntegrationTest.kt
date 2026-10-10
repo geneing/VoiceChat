@@ -9,7 +9,6 @@ import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.fake.FakeLanguageModel
 import com.voicechat.agent.fake.FakeMonotonicClock
 import com.voicechat.agent.fake.InMemoryConversationRepository
-import com.voicechat.agent.voice.BargeInTiming
 import com.voicechat.agent.voice.VoiceSessionController
 import com.voicechat.agent.voice.VoiceSessionFactory
 import com.voicechat.agent.voice.VoiceSessionListener
@@ -35,9 +34,8 @@ import org.junit.Test
  * JVM tests for the M24 voice control on the M06 state holder.
  *
  * They use a scripted [VoiceSessionController] instead of platform capture, so
- * the dialog's mapping of the live provisional transcript, streamed assistant
- * text, barge-in notice, and start/stop is asserted without a device, network,
- * microphone, or real STT/TTS. The coordinator's own pipeline is covered by
+ * the dialog's mapping of live and finalized transcript text plus start/stop is
+ * asserted without a device, network, microphone, or real STT. The coordinator's own pipeline is covered by
  * `voice.VoiceSessionCoordinatorTest`.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -67,7 +65,7 @@ class VoiceLoopUiIntegrationTest {
             val viewModel = newViewModel(InMemoryConversationRepository(), testScheduler)
             lateinit var controller: FakeVoiceSessionController
             viewModel.attachVoiceSession(
-                VoiceSessionFactory { listener, _ ->
+                VoiceSessionFactory { listener ->
                     FakeVoiceSessionController(listener).also { controller = it }
                 },
             )
@@ -87,28 +85,16 @@ class VoiceLoopUiIntegrationTest {
                     .voiceState,
             )
 
-            // Requirement 1: the dialog renders the live provisional transcript
-            // and the streamed assistant text.
+            // The dialog renders the live provisional transcript.
             controller.provisional("hel")
             assertEquals(
                 "hel",
                 viewModel.uiState.value.dialog!!
                     .provisionalUserText,
             )
-            controller.assistantText("Hi there")
-            assertEquals(
-                "Hi there",
+            assertNull(
                 viewModel.uiState.value.dialog!!
                     .liveAssistantText,
-            )
-
-            // Requirement 2/3: a barge-in is surfaced (cancelled notice) and does
-            // not fabricate a completed turn.
-            controller.bargeIn()
-            assertEquals(
-                ConversationNotice.RequestCancelled,
-                viewModel.uiState.value.dialog!!
-                    .notice,
             )
 
             viewModel.onStopVoice()
@@ -126,7 +112,7 @@ class VoiceLoopUiIntegrationTest {
             val viewModel = newViewModel(InMemoryConversationRepository(), testScheduler)
             lateinit var controller: FakeVoiceSessionController
             viewModel.attachVoiceSession(
-                VoiceSessionFactory { listener, _ ->
+                VoiceSessionFactory { listener ->
                     FakeVoiceSessionController(listener).also { controller = it }
                 },
             )
@@ -138,20 +124,19 @@ class VoiceLoopUiIntegrationTest {
             // A callback that arrives after the session ended must not mutate the
             // dialog for a newer state (no stale events, CODE_REVIEW P1, R-0224).
             controller.provisional("late text")
-            controller.assistantText("late reply")
             assertNull(
                 viewModel.uiState.value.dialog!!
                     .provisionalUserText,
             )
             assertEquals(
-                "",
+                null,
                 viewModel.uiState.value.dialog!!
                     .liveAssistantText,
             )
 
             // A late session-state callback from the stopped session must also be
             // dropped instead of resurrecting a stale voice state.
-            controller.sessionState(VoiceSessionState.SPEAKING)
+            controller.sessionState(VoiceSessionState.FAILED)
             assertEquals(
                 VoiceSessionState.IDLE,
                 viewModel.uiState.value.dialog!!
@@ -165,7 +150,7 @@ class VoiceLoopUiIntegrationTest {
             val viewModel = newViewModel(InMemoryConversationRepository(), testScheduler)
             val controllers = mutableListOf<FakeVoiceSessionController>()
             viewModel.attachVoiceSession(
-                VoiceSessionFactory { listener, _ ->
+                VoiceSessionFactory { listener ->
                     FakeVoiceSessionController(listener).also { controllers += it }
                 },
             )
@@ -223,9 +208,5 @@ class VoiceLoopUiIntegrationTest {
         fun provisional(text: String) = listener.onProvisionalTranscript(TurnId("v1"), text)
 
         fun sessionState(state: VoiceSessionState) = listener.onSessionState(state)
-
-        fun assistantText(text: String) = listener.onAssistantText(TurnId("v1"), text)
-
-        fun bargeIn() = listener.onBargeIn(BargeInTiming(interruptedTurnId = TurnId("v1"), onsetAtNanos = 0L, stopIssuedAtNanos = 10L))
     }
 }

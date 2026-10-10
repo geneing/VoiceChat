@@ -111,12 +111,11 @@ class AppContainer(
         )
     }
 
-    /** One voice session factory; resolves the persisted STT/TTS selection per session. */
+    /** One voice session factory; resolves the persisted STT selection per session. */
     val voiceFactory by lazy {
         VoiceSessionAssembly.platformFactory(
             context = appContext,
             repository = repository,
-            fallbackLanguageModel = languageModel,
             diagnostics = diagnosticsSink,
             turnCompletion = smartTurnDetectorProvider,
             parakeetSessionFactory = OnnxParakeetEouSessionFactory(diagnostics = diagnosticsSink),
@@ -126,7 +125,6 @@ class AppContainer(
                 VoiceRuntimeSelection(
                     sttMode = settings.sttMode,
                     locale = settings.locale(),
-                    ttsVoiceId = settings.ttsVoiceId,
                 )
             },
         )

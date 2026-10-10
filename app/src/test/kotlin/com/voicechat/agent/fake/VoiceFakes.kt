@@ -11,12 +11,9 @@ import com.voicechat.agent.domain.Transcript
 import com.voicechat.agent.domain.TranscriptRevision
 import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.domain.VoiceAgentError
-import com.voicechat.agent.orchestration.TurnResult
 import com.voicechat.agent.vad.EndpointReason
 import com.voicechat.agent.vad.TurnDetectionEvent
 import com.voicechat.agent.vad.VadReason
-import com.voicechat.agent.voice.BargeInTiming
-import com.voicechat.agent.voice.VoiceInterruptionRecovery
 import com.voicechat.agent.voice.VoiceSessionListener
 import com.voicechat.agent.voice.VoiceSessionState
 import com.voicechat.agent.voice.VoiceTurnDetector
@@ -263,13 +260,8 @@ class RecordingVoiceSessionListener : VoiceSessionListener {
     val sessionStates: MutableList<VoiceSessionState> = mutableListOf()
     val provisional: MutableList<Pair<TurnId, String>> = mutableListOf()
     val committed: MutableList<Pair<TurnId, Transcript>> = mutableListOf()
-    val assistantText: MutableList<Pair<TurnId, String>> = mutableListOf()
     val conversations: MutableList<Conversation> = mutableListOf()
-    val finished: MutableList<TurnResult> = mutableListOf()
-    val bargeIns: MutableList<BargeInTiming> = mutableListOf()
-    val recoveries: MutableList<VoiceInterruptionRecovery> = mutableListOf()
     val errors: MutableList<VoiceAgentError> = mutableListOf()
-    val textToSpeechUnavailable: MutableList<VoiceAgentError> = mutableListOf()
 
     /** Number of logical turns that started listening. */
     var listeningCount: Int = 0
@@ -301,27 +293,8 @@ class RecordingVoiceSessionListener : VoiceSessionListener {
         committed += turnId to transcript
     }
 
-    override fun onAssistantText(
-        turnId: TurnId,
-        text: String,
-    ) {
-        assistantText += turnId to text
-    }
-
     override fun onConversationChanged(conversation: Conversation) {
         conversations += conversation
-    }
-
-    override fun onTurnFinished(result: TurnResult) {
-        finished += result
-    }
-
-    override fun onBargeIn(timing: BargeInTiming) {
-        bargeIns += timing
-    }
-
-    override fun onInterruptionRecovered(recovery: VoiceInterruptionRecovery) {
-        recoveries += recovery
     }
 
     override fun onNoSpeech() {
@@ -330,9 +303,5 @@ class RecordingVoiceSessionListener : VoiceSessionListener {
 
     override fun onError(error: VoiceAgentError) {
         errors += error
-    }
-
-    override fun onTextToSpeechUnavailable(error: VoiceAgentError) {
-        textToSpeechUnavailable += error
     }
 }

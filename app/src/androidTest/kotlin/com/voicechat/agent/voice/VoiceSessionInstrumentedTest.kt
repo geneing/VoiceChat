@@ -3,30 +3,17 @@ package com.voicechat.agent.voice
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.voicechat.agent.contracts.AudioInput
 import com.voicechat.agent.contracts.ConversationRepository
-import com.voicechat.agent.contracts.LanguageModel
-import com.voicechat.agent.contracts.LlmCapabilities
-import com.voicechat.agent.contracts.LlmRequest
-import com.voicechat.agent.contracts.LlmStreamEvent
-import com.voicechat.agent.contracts.NoOpDiagnosticsSink
 import com.voicechat.agent.contracts.SpeechActivity
 import com.voicechat.agent.contracts.SpeechToText
 import com.voicechat.agent.contracts.SttEvent
-import com.voicechat.agent.diagnostics.SystemMonotonicClock
-import com.voicechat.agent.domain.AssistantTurn
 import com.voicechat.agent.domain.AudioFormat
 import com.voicechat.agent.domain.AudioFrame
 import com.voicechat.agent.domain.Conversation
 import com.voicechat.agent.domain.ConversationId
 import com.voicechat.agent.domain.ConversationSummary
-import com.voicechat.agent.domain.DeliveryState
 import com.voicechat.agent.domain.EngineId
-import com.voicechat.agent.domain.ModelId
-import com.voicechat.agent.domain.ProviderId
-import com.voicechat.agent.domain.ProviderModelSelection
 import com.voicechat.agent.domain.Transcript
 import com.voicechat.agent.domain.Turn
-import com.voicechat.agent.domain.TurnId
-import com.voicechat.agent.orchestration.TurnOrchestrator
 import com.voicechat.agent.vad.EndpointReason
 import com.voicechat.agent.vad.TurnDetectionEvent
 import com.voicechat.agent.vad.VadReason
@@ -51,22 +38,18 @@ import org.junit.runner.RunWith
 /**
  * On-device smoke test for the M24 [VoiceSessionCoordinator].
  *
- * It runs the **real** coordinator (capture → endpoint → orchestrator) on the
- * device with inline, deterministic platform-free fakes and an in-memory
- * repository, proving the assembly compiles and completes one voice turn to a
- * truthful persisted state under the Android runtime. It uses no network,
- * credential, microphone, or real STT/TTS, so it is a structural smoke check,
- * not a voice-quality measurement (see `Tests.md`).
+ * It runs the **real** STT-only coordinator (capture → endpoint → transcript
+ * persistence) on the device with inline deterministic fakes and an in-memory
+ * repository. It uses no network, credential, microphone, or real STT, so it is
+ * a structural smoke check, not a voice-quality measurement (see `Tests.md`).
  *
  * Compiled by `:app:assembleDebugAndroidTest`; run only on a device with
  * `:app:connectedDebugAndroidTest`.
  */
 @RunWith(AndroidJUnit4::class)
 class VoiceSessionInstrumentedTest {
-    private val selection = ProviderModelSelection(ProviderId("device-voice-fake"), ModelId("device-model"))
-
     @Test
-    fun aFakeVoiceTurnCommitsAndPersistsOnDevice() =
+    fun aFakeVoiceSessionPersistsTheTranscriptWithoutGeneratingAReply() =
         runBlocking {
             val repository = InlineRepository()
             val conversation =
@@ -78,31 +61,17 @@ class VoiceSessionInstrumentedTest {
             val coordinator =
                 VoiceSessionCoordinator(
                     audioInput = InlineAudioInput(),
+                    repository = repository,
                     speechToText = InlineSpeechToText(),
-                    textToSpeech = null,
                     turnDetector = InlineDetector(),
-                    orchestratorFactory = {
-                        TurnOrchestrator(
-                            repository = repository,
-                            languageModel = InlineLanguageModel(selection.providerId),
-                            textToSpeech = null,
-                            diagnostics = NoOpDiagnosticsSink,
-                            clock = SystemMonotonicClock,
-                            wallClock = { 2L },
-                            assistantTurnId = { TurnId("assistant-1") },
-                        )
-                    },
-                    providerSource = {
-                        VoiceTurnProvider(selection, reasoning = null, languageModel = InlineLanguageModel(selection.providerId))
-                    },
-                    listener = VoiceSessionListener.NONE,
                     dispatcher = Dispatchers.Default,
+                    wallClock = { 2L },
                 )
 
             coroutineScope {
                 val session = launch(Dispatchers.Default) { coordinator.run(conversation) }
                 withTimeout(10_000L) {
-                    while (repository.load(conversation.id)?.turns?.size != 2) {
+                    while (repository.load(conversation.id)?.turns?.size != 1) {
                         delay(20L)
                     }
                 }
@@ -111,10 +80,8 @@ class VoiceSessionInstrumentedTest {
 
             val persisted = repository.load(conversation.id)
             assertNotNull(persisted)
-            assertEquals(2, persisted!!.turns.size)
-            val assistant = persisted.turns[1] as AssistantTurn
-            assertEquals("Hello voice", assistant.generated.text)
-            assertEquals(DeliveryState.COMPLETED, assistant.delivery.state)
+            assertEquals(1, persisted!!.turns.size)
+            assertEquals("hello voice", (persisted.turns.single() as com.voicechat.agent.domain.UserTurn).transcript.text)
         }
 
     private class InlineDetector : VoiceTurnDetector {
@@ -145,21 +112,6 @@ class VoiceSessionInstrumentedTest {
             flowOf(
                 AudioFrame(format, ShortArray(160), capturedAtNanos = 0L),
                 AudioFrame(format, ShortArray(160), capturedAtNanos = 0L),
-            )
-
-        override suspend fun close() = Unit
-    }
-
-    private class InlineLanguageModel(
-        override val providerId: ProviderId,
-    ) : LanguageModel {
-        override val capabilities: LlmCapabilities = LlmCapabilities()
-
-        override fun stream(request: LlmRequest): Flow<LlmStreamEvent> =
-            flowOf(
-                LlmStreamEvent.Delta("Hello"),
-                LlmStreamEvent.Delta(" voice"),
-                LlmStreamEvent.Completed(),
             )
 
         override suspend fun close() = Unit
