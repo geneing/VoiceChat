@@ -19,9 +19,10 @@ package com.voicechat.agent.stt.parakeet
  * | [finalize] | `finalize(): DecodeResult` |
  * | [forceEndOfUtterance] | `forceEndOfUtterance(): DecodeResult` |
  *
- * The adapter buffers captured audio into whole chunks and only calls [accept]
- * with exactly `config.chunkSamples` samples. A session is confined to one worker
- * thread by the adapter, so implementations need not be thread-safe.
+ * The adapter buffers captured audio and calls [accept] as data arrives. One
+ * decoder session is retained for the capture; VAD uses [forceEndOfUtterance]
+ * between turns so caches continue into the next utterance. A session is confined
+ * to one worker thread by the adapter, so implementations need not be thread-safe.
  */
 interface ParakeetDecodeSession : AutoCloseable {
     /** Clears all decode state so the next chunk starts a fresh utterance. */
@@ -40,8 +41,8 @@ interface ParakeetDecodeSession : AutoCloseable {
 /**
  * Builds one [ParakeetDecodeSession] per recognition session.
  *
- * The adapter needs a fresh decoder per
- * [com.voicechat.agent.contracts.SpeechToText.transcribe] call (per turn), so this
+ * The adapter creates one decoder per
+ * [com.voicechat.agent.contracts.SpeechToText] instance (per capture), so this
  * factory is the injection point at the app boundary. Production uses
  * [ParakeetDecoderSessions.ofDecoder]; tests inject a deterministic fake.
  */

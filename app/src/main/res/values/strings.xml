@@ -20,6 +20,10 @@
     <string name="dismiss">Dismiss</string>
     <string name="message_label">Message</string>
     <string name="provisional_label">Provisional</string>
+    <string name="parakeet_eou_tag">EOU</string>
+    <string name="parakeet_timing_both">EOU %1$s · VAD %2$s · Δ %3$s</string>
+    <string name="parakeet_timing_eou_only">EOU %1$s · VAD endpoint pending</string>
+    <string name="parakeet_timing_vad_only">VAD endpoint %1$s · EOU pending</string>
 
     <!-- Turn states -->
     <string name="generating">Generating\u2026</string>

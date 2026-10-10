@@ -4,8 +4,10 @@ import com.voicechat.agent.domain.ConversationId
 import com.voicechat.agent.domain.ConversationSummary
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.Turn
+import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.domain.TurnPhase
 import com.voicechat.agent.providers.ProviderDisclosure
+import com.voicechat.agent.voice.ParakeetEndpointTiming
 import com.voicechat.agent.voice.VoiceSessionState
 
 /**
@@ -78,6 +80,10 @@ data class ConversationDialogState(
     val title: String? = null,
     val turns: List<Turn> = emptyList(),
     val provisionalUserText: String? = null,
+    /** Turn key for [provisionalUserText], used to attach Parakeet timing metadata. */
+    val provisionalTurnId: TurnId? = null,
+    /** Per-turn Parakeet EOU/VAD timing observations for the current dialog session. */
+    val parakeetEndpointTimings: Map<TurnId, ParakeetEndpointTiming> = emptyMap(),
     val liveAssistantText: String? = null,
     val phase: TurnPhase = TurnPhase.IDLE,
     val composerText: String = "",

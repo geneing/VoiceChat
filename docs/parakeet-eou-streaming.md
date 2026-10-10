@@ -45,19 +45,37 @@ Decode loop per encoder frame: up to 10 non-blank symbols; blank breaks;
 EOU sets `eouDetected` and breaks; EOB is not emitted as text; confidence is
 `exp(mean(logSoftmax(logit)))` over emitted tokens.
 
-## Two finalization signals, one decision
+## Kotlin microphone path: independent EOU and VAD
 
-1. **EOU (model-internal)** — the joint emits `<EOU>`. speech-swift debounces it
-   (default 1280 ms of sustained EOU with no new tokens) because the head fires
-   mid-word on disfluencies.
-2. **VAD / bounded silence cap (external)** — `BoundedTurnEndpointPolicy`
-   force-finalizes. This is the guarantee a trailing turn terminates.
+The current Kotlin voice path follows the upstream
+[streaming inference guide](https://github.com/soniqo/speech-swift/blob/main/docs/inference/parakeet-streaming-asr-inference.md)
+using the repository's existing frame-driven VAD:
 
-Host measurement on the 10 local pseudo-labeled clips: with the 1280 ms debounce
-the EOU head committed only **1 of 10** clips, while streaming decode still beat
-naive full-utterance decode (mean WER 0.331 vs 0.846; host RTF ~0.10-0.14). So
-the VAD/silence path must be the primary commit and EOU a *semantic
-corroborator*, never the sole endpoint.
+1. The adapter converts captured 16 kHz mono PCM to float32, buffers model-sized
+   10,240-sample (640 ms) blocks in a bounded queue, and decodes them off the main
+   thread. It emits interim transcript revisions while decoding.
+2. The Parakeet joint's debounced `<EOU>` final is surfaced as a separate UI tag
+   on the recognized transcript. The tag is not appended to the recognized words.
+3. VAD consumes the same capture frames concurrently and independently. Its
+   bounded silence endpoint remains the commit guarantee; the live Parakeet path
+   does not pass EOU into the VAD semantic-detector slot, so each signal can be
+   compared without one controlling the other.
+4. When VAD ends a turn, the adapter calls `forceEndOfUtterance()` only if text
+   remains after the last model EOU. That commits pending transcript text without
+   clearing encoder/predictor caches, which continue into the next utterance.
+   The existing VAD is RMS-based rather than Silero, so the upstream Silero
+   512-sample carry-over implementation is not copied into this path.
+5. The UI shows EOU and VAD audio offsets plus `EOU - VAD` in milliseconds when
+   both are available. Negative means Parakeet reported EOU first. EOU timing is
+   relative to the STT turn input; VAD timing is relative to its speech-onset
+   event, so the comparison includes the small recognizer handoff offset.
+
+The 1280 ms EOU debounce remains: the head can fire mid-word on disfluencies.
+Host measurement on the 10 local pseudo-labeled clips recorded only **1 of 10**
+EOU commits at that debounce, while streaming decode still beat naive
+full-utterance decode (mean WER 0.331 vs 0.846; host RTF ~0.10-0.14). These are
+host results, not Pixel 10 latency or accuracy claims. Device timing comparison
+has not been run for this independent path.
 
 ## Frozen seams
 
@@ -104,7 +122,7 @@ interface ParakeetEouRuntime : AutoCloseable {
 ### `ParakeetEouSpeechToText` (stream 3)
 
 Implements `com.voicechat.agent.contracts.SpeechToText`. Also exposes the EOU
-signal for the turn policy:
+signal for UI tagging and timing comparison:
 
 ```
 interface EndOfUtteranceSignal {
@@ -116,9 +134,9 @@ interface EndOfUtteranceSignal {
 
 ### `EouTurnCompletionDetector` (stream 3)
 
-Implements `contracts.TurnCompletionDetector`. At a VAD candidate pause:
-`COMPLETE` when a confirmed EOU was seen within `config.eouWindowMillis` of the
-pause, else `INCOMPLETE` (bounded cap still ends the turn). Never per-frame.
+Implements `contracts.TurnCompletionDetector` for policy/evaluation experiments.
+The live Parakeet microphone path keeps this detector out of the policy slot so
+EOU and VAD endpoint timing remain independent.
 
 ### Selection (stream 4)
 

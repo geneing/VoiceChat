@@ -3,7 +3,6 @@ package com.voicechat.agent.voice
 import com.voicechat.agent.contracts.DiagnosticsSink
 import com.voicechat.agent.contracts.NoOpDiagnosticsSink
 import com.voicechat.agent.contracts.SpeechToText
-import com.voicechat.agent.contracts.TurnCompletionDetector
 import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.diagnostics.SystemMonotonicClock
 import com.voicechat.agent.log.AppLog
@@ -15,7 +14,6 @@ import com.voicechat.agent.stt.parakeet.ParakeetDecoderSessions
 import com.voicechat.agent.stt.parakeet.ParakeetEouConfig
 import com.voicechat.agent.stt.parakeet.ParakeetEouSpeechToText
 import com.voicechat.agent.stt.parakeet.ParakeetEouSpeechToTextConfig
-import com.voicechat.agent.stt.parakeet.ParakeetEouTurnDetectorFactory
 import com.voicechat.agent.stt.parakeet.ParakeetStreamingDecoder
 import com.voicechat.agent.stt.parakeet.ParakeetVocabulary
 import kotlinx.coroutines.CoroutineDispatcher
@@ -27,10 +25,10 @@ import java.io.File
  * The production [ParakeetEouSessionFactory] (stream 3 ↔ stream 4).
  *
  * It turns a verified app-private model set into the adapter pair the voice loop
- * runs: the `OnnxParakeetEouRuntime`'s three graphs are opened once, wrapped in a
- * per-turn [ParakeetStreamingDecoder], and exposed through
- * [ParakeetEouSpeechToText] together with the model's own `<EOU>` corroborator
- * ([ParakeetEouTurnDetectorFactory]).
+ * runs: the `OnnxParakeetEouRuntime`'s three graphs are opened once and wrapped
+ * in one streaming decoder for the complete capture. [ParakeetEouSpeechToText]
+ * exposes interim/final text and a separate model EOU signal while VAD controls
+ * force-finalization.
  *
  * **Lifecycle.** One session owns one runtime. `create` opens the graphs; a graph
  * that cannot be opened throws a typed failure (`UnexpectedParakeetTensorException`
@@ -47,7 +45,7 @@ import java.io.File
  * artifact is a loud failure, never a silently wrong transcript.
  *
  * @param diagnostics privacy-safe M04 sink, forwarded to the STT adapter.
- * @param clock monotonic clock for per-chunk timing and EOU ageing.
+ * @param clock monotonic clock for per-chunk timing.
  * @param config pinned decoder geometry; defaults to [ParakeetEouConfig.pinned].
  * @param adapterConfig chunking/debounce tuning for [ParakeetEouSpeechToText].
  * @param decodeDispatcher dispatcher the CPU-bound decode loop runs on.
@@ -79,7 +77,7 @@ class OnnxParakeetEouSessionFactory(
             )
         return OnnxParakeetEouSession(
             speechToText = speechToText,
-            turnDetector = ParakeetEouTurnDetectorFactory.forEngine(speechToText, clock = clock),
+            endOfUtterance = speechToText.endOfUtterance,
             runtime = runtime,
         )
     }
@@ -121,7 +119,7 @@ class OnnxParakeetEouSessionFactory(
  */
 internal class OnnxParakeetEouSession(
     override val speechToText: SpeechToText,
-    override val turnDetector: TurnCompletionDetector,
+    override val endOfUtterance: com.voicechat.agent.stt.parakeet.EndOfUtteranceSignal,
     private val runtime: AutoCloseable,
 ) : ParakeetEouSession {
     private var closed = false

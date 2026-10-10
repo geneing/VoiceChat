@@ -1,40 +1,30 @@
 package com.voicechat.agent.voice
 
 import com.voicechat.agent.contracts.SpeechToText
-import com.voicechat.agent.contracts.TurnCompletionDetector
 import com.voicechat.agent.stt.SttEngine
+import com.voicechat.agent.stt.parakeet.EndOfUtteranceSignal
 
 /**
  * The Parakeet-EOU adapter pair for one voice session (stream 3 ↔ stream 4).
  *
- * Parakeet-EOU is a streaming recognizer whose EOU head is the natural semantic
- * end-of-turn corroborator (`docs/parakeet-eou-streaming.md`). One adapter
- * instance therefore owns both the [SpeechToText] surface and the optional
- * [turnDetector] built from the same decode session, and is closed once per
- * session.
+ * Parakeet-EOU streams recognized text and a model-internal EOU signal. The
+ * independent VAD endpoint remains responsible for force-finalizing pending
+ * text, then the adapter reuses its decoder caches for the next utterance.
  */
 interface ParakeetEouSession : AutoCloseable {
     /** The streaming recognizer to run in the voice loop. */
     val speechToText: SpeechToText
 
-    /**
-     * The EOU-backed semantic completion detector, or `null` when the EOU signal
-     * is not available. `null` keeps the bounded VAD-only endpoint; it is never
-     * fabricated.
-     */
-    val turnDetector: TurnCompletionDetector?
+    /** Model EOU events on this streaming session, when the engine exposes them. */
+    val endOfUtterance: EndOfUtteranceSignal? get() = null
 }
 
 /**
  * Builds a [ParakeetEouSession] from a verified model set (stream 4 seam).
  *
- * **Cross-stream dependency.** The production implementation is supplied by
- * stream 3 (`ParakeetEouSpeechToText` + `EouTurnCompletionDetector`). Stream 4
- * resolves the *selection* and owns this seam so the voice loop, settings, and
- * resolution can compile and be tested before the adapter lands; until stream 3
- * provides the concrete factory the app wires
- * [UnavailableParakeetEouSessionFactory], which reports a typed
- * `MODEL_UNAVAILABLE` rather than fabricating a session.
+ * The production implementation loads the verified ONNX graphs and creates one
+ * streaming recognizer for the selected engine. The unavailable default reports
+ * a typed `MODEL_UNAVAILABLE` rather than fabricating a session.
  *
  * Implementations must open the ONNX graphs off the main thread and must throw a
  * typed failure (never return a half-initialized session) when a graph cannot be

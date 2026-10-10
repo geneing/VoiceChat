@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -43,15 +45,14 @@ import java.util.concurrent.atomic.AtomicLong
  * [AudioFrame] capture flow, converts packed 16-bit samples to float32, buffers
  * whole decode chunks, drives the decoder off the main thread, and maps decode
  * steps to [SttEvent]s. It also publishes the model's `<EOU>` signal through
- * [EndOfUtteranceSignal] so the M09/M10 turn policy can corroborate a candidate
- * pause without a second decode ([EouTurnCompletionDetector]).
+ * [EndOfUtteranceSignal] for the UI to tag model-confirmed EOU and compare its
+ * audio offset with the independent VAD endpoint.
  *
  * **Partial vs final.** Every decode step that produces text emits
  * `isFinal = false` (a revisable hypothesis) with a monotonic
- * [TranscriptRevision]. A decode step that ends the utterance — the model's
- * confirmed `<EOU>`, a VAD-driven [ParakeetDecodeSession.forceEndOfUtterance],
- * or end-of-input [ParakeetDecodeSession.finalize] — emits exactly one
- * `isFinal = true` transcript, and nothing more is emitted for that session.
+ * [TranscriptRevision]. A model-confirmed `<EOU>` emits a final segment. At a VAD
+ * endpoint, [ParakeetDecodeSession.forceEndOfUtterance] finalizes any text that
+ * arrived after that EOU while retaining the streaming caches for the next turn.
  *
  * **Non-blocking, honest backpressure.** Decode is CPU-heavy (~100-200 ms per
  * 320 ms chunk on device), so the capture coroutine only converts and forwards
@@ -72,7 +73,7 @@ import java.util.concurrent.atomic.AtomicLong
  * engine id.
  *
  * @param engineId the engine identity reported to settings and diagnostics.
- * @param decoderFactory builds one decode session per [transcribe] call.
+ * @param decoderFactory builds one decode session for this adapter/capture.
  * @param config chunking/debounce parameters (see [ParakeetEouSpeechToTextConfig]).
  * @param diagnostics privacy-safe M04 sink.
  * @param clock monotonic clock for the per-chunk timing.
@@ -96,299 +97,330 @@ class ParakeetEouSpeechToText(
     private val decodeDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : SpeechToText {
     private val closed = AtomicBoolean(false)
+    private val decoderMutex = Mutex()
+    private var decoderSession: ParakeetDecodeSession? = null
 
     private val eouSignal = ParakeetEouSignal()
 
-    /** The model's confirmed `<EOU>` signal, for the turn-completion detector. */
+    /** The model's confirmed `<EOU>` signal, for UI and timing comparison. */
     val endOfUtterance: EndOfUtteranceSignal get() = eouSignal
 
     override fun transcribe(audio: Flow<AudioFrame>): Flow<SttEvent> =
         flow {
-            check(!closed.get()) { "ParakeetEouSpeechToText has been closed" }
+            decoderMutex.withLock {
+                check(!closed.get()) { "ParakeetEouSpeechToText has been closed" }
 
-            val startedAtNanos = clock.nanoTime()
-            var frameCount = 0
-            var chunkCount = 0
-            var finalCharacterCount = 0
-            var droppedChunks = 0L
-            var totalDecodeNanos = 0L
-            var maxDecodeNanos = 0L
-            var eouConfirmedCount = 0
-            var revision = 0
-            var failed = false
-            var outcome = DiagnosticOutcome.CANCELLED
-            var errorCode: String? = null
-            AppLog.d {
-                "stt: parakeet session start engine=${engineId.value} " +
-                    "chunkSamples=${config.chunkSamples} queueCapacity=${config.chunkQueueCapacity} " +
-                    "eouDebounceMs=${config.eouDebounceMillis}"
-            }
-            record(
-                outcome = DiagnosticOutcome.STARTED,
-                startedAtNanos = startedAtNanos,
-                frameCount = frameCount,
-                chunkCount = chunkCount,
-                characterCount = finalCharacterCount,
-                droppedChunks = 0L,
-                errorCode = errorCode,
-            )
-
-            // New capture: clear the EOU signal so a stale confirmation from the
-            // previous turn can never corroborate this one.
-            eouSignal.resetCapture()
-
-            val session = decoderFactory.create()
-            try {
-                coroutineScope {
-                    // Bounded chunk queue: the capture side converts and enqueues;
-                    // the decode side is the slow consumer. Capacity is in chunks.
-                    val chunks = Channel<FloatArray>(capacity = config.chunkQueueCapacity)
-                    // Events are produced on the decode dispatcher and emitted from
-                    // this flow's own coroutine, so a FlowCollector is never shared
-                    // across coroutines.
-                    val events = Channel<SttEvent>(Channel.UNLIMITED)
-
-                    val capture =
-                        launch {
-                            // Read at most chunkQueueCapacity + 1 without a consumer so
-                            // an overflowing producer drops the oldest buffered chunk and
-                            // counts it, instead of suspending the capture flow.
-                            val buffer = ArrayDeque<FloatArray>()
-                            var pending = FloatArray(config.chunkSamples)
-                            var pendingCount = 0
-
-                            audio.collect { frame ->
-                                frameCount++
-                                val samples = frame.samples
-                                var index = 0
-                                while (index < samples.size) {
-                                    val room = config.chunkSamples - pendingCount
-                                    val take = minOf(room, samples.size - index)
-                                    for (offset in 0 until take) {
-                                        pending[pendingCount + offset] = samples[index + offset] / PCM_FULL_SCALE
-                                    }
-                                    pendingCount += take
-                                    index += take
-                                    if (pendingCount == config.chunkSamples) {
-                                        val gain = inputGain.gainFor(pending, pendingCount)
-                                        inputGain.apply(pending, pendingCount, gain)
-                                        AppLog.v {
-                                            "stt: parakeet input chunk normalized gain=$gain " +
-                                                "(target=${ParakeetInputGain.DEFAULT_TARGET_PEAK})"
-                                        }
-                                        buffer.addLast(pending)
-                                        pending = FloatArray(config.chunkSamples)
-                                        pendingCount = 0
-                                        // Drain to the decoder without ever blocking capture.
-                                        while (buffer.isNotEmpty()) {
-                                            if (chunks.trySend(buffer.first()).isSuccess) {
-                                                buffer.removeFirst()
-                                            } else {
-                                                break
-                                            }
-                                        }
-                                        // If the channel is full, keep buffering up to one
-                                        // extra chunk, then drop the oldest to make room.
-                                        while (buffer.size > config.chunkQueueCapacity) {
-                                            buffer.removeFirst()
-                                            droppedChunks++
-                                            AppLog.v {
-                                                "stt: parakeet chunk dropped total=$droppedChunks (decode consumer behind)"
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            // Flush any trailing partial chunk on input end so no
-                            // captured sample is silently discarded.
-                            if (pendingCount > 0) {
-                                val tail = pending.copyOf(pendingCount)
-                                inputGain.apply(tail, pendingCount)
-                                buffer.addLast(tail)
-                            }
-                            while (buffer.isNotEmpty()) {
-                                if (chunks.trySend(buffer.first()).isSuccess) {
-                                    buffer.removeFirst()
-                                } else {
-                                    buffer.removeFirst()
-                                    droppedChunks++
-                                }
-                            }
-                            chunks.close()
-                            AppLog.d {
-                                "stt: parakeet capture ended frames=$frameCount droppedChunks=$droppedChunks"
-                            }
-                        }
-
-                    val decode =
-                        launch(decodeDispatcher) {
-                            // Tracks the terminal *inside this coroutine*, not via the
-                            // collector, so a model-flagged final cannot be followed by a
-                            // second finalize final (the two coroutines race otherwise).
-                            var terminalSent = false
-                            try {
-                                for (chunk in chunks) {
-                                    val decodeStartedAtNanos = clock.nanoTime()
-                                    AppLog.v {
-                                        "stt: parakeet chunk#$chunkCount samples=${chunk.size} dequeued; decoding"
-                                    }
-                                    val result = session.accept(chunk)
-                                    val decodeNanos = clock.nanoTime() - decodeStartedAtNanos
-                                    totalDecodeNanos += decodeNanos
-                                    if (decodeNanos > maxDecodeNanos) maxDecodeNanos = decodeNanos
-                                    chunkCount++
-                                    AppLog.v {
-                                        "stt: parakeet chunk#$chunkCount decoded decodeMs=${decodeNanos / 1_000_000L} " +
-                                            "chars=${result.text.length} final=${result.isFinal} " +
-                                            "eou=${result.eouDetected} segment=${result.segmentIndex} " +
-                                            "confidence=${result.confidence}"
-                                    }
-
-                                    if (result.eouDetected) {
-                                        val confirmed =
-                                            eouSignal.confirmEou(
-                                                offsetMillis = chunkCount.toLong() * chunkDurationMillis(config),
-                                                confidence = result.confidence,
-                                                debounceMillis = config.eouDebounceMillis,
-                                            )
-                                        if (confirmed) {
-                                            eouConfirmedCount++
-                                            AppLog.v {
-                                                "stt: parakeet eou confirmed count=$eouConfirmedCount " +
-                                                    "offsetMs=${chunkCount.toLong() * chunkDurationMillis(config)} " +
-                                                    "confidence=${result.confidence}"
-                                            }
-                                        } else {
-                                            AppLog.v {
-                                                "stt: parakeet eou refresh (within debounce) " +
-                                                    "offsetMs=${chunkCount.toLong() * chunkDurationMillis(config)}"
-                                            }
-                                        }
-                                    }
-
-                                    eventFor(result, revision++)?.let { event ->
-                                        if (event is SttEvent.Result) {
-                                            if (event.transcript.isFinal) terminalSent = true
-                                            AppLog.v {
-                                                "stt: parakeet emit revision=${revision - 1} " +
-                                                    "final=${event.transcript.isFinal} " +
-                                                    "chars=${event.transcript.text.length} " +
-                                                    "confidence=${event.transcript.confidence}"
-                                            }
-                                        } else if (event is SttEvent.Failed) {
-                                            AppLog.v {
-                                                "stt: parakeet emit failed code=${event.error.code}"
-                                            }
-                                        }
-                                        events.send(event)
-                                    }
-                                }
-
-                                // End of input: flush the decoder's buffered right
-                                // context. `finalize()` always yields the terminal
-                                // transcript, so a trailing turn commits here even if
-                                // the model never flagged EOU. If a decode step already
-                                // emitted a final (a debounced EOU), the terminal was
-                                // delivered and there is nothing to add.
-                                if (!failed && !terminalSent) {
-                                    val tail = session.finalize()
-                                    AppLog.d {
-                                        "stt: parakeet finalize chars=${tail.text.length} final=${tail.isFinal} " +
-                                            "eou=${tail.eouDetected} confidence=${tail.confidence}"
-                                    }
-                                    if (tail.eouDetected) {
-                                        if (eouSignal.confirmEou(
-                                                offsetMillis = chunkCount.toLong() * chunkDurationMillis(config),
-                                                confidence = tail.confidence,
-                                                debounceMillis = config.eouDebounceMillis,
-                                            )
-                                        ) {
-                                            eouConfirmedCount++
-                                        }
-                                    }
-                                    eventFor(tail, revision++, forceFinal = true)?.let { event ->
-                                        if (event is SttEvent.Result) {
-                                            AppLog.v {
-                                                "stt: parakeet emit (finalize) final=${event.transcript.isFinal} " +
-                                                    "chars=${event.transcript.text.length} " +
-                                                    "confidence=${event.transcript.confidence}"
-                                            }
-                                        }
-                                        events.send(event)
-                                    }
-                                }
-                            } catch (cancellation: CancellationException) {
-                                throw cancellation
-                            } catch (failure: Throwable) {
-                                // Decoder/runtime failure mapped to a typed STT error;
-                                // the underlying message is never surfaced (it may
-                                // contain content).
-                                failed = true
-                                events.send(
-                                    SttEvent.Failed(
-                                        mapFailure(failure, ErrorCode.STT_RECOGNITION_FAILED, "decode failed"),
-                                    ),
-                                )
-                            } finally {
-                                events.close()
-                            }
-                        }
-
-                    for (event in events) {
-                        when (event) {
-                            is SttEvent.Result -> {
-                                if (event.transcript.isFinal) {
-                                    outcome = DiagnosticOutcome.COMPLETED
-                                    finalCharacterCount = event.transcript.text.length
-                                }
-                            }
-
-                            is SttEvent.Failed -> {
-                                outcome = DiagnosticOutcome.FAILED
-                                errorCode = event.error.code.name
-                                failed = true
-                            }
-                        }
-                        emit(event)
-                    }
-
-                    capture.join()
-                    decode.join()
+                val startedAtNanos = clock.nanoTime()
+                var frameCount = 0
+                var chunkCount = 0
+                var finalCharacterCount = 0
+                var droppedChunks = 0L
+                var totalDecodeNanos = 0L
+                var maxDecodeNanos = 0L
+                var eouConfirmedCount = 0
+                var revision = 0
+                var capturedSampleCount = 0L
+                var failed = false
+                var cancelled = false
+                var outcome = DiagnosticOutcome.CANCELLED
+                var errorCode: String? = null
+                AppLog.d {
+                    "stt: parakeet session start engine=${engineId.value} " +
+                        "chunkSamples=${config.chunkSamples} queueCapacity=${config.chunkQueueCapacity} " +
+                        "eouDebounceMs=${config.eouDebounceMillis}"
                 }
-            } catch (cancellation: CancellationException) {
-                AppLog.d { "stt: parakeet session cancelled frames=$frameCount chunks=$chunkCount" }
-                outcome = DiagnosticOutcome.CANCELLED
-                throw cancellation
-            } catch (failure: Throwable) {
-                // A failure outside the decode loop (for example the capture flow
-                // itself). Mapped to a typed error; the message is never surfaced.
-                AppLog.e { "stt: parakeet capture failed" }
-                outcome = DiagnosticOutcome.FAILED
-                errorCode = ErrorCode.STT_RECOGNITION_FAILED.name
-                emit(SttEvent.Failed(mapFailure(failure, ErrorCode.STT_RECOGNITION_FAILED, "capture failed")))
-            } finally {
                 record(
-                    outcome = outcome,
+                    outcome = DiagnosticOutcome.STARTED,
                     startedAtNanos = startedAtNanos,
                     frameCount = frameCount,
                     chunkCount = chunkCount,
                     characterCount = finalCharacterCount,
-                    droppedChunks = droppedChunks,
+                    droppedChunks = 0L,
                     errorCode = errorCode,
-                    totalDecodeNanos = totalDecodeNanos,
-                    maxDecodeNanos = maxDecodeNanos,
-                    eouConfirmedCount = eouConfirmedCount,
                 )
-                AppLog.d {
-                    "stt: parakeet session end outcome=$outcome frames=$frameCount chunks=$chunkCount dropped=$droppedChunks chars=$finalCharacterCount"
+
+                // One decoder session belongs to the whole capture. VAD closes the
+                // per-utterance input below, but forceEndOfUtterance preserves the
+                // streaming caches for the next turn.
+                val session = decoderSession ?: decoderFactory.create().also { decoderSession = it }
+                // EOU offsets are scoped to this utterance so they can be compared
+                // directly with the VAD endpoint relative to speech onset.
+                eouSignal.resetCapture()
+                try {
+                    coroutineScope {
+                        // Bounded chunk queue: the capture side converts and enqueues;
+                        // the decode side is the slow consumer. Capacity is in chunks.
+                        val chunks = Channel<QueuedAudioChunk>(capacity = config.chunkQueueCapacity)
+                        // Events are produced on the decode dispatcher and emitted from
+                        // this flow's own coroutine, so a FlowCollector is never shared
+                        // across coroutines.
+                        val events = Channel<SttEvent>(Channel.UNLIMITED)
+
+                        val capture =
+                            launch {
+                                // Read at most chunkQueueCapacity + 1 without a consumer so
+                                // an overflowing producer drops the oldest buffered chunk and
+                                // counts it, instead of suspending the capture flow.
+                                val buffer = ArrayDeque<QueuedAudioChunk>()
+                                var pending = FloatArray(config.chunkSamples)
+                                var pendingCount = 0
+
+                                audio.collect { frame ->
+                                    frameCount++
+                                    val frameStartSamples = capturedSampleCount
+                                    capturedSampleCount += frame.sampleCount
+                                    val samples = frame.samples
+                                    var index = 0
+                                    while (index < samples.size) {
+                                        val room = config.chunkSamples - pendingCount
+                                        val take = minOf(room, samples.size - index)
+                                        for (offset in 0 until take) {
+                                            pending[pendingCount + offset] = samples[index + offset] / PCM_FULL_SCALE
+                                        }
+                                        pendingCount += take
+                                        index += take
+                                        if (pendingCount == config.chunkSamples) {
+                                            val gain = inputGain.gainFor(pending, pendingCount)
+                                            inputGain.apply(pending, pendingCount, gain)
+                                            AppLog.v {
+                                                "stt: parakeet input chunk normalized gain=$gain " +
+                                                    "(target=${ParakeetInputGain.DEFAULT_TARGET_PEAK})"
+                                            }
+                                            buffer.addLast(
+                                                QueuedAudioChunk(
+                                                    samples = pending,
+                                                    endSampleOffset = frameStartSamples + index,
+                                                ),
+                                            )
+                                            pending = FloatArray(config.chunkSamples)
+                                            pendingCount = 0
+                                            // Drain to the decoder without ever blocking capture.
+                                            while (buffer.isNotEmpty()) {
+                                                if (chunks.trySend(buffer.first()).isSuccess) {
+                                                    buffer.removeFirst()
+                                                } else {
+                                                    break
+                                                }
+                                            }
+                                            // If the channel is full, keep buffering up to one
+                                            // extra chunk, then drop the oldest to make room.
+                                            while (buffer.size > config.chunkQueueCapacity) {
+                                                buffer.removeFirst()
+                                                droppedChunks++
+                                                AppLog.v {
+                                                    "stt: parakeet chunk dropped total=$droppedChunks (decode consumer behind)"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // Flush any trailing partial chunk on input end so no
+                                // captured sample is silently discarded.
+                                if (pendingCount > 0) {
+                                    val tail = pending.copyOf(pendingCount)
+                                    inputGain.apply(tail, pendingCount)
+                                    buffer.addLast(QueuedAudioChunk(tail, capturedSampleCount))
+                                }
+                                while (buffer.isNotEmpty()) {
+                                    if (chunks.trySend(buffer.first()).isSuccess) {
+                                        buffer.removeFirst()
+                                    } else {
+                                        buffer.removeFirst()
+                                        droppedChunks++
+                                    }
+                                }
+                                chunks.close()
+                                AppLog.d {
+                                    "stt: parakeet capture ended frames=$frameCount droppedChunks=$droppedChunks"
+                                }
+                            }
+
+                        val decode =
+                            launch(decodeDispatcher) {
+                                // Track text after each boundary so VAD does not force a
+                                // second final for a segment the model already committed.
+                                var hasPendingText = false
+                                try {
+                                    for (chunk in chunks) {
+                                        val decodeStartedAtNanos = clock.nanoTime()
+                                        AppLog.v {
+                                            "stt: parakeet chunk#$chunkCount samples=${chunk.samples.size} dequeued; decoding"
+                                        }
+                                        val result = session.accept(chunk.samples)
+                                        val decodeNanos = clock.nanoTime() - decodeStartedAtNanos
+                                        totalDecodeNanos += decodeNanos
+                                        if (decodeNanos > maxDecodeNanos) maxDecodeNanos = decodeNanos
+                                        chunkCount++
+                                        AppLog.v {
+                                            "stt: parakeet chunk#$chunkCount decoded decodeMs=${decodeNanos / 1_000_000L} " +
+                                                "chars=${result.text.length} final=${result.isFinal} " +
+                                                "eou=${result.eouDetected} segment=${result.segmentIndex} " +
+                                                "confidence=${result.confidence}"
+                                        }
+
+                                        if (result.eouDetected) {
+                                            val confirmed =
+                                                eouSignal.confirmEou(
+                                                    offsetMillis =
+                                                        samplesToMillis(
+                                                            chunk.endSampleOffset,
+                                                        ),
+                                                    confidence = result.confidence,
+                                                    debounceMillis = config.eouDebounceMillis,
+                                                )
+                                            if (confirmed) {
+                                                eouConfirmedCount++
+                                                AppLog.v {
+                                                    "stt: parakeet eou confirmed count=$eouConfirmedCount " +
+                                                        "offsetMs=${samplesToMillis(chunk.endSampleOffset)} " +
+                                                        "confidence=${result.confidence}"
+                                                }
+                                            } else {
+                                                AppLog.v {
+                                                    "stt: parakeet eou refresh (within debounce) " +
+                                                        "offsetMs=${samplesToMillis(chunk.endSampleOffset)}"
+                                                }
+                                            }
+                                        }
+
+                                        eventFor(result, revision++)?.let { event ->
+                                            if (event is SttEvent.Result) {
+                                                hasPendingText = !event.transcript.isFinal && event.transcript.text.isNotBlank()
+                                                AppLog.v {
+                                                    "stt: parakeet emit revision=${revision - 1} " +
+                                                        "final=${event.transcript.isFinal} " +
+                                                        "chars=${event.transcript.text.length} " +
+                                                        "confidence=${event.transcript.confidence}"
+                                                }
+                                            } else if (event is SttEvent.Failed) {
+                                                AppLog.v {
+                                                    "stt: parakeet emit failed code=${event.error.code}"
+                                                }
+                                            }
+                                            events.send(event)
+                                        }
+                                    }
+
+                                    // The VAD endpoint closes this utterance's input.
+                                    // Force-finalize only text that arrived after the last
+                                    // model EOU. The decoder retains its caches for the next
+                                    // utterance in this capture.
+                                    if (!failed && hasPendingText) {
+                                        val tail = session.forceEndOfUtterance()
+                                        AppLog.d {
+                                            "stt: parakeet VAD force-finalize chars=${tail.text.length} final=${tail.isFinal} " +
+                                                "eou=${tail.eouDetected} confidence=${tail.confidence}"
+                                        }
+                                        if (tail.eouDetected) {
+                                            if (eouSignal.confirmEou(
+                                                    offsetMillis =
+                                                        samplesToMillis(
+                                                            capturedSampleCount,
+                                                        ),
+                                                    confidence = tail.confidence,
+                                                    debounceMillis = config.eouDebounceMillis,
+                                                )
+                                            ) {
+                                                eouConfirmedCount++
+                                            }
+                                        }
+                                        eventFor(tail, revision++, forceFinal = true)
+                                            ?.takeIf { (it as? SttEvent.Result)?.transcript?.text?.isNotBlank() == true }
+                                            ?.let { event ->
+                                                if (event is SttEvent.Result) {
+                                                    AppLog.v {
+                                                        "stt: parakeet emit (VAD force-finalize) " +
+                                                            "final=${event.transcript.isFinal} " +
+                                                            "chars=${event.transcript.text.length} " +
+                                                            "confidence=${event.transcript.confidence}"
+                                                    }
+                                                }
+                                                events.send(event)
+                                            }
+                                    }
+                                } catch (cancellation: CancellationException) {
+                                    throw cancellation
+                                } catch (failure: Throwable) {
+                                    // Decoder/runtime failure mapped to a typed STT error;
+                                    // the underlying message is never surfaced (it may
+                                    // contain content).
+                                    failed = true
+                                    events.send(
+                                        SttEvent.Failed(
+                                            mapFailure(failure, ErrorCode.STT_RECOGNITION_FAILED, "decode failed"),
+                                        ),
+                                    )
+                                } finally {
+                                    events.close()
+                                }
+                            }
+
+                        for (event in events) {
+                            when (event) {
+                                is SttEvent.Result -> {
+                                    if (event.transcript.isFinal) {
+                                        outcome = DiagnosticOutcome.COMPLETED
+                                        finalCharacterCount = event.transcript.text.length
+                                    }
+                                }
+
+                                is SttEvent.Failed -> {
+                                    outcome = DiagnosticOutcome.FAILED
+                                    errorCode = event.error.code.name
+                                    failed = true
+                                }
+                            }
+                            emit(event)
+                        }
+
+                        capture.join()
+                        decode.join()
+                    }
+                } catch (cancellation: CancellationException) {
+                    AppLog.d { "stt: parakeet session cancelled frames=$frameCount chunks=$chunkCount" }
+                    outcome = DiagnosticOutcome.CANCELLED
+                    cancelled = true
+                    throw cancellation
+                } catch (failure: Throwable) {
+                    // A failure outside the decode loop (for example the capture flow
+                    // itself). Mapped to a typed error; the message is never surfaced.
+                    AppLog.e { "stt: parakeet capture failed" }
+                    outcome = DiagnosticOutcome.FAILED
+                    errorCode = ErrorCode.STT_RECOGNITION_FAILED.name
+                    emit(SttEvent.Failed(mapFailure(failure, ErrorCode.STT_RECOGNITION_FAILED, "capture failed")))
+                } finally {
+                    record(
+                        outcome = outcome,
+                        startedAtNanos = startedAtNanos,
+                        frameCount = frameCount,
+                        chunkCount = chunkCount,
+                        characterCount = finalCharacterCount,
+                        droppedChunks = droppedChunks,
+                        errorCode = errorCode,
+                        totalDecodeNanos = totalDecodeNanos,
+                        maxDecodeNanos = maxDecodeNanos,
+                        eouConfirmedCount = eouConfirmedCount,
+                    )
+                    AppLog.d {
+                        "stt: parakeet session end outcome=$outcome frames=$frameCount chunks=$chunkCount dropped=$droppedChunks chars=$finalCharacterCount"
+                    }
+                    if (failed || cancelled) {
+                        withContext(NonCancellable) { runCatching { session.close() } }
+                        decoderSession = null
+                    }
+                    eouSignal.markCaptureEnded()
                 }
-                withContext(NonCancellable) { runCatching { session.close() } }
-                eouSignal.markCaptureEnded()
             }
         }.flowOn(Dispatchers.IO)
 
     override suspend fun close() {
         if (!closed.compareAndSet(false, true)) return
+        decoderMutex.withLock {
+            decoderSession?.let { session ->
+                withContext(NonCancellable) { runCatching { session.close() } }
+            }
+            decoderSession = null
+        }
         eouSignal.markClosed()
     }
 
@@ -396,10 +428,8 @@ class ParakeetEouSpeechToText(
      * Maps a decode result to a contract event, or `null` when there is nothing
      * to emit (a silent chunk).
      *
-     * [forceFinal] is set for the end-of-input flush: the decoder's `finalize()`
-     * always yields the terminal transcript, so it becomes `isFinal = true` even
-     * if the model never flagged EOU. This is what guarantees a trailing turn
-     * commits here as well as through the policy's silence cap.
+     * [forceFinal] is set for the VAD endpoint flush, so any remaining text becomes
+     * final even when the model's EOU head did not fire.
      */
     private fun eventFor(
         result: DecodeResult,
@@ -464,6 +494,14 @@ class ParakeetEouSpeechToText(
         )
     }
 
+    private fun samplesToMillis(samples: Long): Long = samples * 1_000L / config.sampleRateHz
+
+    /** Audio chunk plus its end offset on the capture timeline. */
+    private data class QueuedAudioChunk(
+        val samples: FloatArray,
+        val endSampleOffset: Long,
+    )
+
     private fun mapFailure(
         failure: Throwable,
         code: ErrorCode,
@@ -488,9 +526,6 @@ class ParakeetEouSpeechToText(
         private val ATTR_DECODE_MAX_CHUNK_MILLIS = DiagnosticAttribute.DECODE_MAX_CHUNK_MILLIS
 
         private val ATTR_EOU_CONFIRMED = DiagnosticAttribute.EOU_CONFIRMED_COUNT
-
-        private fun chunkDurationMillis(config: ParakeetEouSpeechToTextConfig): Long =
-            config.chunkSamples.toLong() * 1000L / config.sampleRateHz
     }
 }
 
@@ -541,9 +576,8 @@ internal class VoiceAgentErrorCarrier(
  *
  * A confirmed EOU is debounced: repeated flags within
  * [ParakeetEouSpeechToTextConfig.eouDebounceMillis] of the last confirmation keep
- * the *latest* offset but do not create a new confirmation. The capture offset is
- * approximate (derived from the chunk count) and is used only for a bounded
- * window comparison by [EouTurnCompletionDetector].
+ * the *latest* offset but do not create a new confirmation. Offsets are derived
+ * from captured audio samples and compared with the parallel VAD endpoint.
  */
 internal class ParakeetEouSignal : EndOfUtteranceSignal {
     private val state = MutableStateFlow(EouObservation(offsetMillis = NO_EOU, confidence = null, sequence = 0L))

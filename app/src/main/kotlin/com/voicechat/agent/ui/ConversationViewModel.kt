@@ -284,6 +284,7 @@ class ConversationViewModel(
                     (state.dialog ?: ConversationDialogState()).copy(
                         conversationId = base.id,
                         provisionalUserText = null,
+                        provisionalTurnId = null,
                         liveAssistantText = null,
                         phase = TurnPhase.LISTENING,
                         notice = null,
@@ -392,6 +393,7 @@ class ConversationViewModel(
                 dialog =
                     state.dialog?.copy(
                         provisionalUserText = null,
+                        provisionalTurnId = turnId,
                         liveAssistantText = null,
                     ),
             )
@@ -402,7 +404,29 @@ class ConversationViewModel(
         turnId: TurnId,
         text: String,
     ) {
-        _uiState.update { state -> state.copy(dialog = state.dialog?.copy(provisionalUserText = text)) }
+        _uiState.update { state ->
+            state.copy(
+                dialog =
+                    state.dialog?.copy(
+                        provisionalUserText = text,
+                        provisionalTurnId = turnId,
+                    ),
+            )
+        }
+    }
+
+    override fun onParakeetEndpointTiming(
+        turnId: TurnId,
+        timing: com.voicechat.agent.voice.ParakeetEndpointTiming,
+    ) {
+        _uiState.update { state ->
+            state.copy(
+                dialog =
+                    state.dialog?.let { dialog ->
+                        dialog.copy(parakeetEndpointTimings = dialog.parakeetEndpointTimings + (turnId to timing))
+                    },
+            )
+        }
     }
 
     override fun onUtteranceCommitted(
@@ -410,7 +434,14 @@ class ConversationViewModel(
         transcript: Transcript,
     ) {
         _uiState.update { state ->
-            state.copy(dialog = state.dialog?.copy(provisionalUserText = null, phase = TurnPhase.IDLE))
+            state.copy(
+                dialog =
+                    state.dialog?.copy(
+                        provisionalUserText = null,
+                        provisionalTurnId = null,
+                        phase = TurnPhase.IDLE,
+                    ),
+            )
         }
     }
 
@@ -1045,6 +1076,13 @@ class ConversationViewModel(
             text: String,
         ) {
             if (isCurrent()) delegate.onProvisionalTranscript(turnId, text)
+        }
+
+        override fun onParakeetEndpointTiming(
+            turnId: TurnId,
+            timing: com.voicechat.agent.voice.ParakeetEndpointTiming,
+        ) {
+            if (isCurrent()) delegate.onParakeetEndpointTiming(turnId, timing)
         }
 
         override fun onUtteranceCommitted(

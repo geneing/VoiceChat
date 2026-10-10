@@ -23,11 +23,13 @@ import com.voicechat.agent.domain.UserTurnSource
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
 import com.voicechat.agent.log.AppLog
+import com.voicechat.agent.stt.parakeet.EndOfUtteranceSignal
 import com.voicechat.agent.vad.EndpointReason
 import com.voicechat.agent.vad.TurnDetectionEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -59,6 +61,7 @@ class VoiceSessionCoordinator(
     private val repository: ConversationRepository,
     private val speechToText: SpeechToText,
     private val turnDetector: VoiceTurnDetector,
+    private val endOfUtterance: EndOfUtteranceSignal? = null,
     private val listener: VoiceSessionListener = VoiceSessionListener.NONE,
     private val diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
     private val clock: MonotonicClock = SystemMonotonicClock,
@@ -86,6 +89,9 @@ class VoiceSessionCoordinator(
     private var activeListening: ListeningTurn? = null
 
     @Volatile
+    private var parakeetEouOwner: ListeningTurn? = null
+
+    @Volatile
     private var detectorJob: Job? = null
 
     /**
@@ -108,6 +114,30 @@ class VoiceSessionCoordinator(
             val scope = this
             sessionScope = scope
             setState(VoiceSessionState.LISTENING)
+            val eouMonitor =
+                endOfUtterance?.let { signal ->
+                    scope.launch(dispatcher, start = CoroutineStart.UNDISPATCHED) {
+                        var lastObservation = signal.eouEvents.value
+                        signal.eouEvents.collect { observation ->
+                            if (
+                                observation.sequence > lastObservation.sequence ||
+                                observation.offsetMillis != lastObservation.offsetMillis
+                            ) {
+                                // StateFlow may conflate a reset followed immediately by
+                                // an EOU event. A sequence gap on a non-empty observation
+                                // means the current listening turn owns that EOU.
+                                if (
+                                    observation.offsetMillis != NO_EOU_OFFSET &&
+                                    observation.sequence > lastObservation.sequence + 1
+                                ) {
+                                    parakeetEouOwner = activeListening
+                                }
+                                lastObservation = observation
+                                onParakeetEouObservation(observation.offsetMillis)
+                            }
+                        }
+                    }
+                }
             val input = Channel<AudioFrame>(capacity = DETECT_BUFFER)
             detectInput = input
             captureJob = scope.launch(dispatcher) { pumpCapture(input) }
@@ -138,6 +168,8 @@ class VoiceSessionCoordinator(
                 }
                 finalizationJob?.cancel()
                 finalizationJob = null
+                eouMonitor?.cancel()
+                parakeetEouOwner = null
                 sessionScope = null
                 setState(if (stopped) VoiceSessionState.STOPPED else VoiceSessionState.IDLE)
             }
@@ -182,8 +214,11 @@ class VoiceSessionCoordinator(
 
             is TurnDetectionEvent.Activity -> {
                 when (event.activity) {
-                    SpeechActivity.SPEECH_STARTED, SpeechActivity.SPEECH_RESUMED -> beginListeningIfNeeded()
-                    SpeechActivity.CANDIDATE_PAUSE -> Unit
+                    SpeechActivity.SPEECH_STARTED, SpeechActivity.SPEECH_RESUMED -> {
+                        beginListeningIfNeeded(event.atOffsetMillis)
+                    }
+
+                    SpeechActivity.CANDIDATE_PAUSE -> {}
                 }
             }
 
@@ -193,8 +228,8 @@ class VoiceSessionCoordinator(
         }
     }
 
-    private fun beginListeningIfNeeded() {
-        if (activeListening == null) beginListening()
+    private fun beginListeningIfNeeded(atOffsetMillis: Long) {
+        if (activeListening == null) beginListening(atOffsetMillis)
     }
 
     /** Closes one recognition input and lets the detector continue collecting. */
@@ -204,6 +239,8 @@ class VoiceSessionCoordinator(
             if (event.reason == EndpointReason.EMPTY_NO_SPEECH) listener.onNoSpeech()
             return
         }
+        turn.vadEndpointOffsetMillis = (event.atOffsetMillis - turn.startedAtOffsetMillis).coerceAtLeast(0L)
+        publishEndpointTiming(turn)
         activeListening = null
         turn.input.close()
         val scope = sessionScope ?: return
@@ -243,11 +280,12 @@ class VoiceSessionCoordinator(
         finishTurn(turn)
     }
 
-    private fun beginListening() {
+    private fun beginListening(startedAtOffsetMillis: Long) {
         val scope = sessionScope ?: return
         val turnId = turnIdFactory()
         val input = Channel<AudioFrame>(capacity = STT_BUFFER)
-        val turn = ListeningTurn(turnId, input)
+        val turn = ListeningTurn(turnId, input, startedAtOffsetMillis)
+        activeListening = turn
         turn.job =
             scope.launch(dispatcher) {
                 try {
@@ -260,10 +298,31 @@ class VoiceSessionCoordinator(
                     input.close()
                 }
             }
-        activeListening = turn
         listener.onListeningStarted(turnId)
         setState(VoiceSessionState.LISTENING)
         AppLog.d { "voice: listening turn start" }
+    }
+
+    /** Associates each utterance-scoped EOU observation with its active STT turn. */
+    private fun onParakeetEouObservation(offsetMillis: Long) {
+        if (offsetMillis == NO_EOU_OFFSET) {
+            parakeetEouOwner = activeListening
+            return
+        }
+        val turn = parakeetEouOwner ?: return
+        turn.eouOffsetMillis = offsetMillis
+        publishEndpointTiming(turn)
+    }
+
+    private fun publishEndpointTiming(turn: ListeningTurn) {
+        if (endOfUtterance == null) return
+        listener.onParakeetEndpointTiming(
+            turn.turnId,
+            ParakeetEndpointTiming(
+                eouOffsetMillis = turn.eouOffsetMillis,
+                vadEndpointOffsetMillis = turn.vadEndpointOffsetMillis,
+            ),
+        )
     }
 
     private fun onSttEvent(
@@ -278,7 +337,14 @@ class VoiceSessionCoordinator(
                         "confidence=${event.transcript.confidence}"
                 }
                 if (event.transcript.isFinal) {
-                    turn.final = event.transcript
+                    turn.final =
+                        event.transcript.copy(
+                            text = appendTranscriptSegment(turn.final?.text, event.transcript.text),
+                        )
+                    turn.provisional = null
+                    if (activeListening === turn) {
+                        listener.onProvisionalTranscript(turn.turnId, turn.final?.text.orEmpty())
+                    }
                 } else {
                     val previous = turn.provisional
                     if (previous != null && event.transcript.revision.value <= previous.revision.value) {
@@ -287,7 +353,10 @@ class VoiceSessionCoordinator(
                     }
                     turn.provisional = event.transcript
                     if (activeListening === turn) {
-                        listener.onProvisionalTranscript(turn.turnId, event.transcript.text)
+                        listener.onProvisionalTranscript(
+                            turn.turnId,
+                            appendTranscriptSegment(turn.final?.text, event.transcript.text),
+                        )
                     }
                 }
             }
@@ -297,6 +366,19 @@ class VoiceSessionCoordinator(
                 turn.failure = event.error
             }
         }
+    }
+
+    /** Joins an EOU-committed segment to the next Parakeet segment for one VAD turn. */
+    private fun appendTranscriptSegment(
+        prefix: String?,
+        segment: String,
+    ): String {
+        val completed = prefix?.trimEnd().orEmpty()
+        val next = segment.trimStart()
+        if (completed.isEmpty()) return next
+        if (next.isEmpty()) return completed
+        val startsWithPunctuation = next.first() in ".,!?;:%)]}’”'"
+        return if (startsWithPunctuation) completed + next else "$completed $next"
     }
 
     private suspend fun finishTurn(turn: ListeningTurn) {
@@ -364,11 +446,14 @@ class VoiceSessionCoordinator(
     private class ListeningTurn(
         val turnId: TurnId,
         val input: Channel<AudioFrame>,
+        val startedAtOffsetMillis: Long,
     ) {
         var job: Job? = null
         var provisional: Transcript? = null
         var final: Transcript? = null
         var failure: VoiceAgentError? = null
+        var eouOffsetMillis: Long? = null
+        var vadEndpointOffsetMillis: Long? = null
     }
 
     private companion object {
@@ -380,6 +465,9 @@ class VoiceSessionCoordinator(
 
         /** Maximum wait after endpoint for the recognizer's final result. */
         const val STT_COMPLETION_TIMEOUT_MILLIS = 5_000L
+
+        /** Sentinel emitted when Parakeet starts a new utterance input. */
+        const val NO_EOU_OFFSET = Long.MIN_VALUE
     }
 }
 

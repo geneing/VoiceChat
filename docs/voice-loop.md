@@ -4,9 +4,9 @@ The microphone session is isolated for STT latency work. Its active path is:
 
 ```text
 microphone capture
-  -> VAD speech onset and candidate pause
+  -> VAD speech onset and independent endpoint
   -> streaming on-device STT
-  -> optional Smart Turn decision after a VAD-confirmed pause
+  -> VAD force-finalize for pending Parakeet text
   -> finalized transcript saved as a user turn
 ```
 
@@ -21,14 +21,18 @@ assistant reply. Device validation is still required; see [Tests.md](../Tests.md
 
 ## Ownership and boundaries
 
-- `VoiceSessionAssembly` resolves the configured on-device STT engine, creates
-  capture and STT resources, and resolves the optional Smart Turn detector.
+- `VoiceSessionAssembly` resolves the configured on-device STT engine and
+  creates capture/STT resources. Optional Smart Turn remains available for
+  non-Parakeet engines.
 - `VoiceSessionCoordinator` owns the capture, VAD event stream, per-utterance STT
-  jobs, transcript ordering, timeout, and transcript persistence.
-- `VoiceTurnDetector` adapts the bounded VAD endpoint policy. Speech onset stays
-  on the fast path; Smart Turn runs only for a candidate pause.
-- `VoiceSessionListener` reports session state, provisional/final text, persisted
-  conversation changes, and typed errors to the UI.
+  jobs, transcript ordering, timeout, endpoint timing comparison, and transcript
+  persistence.
+- `VoiceTurnDetector` adapts the bounded VAD endpoint policy. For Parakeet, that
+  VAD endpoint runs independently of the model's EOU signal and drives
+  force-finalization. The UI shows live recognized text, an EOU tag when the
+  model confirms one, and the signed timing difference between EOU and VAD.
+- `VoiceSessionListener` reports session state, provisional/final text, Parakeet
+  EOU/VAD timing, persisted conversation changes, and typed errors to the UI.
 - TTS remains available under `tts/`, but this assembly neither constructs an
   engine nor passes one to the coordinator.
 
@@ -39,6 +43,15 @@ ML Kit GenAI STT, and model/runtime selection stay behind app-boundary adapters.
 
 - Interim revisions are shown only for the active recognition turn and only when
   their revision number is newer than the previous one.
+- Parakeet's adapter keeps one decoder session for the capture and calls
+  `forceEndOfUtterance()` on VAD endpoint only when unfinalized text remains. The
+  operation commits that segment while retaining encoder/predictor caches for the
+  next utterance. A model EOU final is not force-finalized again.
+- Parakeet EOU and VAD endpoint offsets are measured independently on the audio
+  timeline. The displayed signed difference is `EOU - VAD`; a negative value
+  means the model reported EOU first. EOU timing is relative to the STT turn's
+  input, and VAD timing is relative to its speech-onset event, so the comparison
+  includes the small capture-to-recognizer handoff offset.
 - Finalization runs in an owned job while the detector continues to consume
   capture frames. A later finalization waits for the previous one before saving,
   preserving spoken order.

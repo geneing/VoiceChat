@@ -3,36 +3,36 @@ package com.voicechat.agent.stt.parakeet
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * The Parakeet `<EOU>` signal, exposed so the turn policy can corroborate a VAD
- * candidate pause without a second decode.
+ * The Parakeet `<EOU>` signal, exposed so the UI can tag model-confirmed EOU and
+ * compare its timing with the independent VAD endpoint.
  *
  * This is the frozen interface from `docs/parakeet-eou-streaming.md`. The decoder
  * runs exactly once per captured chunk inside [ParakeetEouSpeechToText];
- * `EouTurnCompletionDetector` reads this signal rather than re-decoding the audio
- * window, so EOU adds no second inference pass on the endpoint path.
+ * The signal is produced by the existing streaming decode pass, so EOU adds no
+ * second inference pass on the endpoint path.
  *
  * **Semantics.** A "confirmed EOU" is a decode step whose `eouDetected` was true
  * *and* that was actually delivered. It is debounced by the adapter (see
  * [ParakeetEouSpeechToTextConfig.eouDebounceMillis]) because the head fires
  * mid-word on disfluencies. The offset is measured on the capture/audio timeline
- * in milliseconds from the start of the current recognition session, not wall
+ * in milliseconds from the start of the current utterance input, not wall
  * time.
  *
  * **Ownership.** One signal instance is owned by one
- * [ParakeetEouSpeechToText]; it is read by the turn policy and cleared at the
- * start of each new capture session.
+ * [ParakeetEouSpeechToText]; it is read by the voice coordinator and reset at the
+ * start of each utterance input.
  */
 interface EndOfUtteranceSignal {
     /**
      * The observed EOU events, most recent last.
      *
-     * The detector subscribes to this so it can evaluate a candidate pause the
-     * moment it is reported, without polling. Emitted on the decode worker, but a
+     * The coordinator subscribes to this so it can compare EOU and VAD timing
+     * without polling. Emitted on the decode worker, but a
      * [StateFlow] makes the latest value observable from any thread.
      */
     val eouEvents: StateFlow<EouObservation>
 
-    /** Monotonic millis offset of the last confirmed EOU in the current capture, or null. */
+    /** Monotonic millis offset of the last confirmed EOU in the current utterance, or null. */
     fun lastEouOffsetMillis(): Long?
 
     /**
@@ -47,7 +47,7 @@ interface EndOfUtteranceSignal {
 /**
  * One confirmed end-of-utterance observation.
  *
- * @param offsetMillis offset from the start of the current capture session, in
+ * @param offsetMillis offset from the start of the current utterance input, in
  *   milliseconds, on the audio timeline.
  * @param confidence mean token confidence of the decode step that produced it,
  *   or `null` when the decoder did not report one.

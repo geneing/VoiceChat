@@ -181,12 +181,10 @@ private class PlatformVoiceSession(
         val audioInput =
             audioInputFactory?.invoke()
                 ?: MicrophoneAudioCapture.create(context = context, diagnostics = diagnostics, clock = clock)
-        // M10/M-Parakeet: resolve the optional semantic detector once per session.
-        // For Parakeet-EOU the model's own EOU head is the corroborator; otherwise
-        // the M10 Smart Turn detector applies. A missing/failed detector returns
-        // null and the bounded VAD-only policy applies; it is never fabricated,
-        // and it is closed with the session.
-        val semanticDetector = parakeetSession?.turnDetector ?: resolveSemanticDetector()
+        // Keep the Parakeet EOU signal and VAD endpoint independent so their
+        // audio offsets can be compared. Other STT engines may use optional Smart
+        // Turn corroboration at the VAD candidate pause.
+        val semanticDetector = if (parakeetSession == null) resolveSemanticDetector() else null
         val session =
             VoiceSessionCoordinator(
                 audioInput = audioInput,
@@ -198,6 +196,7 @@ private class PlatformVoiceSession(
                         clock = clock,
                         semanticDetector = semanticDetector,
                     ),
+                endOfUtterance = parakeetSession?.endOfUtterance,
                 listener = this,
                 diagnostics = diagnostics,
                 clock = clock,
@@ -286,6 +285,11 @@ private class PlatformVoiceSession(
         turnId: TurnId,
         text: String,
     ) = downstream.onProvisionalTranscript(turnId, text)
+
+    override fun onParakeetEndpointTiming(
+        turnId: TurnId,
+        timing: ParakeetEndpointTiming,
+    ) = downstream.onParakeetEndpointTiming(turnId, timing)
 
     override fun onUtteranceCommitted(
         turnId: TurnId,
