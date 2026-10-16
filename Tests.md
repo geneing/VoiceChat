@@ -1278,7 +1278,9 @@ corroborator. It logs every VAD, Smart Turn, and STT stage to logcat under the
 `SttHarness` tag and writes two content-free reports to app-private cache:
 `summary.csv` (per-clip timing: capture-start/onset to first transcript, input-end
 and VAD-endpoint to final, EOU-minus-VAD offset) and `stages.csv` (the full
-timestamped stage timeline). No transcript text is written, only character counts.
+timestamped stage timeline). The CSVs hold only character counts; with
+`-e sttHarnessLogTranscripts true` (the driver's default) the partial revisions
+and the final text are additionally logged to logcat.
 
 It is opt-in: without `-e sttHarnessRunId <id>` it is skipped, so ordinary
 `connectedDebugAndroidTest` runs never replay personal audio, and it needs the

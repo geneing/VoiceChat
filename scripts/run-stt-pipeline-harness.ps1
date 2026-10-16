@@ -2,6 +2,10 @@ param(
     [string]$InputPath = "test_data/Walking .m4a",
     [string]$DeviceSerial,
     [switch]$SmartTurn,
+    # Log each partial and the final recognized text to logcat (never to the CSV
+    # reports). On by default for this developer-only harness; pass
+    # -LogTranscripts:$false to keep the logcat capture content-free.
+    [bool]$LogTranscripts = $true,
     [string]$OutputDirectory,
     [switch]$SkipBuild,
     [switch]$SkipModelPush
@@ -17,7 +21,11 @@ param(
 #
 # The clip may be WAV or M4A; M4A is decoded on the device, so no host conversion
 # is required. Nothing is committed; the results are local artifacts.
-$ErrorActionPreference = "Stop"
+#
+# Native tools (Gradle, adb) write progress to stderr; "Continue" keeps that from
+# being reported as a script failure. Each critical native call is instead checked
+# through $LASTEXITCODE explicitly.
+$ErrorActionPreference = "Continue"
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $inputCandidate = if ([System.IO.Path]::IsPathRooted($InputPath)) { $InputPath } else { Join-Path $repoRoot $InputPath }
@@ -112,7 +120,8 @@ try {
     $instrumentationArguments = @(
         "-w",
         "-e", "class", $testClass,
-        "-e", "sttHarnessRunId", $runId
+        "-e", "sttHarnessRunId", $runId,
+        "-e", "sttHarnessLogTranscripts", $LogTranscripts.ToString().ToLowerInvariant()
     )
     if ($SmartTurn) { $instrumentationArguments += @("-e", "sttHarnessSmartTurn", "true") }
 

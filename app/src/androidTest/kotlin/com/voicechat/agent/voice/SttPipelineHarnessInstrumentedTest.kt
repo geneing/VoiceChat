@@ -76,6 +76,10 @@ import java.util.Locale
  * way instead of through the capture-ended path. The recorder writes content-free
  * rows: no transcript text, only character counts and stable codes.
  *
+ * With `-e sttHarnessLogTranscripts true` the harness additionally logs each
+ * partial revision and the final committed text to logcat (`SttHarness` tag,
+ * `STT_HARNESS_TRANSCRIPT`); the CSV reports stay content-free either way.
+ *
  * Opt-in: skipped unless `-e sttHarnessRunId <id>` is passed and the clip is
  * staged under `cache/<STAGE_DIRECTORY>/<id>/` and the Parakeet-EOU model set is
  * installed in app-private storage. `-e sttHarnessSmartTurn true` enables the
@@ -112,6 +116,9 @@ class SttPipelineHarnessInstrumentedTest {
             assertTrue("no WAV or M4A files were staged for the harness", files.isNotEmpty())
 
             val smartTurnRequested = arguments.getString(ARG_SMART_TURN)?.toBoolean() == true
+            // Recognized text is logged to logcat only when explicitly opted in; the
+            // CSV reports stay content-free either way.
+            val logTranscripts = arguments.getString(ARG_LOG_TRANSCRIPTS)?.toBoolean() == true
 
             val config = ParakeetEouConfig.pinned()
             val vocab = ParakeetVocabulary.fromJson(File(modelDir, VOCAB_FILE).readText())
@@ -133,6 +140,7 @@ class SttPipelineHarnessInstrumentedTest {
                             vocab = vocab,
                             config = config,
                             smartTurnRequested = smartTurnRequested,
+                            logTranscripts = logTranscripts,
                         )
                     }
                 } finally {
@@ -156,6 +164,7 @@ class SttPipelineHarnessInstrumentedTest {
         vocab: ParakeetVocabulary,
         config: ParakeetEouConfig,
         smartTurnRequested: Boolean,
+        logTranscripts: Boolean,
     ): HarnessRow {
         val fileId = file.nameWithoutExtension.takeIf { SAFE_FILE_ID.matches(it) } ?: "invalid-file-id"
         val decoded =
@@ -170,7 +179,7 @@ class SttPipelineHarnessInstrumentedTest {
             }
 
         val timeline = CaptureTimeline()
-        val recorder = HarnessRecorder(fileId, timeline)
+        val recorder = HarnessRecorder(fileId, timeline, logTranscripts)
         val audioInput = PacedFileAudioInput(samples = pcm.samples, timeline = timeline)
         val diagnostics = RecordingDiagnosticsSink(recorder)
         val adapter =
@@ -338,6 +347,7 @@ class SttPipelineHarnessInstrumentedTest {
         const val TAG = "SttHarness"
         const val ARG_RUN_ID = "sttHarnessRunId"
         const val ARG_SMART_TURN = "sttHarnessSmartTurn"
+        const val ARG_LOG_TRANSCRIPTS = "sttHarnessLogTranscripts"
         const val STAGE_DIRECTORY = "voicechat-stt-harness"
         const val SUMMARY_FILE = "summary.csv"
         const val STAGES_FILE = "stages.csv"
@@ -485,6 +495,7 @@ class SttPipelineHarnessInstrumentedTest {
             text: String,
         ) {
             recorder.recordTranscript(text.length)
+            recorder.logTranscript("partial", text)
         }
 
         override fun onParakeetEndpointTiming(
@@ -499,6 +510,7 @@ class SttPipelineHarnessInstrumentedTest {
             transcript: com.voicechat.agent.domain.Transcript,
         ) {
             recorder.recordCommitted(transcript.text, transcript.isFinal)
+            recorder.logTranscript("final", transcript.text)
         }
 
         override fun onConversationChanged(conversation: Conversation) {
@@ -518,6 +530,7 @@ class SttPipelineHarnessInstrumentedTest {
     private class HarnessRecorder(
         private val fileId: String,
         private val timeline: CaptureTimeline,
+        private val logTranscripts: Boolean = false,
     ) {
         private val lock = Any()
         private val events = mutableListOf<Stage>()
@@ -657,6 +670,22 @@ class SttPipelineHarnessInstrumentedTest {
             synchronized(lock) { transcriptCount++ }
             if (firstTranscriptWallMillis == null) firstTranscriptWallMillis = wallOffsetMillis()
             stage("STT_TRANSCRIPT", detail = "chars=$chars")
+        }
+
+        /**
+         * Logs recognized text to logcat when transcript logging is opted in. It
+         * bypasses [stage] so the CSV reports stay content-free: only logcat, and
+         * only for a deliberate developer run, carries the transcript.
+         */
+        fun logTranscript(
+            kind: String,
+            text: String,
+        ) {
+            if (!logTranscripts) return
+            Log.i(
+                TAG,
+                "STT_HARNESS_TRANSCRIPT file=$fileId kind=$kind chars=${text.length} text=$text",
+            )
         }
 
         fun recordCommitted(

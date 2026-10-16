@@ -255,7 +255,9 @@ reports the latency story per stage rather than only an end-to-end decode time.
   (capture-start and onset to first transcript, last-audio-frame and VAD endpoint
   to the final transcript, and `EOU - VAD`); `stages.csv` holds the full
   timestamped timeline. Both are content-free: counts and stable codes, never a
-  transcript, token, or sample.
+  transcript, token, or sample. With `-e sttHarnessLogTranscripts true` (the
+  driver's default) each partial revision and the final text are also logged to
+  logcat (`SttHarness`, `STT_HARNESS_TRANSCRIPT`); the CSVs stay content-free.
 - **Smart Turn.** Off by default (VAD-only bounded endpoint). `-SmartTurn` builds
   the production `SmartTurnDetectorFactory` detector when its model is staged; a
   missing/corrupt model degrades to the VAD-only policy and is recorded, never
