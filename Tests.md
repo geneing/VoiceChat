@@ -1268,6 +1268,29 @@ The decoder-only streaming replay (`ParakeetEouReplayInstrumentedTest`, steps 1-
 above) is unchanged and is driven by `scripts/run-parakeet-eou-replay.ps1`; see
 [docs/parakeet-eou-streaming.md](./docs/parakeet-eou-streaming.md).
 
+### STT pipeline stage timing harness (opt-in; NOT run)
+
+`SttPipelineHarnessInstrumentedTest` (`app/src/androidTest/.../voice/`) replays a
+recorded clip (WAV or M4A, decoded on the device) as real-time paced 20 ms frames
+through the **real** `VoiceSessionCoordinator`, the M09 VAD/onset policy, the
+Parakeet-EOU streaming adapter, and — when enabled — the M10 Smart Turn
+corroborator. It logs every VAD, Smart Turn, and STT stage to logcat under the
+`SttHarness` tag and writes two content-free reports to app-private cache:
+`summary.csv` (per-clip timing: capture-start/onset to first transcript, input-end
+and VAD-endpoint to final, EOU-minus-VAD offset) and `stages.csv` (the full
+timestamped stage timeline). No transcript text is written, only character counts.
+
+It is opt-in: without `-e sttHarnessRunId <id>` it is skipped, so ordinary
+`connectedDebugAndroidTest` runs never replay personal audio, and it needs the
+pinned Parakeet-EOU model staged. **Not run yet**; its result rows are empty.
+
+```powershell
+# Replays test_data/Walking .m4a through the real capture -> VAD -> Parakeet-EOU
+# STT -> bounded endpoint path, with the pinned model and stage timing reports.
+.\scripts\run-stt-pipeline-harness.ps1
+# Add -SmartTurn to include the Smart Turn corroborator when its model is staged.
+```
+
 ### Pixel 10 checks (marked NOT run)
 
 **Device testing is deferred for M24; none of the following was run.** The

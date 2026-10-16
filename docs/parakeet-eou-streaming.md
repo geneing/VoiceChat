@@ -235,3 +235,39 @@ end-to-end recognition remains covered by the open items below and R-0240/R-0241
   60 s `TurnOrchestrator` delivery timeout before playback finished; the turn
   still settled truthfully. This is a TTS/delivery bound, not a Parakeet issue.
 
+## STT pipeline stage timing harness
+
+`scripts/run-stt-pipeline-harness.ps1` drives
+`SttPipelineHarnessInstrumentedTest` (`app/src/androidTest/.../voice/`), an opt-in
+on-device harness that replays a recorded clip through the **real** pipeline and
+reports the latency story per stage rather than only an end-to-end decode time.
+
+- **Input.** A WAV or M4A. M4A is decoded on the device by the shared
+  `AndroidM4aReplayDecoder`, so `test_data/Walking .m4a` needs no host
+  conversion. The samples are delivered as 20 ms / 320-sample frames paced to
+  real time, then a bounded tail of silence, so capture behaves like a microphone
+  and the bounded VAD silence cap commits the turn instead of the capture-ended
+  path.
+- **Stages.** The harness wraps the production `VoiceTurnDetector` and the STT
+  adapter's `DiagnosticsSink`, so it records VAD onset/pause/resume/held/endpoint,
+  Smart Turn inference (probability and verdict), the model EOU offset, and each
+  STT transcript revision and commit. `summary.csv` holds the per-clip timing
+  (capture-start and onset to first transcript, last-audio-frame and VAD endpoint
+  to the final transcript, and `EOU - VAD`); `stages.csv` holds the full
+  timestamped timeline. Both are content-free: counts and stable codes, never a
+  transcript, token, or sample.
+- **Smart Turn.** Off by default (VAD-only bounded endpoint). `-SmartTurn` builds
+  the production `SmartTurnDetectorFactory` detector when its model is staged; a
+  missing/corrupt model degrades to the VAD-only policy and is recorded, never
+  faked.
+
+```powershell
+.\scripts\run-stt-pipeline-harness.ps1
+# → build/stt-harness/<runId>/{summary.csv,stages.csv}
+```
+
+The harness has **not been run on a device yet**; its summary rows are empty and
+no latency claim is made. Running it needs a connected Pixel 10, the debug APK,
+the instrumentation APK, and the pinned Parakeet-EOU model set (`models/`, staged
+by the script via `scripts/push-parakeet-eou.ps1`).
+
