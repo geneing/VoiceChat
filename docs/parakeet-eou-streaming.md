@@ -266,8 +266,38 @@ reports the latency story per stage rather than only an end-to-end decode time.
 # → build/stt-harness/<runId>/{summary.csv,stages.csv}
 ```
 
-The harness has **not been run on a device yet**; its summary rows are empty and
-no latency claim is made. Running it needs a connected Pixel 10, the debug APK,
-the instrumentation APK, and the pinned Parakeet-EOU model set (`models/`, staged
-by the script via `scripts/push-parakeet-eou.ps1`).
+Running it needs a connected Pixel 10, the debug APK, the instrumentation APK,
+and the pinned Parakeet-EOU model set (`models/`, staged by the script via
+`scripts/push-parakeet-eou.ps1`).
+
+### First device run (Pixel 10, 2026-10-15)
+
+`test_data/Walking .m4a` (22,741 ms) replayed with `sttHarnessRunId` set; the
+numbers below are from one run each, on one clip, and are **not** gold-labeled
+accuracy or a general latency claim.
+
+| Mode | Endpoints | First transcript (from onset) | Last audio frame → final | VAD endpoint → final | `EOU - VAD` | Final chars |
+| --- | --- | --- | --- | --- | --- | --- |
+| VAD-only (Smart Turn off) | 1 (`SILENCE_CAP`) | 1,718 ms | 0 ms | 3 ms | -300 ms | 103 |
+| Smart Turn on | 5 (`SEMANTIC_COMPLETE`) | 4,525 ms | 0 ms | 231 ms | n/a | 7 |
+
+Observations:
+
+- **Time to first token.** With VAD-only, the first transcript revision arrived
+  1,718 ms after onset (8,668 ms after capture start, which includes ~6.9 s of
+  leading non-speech). The adapter emits the first revision only after a whole
+  640 ms chunk is decoded, so this is the streaming warm-up, not accuracy.
+- **Finalization is not the bottleneck.** In both runs the committed transcript
+  was ready within a few milliseconds of the VAD endpoint (3 ms and 231 ms); the
+  decoder had already run ahead of real time (25 chunks, mean 271 ms / max
+  418 ms per chunk, EOU confirmed once). End-of-speech → final is dominated by the
+  endpoint decision, not the recognizer.
+- **`EOU - VAD` = -300 ms** (VAD-only): the model EOU at 15,360 ms prefixed the
+  independent VAD endpoint at 15,660 ms, consistent with the EOU debounce firing
+  just before the 2 s silence cap. One confirmation in the clip.
+- **Smart Turn fragmented the utterance** (see R-0242): with the corroborator on,
+  `SEMANTIC_COMPLETE` (probabilities 0.69-0.99) ended the turn at every short
+  mid-utterance pause, producing five commits instead of one and a 7-character
+  final turn. The default VAD-only policy is unaffected because Smart Turn is
+  opt-in and default-off.
 

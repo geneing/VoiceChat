@@ -1268,7 +1268,7 @@ The decoder-only streaming replay (`ParakeetEouReplayInstrumentedTest`, steps 1-
 above) is unchanged and is driven by `scripts/run-parakeet-eou-replay.ps1`; see
 [docs/parakeet-eou-streaming.md](./docs/parakeet-eou-streaming.md).
 
-### STT pipeline stage timing harness (opt-in; NOT run)
+### STT pipeline stage timing harness (opt-in; run on Pixel 10, 2026-10-15)
 
 `SttPipelineHarnessInstrumentedTest` (`app/src/androidTest/.../voice/`) replays a
 recorded clip (WAV or M4A, decoded on the device) as real-time paced 20 ms frames
@@ -1282,7 +1282,14 @@ timestamped stage timeline). No transcript text is written, only character count
 
 It is opt-in: without `-e sttHarnessRunId <id>` it is skipped, so ordinary
 `connectedDebugAndroidTest` runs never replay personal audio, and it needs the
-pinned Parakeet-EOU model staged. **Not run yet**; its result rows are empty.
+pinned Parakeet-EOU model staged.
+
+First run (Pixel 10 `57220DLCR002R6`, `test_data/Walking .m4a`, one run each):
+VAD-only reported `outcome=FINAL`, 1 endpoint (`SILENCE_CAP`), first transcript
+1,718 ms after onset, VAD-endpoint → final 3 ms, `EOU - VAD` -300 ms, 103 chars;
+with `-SmartTurn` the policy reported 5 `SEMANTIC_COMPLETE` endpoints (probabilities
+0.69-0.99) and a 7-character final turn. One clip, not gold-labeled; the
+fragmentation is tracked as R-0242. Reports: `build/stt-harness/<runId>/`.
 
 ```powershell
 # Replays test_data/Walking .m4a through the real capture -> VAD -> Parakeet-EOU
