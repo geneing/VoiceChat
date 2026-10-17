@@ -157,7 +157,10 @@ class VoiceLlmHarnessReport(
                             (run.failure?.let { ", failure=$it" } ?: ""),
                     )
                 }
-                result.runs.firstOrNull()?.reportedModel?.let { appendLine("- Served model: `${it.value}`") }
+                result.runs
+                    .firstOrNull()
+                    ?.reportedModel
+                    ?.let { appendLine("- Served model: `${it.value}`") }
                 result.runs.firstOrNull()?.usage?.let { usage ->
                     appendLine(
                         "- Usage (first attempt): prompt=${usage.promptTokens} " +
@@ -300,8 +303,7 @@ class VoiceLlmHarness(
     private fun completeSentence(buffered: StringBuilder): Boolean =
         buffered.length >= MIN_SPEAKABLE_CHARACTERS && buffered.any { it in SENTENCE_ENDINGS }
 
-    private fun elapsedMillis(startedAtNanos: Long): Long =
-        ((System.nanoTime() - startedAtNanos) / 1_000_000.0).roundToInt().toLong()
+    private fun elapsedMillis(startedAtNanos: Long): Long = ((System.nanoTime() - startedAtNanos) / 1_000_000.0).roundToInt().toLong()
 
     companion object {
         /** Attempts per case when the caller does not say otherwise. */

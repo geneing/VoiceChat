@@ -2,6 +2,10 @@ package com.voicechat.agent.audio
 
 import android.media.AudioRecord
 import com.voicechat.agent.contracts.AudioInput
+import com.voicechat.agent.contracts.DiagnosticAttribute
+import com.voicechat.agent.contracts.DiagnosticEvent
+import com.voicechat.agent.contracts.DiagnosticOutcome
+import com.voicechat.agent.contracts.DiagnosticStage
 import com.voicechat.agent.contracts.DiagnosticsSink
 import com.voicechat.agent.contracts.NoOpDiagnosticsSink
 import com.voicechat.agent.diagnostics.MonotonicClock
@@ -57,6 +61,12 @@ class MicrophoneAudioInput(
     private val config: MicrophoneCaptureConfig = MicrophoneCaptureConfig(),
     private val routeMonitor: AudioRouteMonitor? = null,
     private val focusController: AudioFocusController? = null,
+    /**
+     * Optional platform echo suppression for this capture session. The default
+     * attaches nothing, so a JVM test is unaffected; the production factory passes
+     * [PlatformEchoCanceller].
+     */
+    private val echoCanceller: EchoCanceller = EchoCanceller.NONE,
     private val sourceLabel: String = DEFAULT_SOURCE_LABEL,
     private val diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
     private val clock: MonotonicClock = SystemMonotonicClock,
@@ -117,6 +127,28 @@ class MicrophoneAudioInput(
             AppLog.i {
                 "capture: started source=$sourceLabel format=${engine.format} route=${currentRoute()?.label ?: "unknown"}"
             }
+            // Echo suppression is attached per session and its outcome is reported,
+            // because the assistant is audible on the same device that is capturing
+            // (see `docs/audio-capture.md`): a VAD trigger during playback must be
+            // interpretable as either real user speech or un-cancelled echo.
+            val echo = echoCanceller.attach(engine.audioSessionId)
+            diagnostics.record(
+                DiagnosticEvent(
+                    stage = DiagnosticStage.AUDIO_INPUT,
+                    outcome = DiagnosticOutcome.PROGRESS,
+                    monotonicTimeNanos = clock.nanoTime(),
+                    traceId = traceId,
+                    turnId = turnId,
+                    attributes =
+                        mapOf(
+                            DiagnosticAttribute.AUDIO_SOURCE to sourceLabel,
+                            DiagnosticAttribute.STREAM_STATE to "echo-canceller-${echo.state.name.lowercase()}",
+                        ),
+                ),
+            )
+            if (!echo.enabled) {
+                AppLog.w { "capture: echo cancellation not active (${echo.state}): ${echo.detail}" }
+            }
             routeJob = monitorRoutes()
 
             val buffer = ShortArray(config.frameSizeSamples)
@@ -166,6 +198,7 @@ class MicrophoneAudioInput(
             throw failure
         } finally {
             routeJob?.cancel()
+            echoCanceller.release()
             runCatching { engine.stop() }
             runCatching { engine.release() }
             activeEngine = null

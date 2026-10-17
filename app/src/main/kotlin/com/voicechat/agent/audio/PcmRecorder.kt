@@ -60,6 +60,16 @@ interface PcmRecorderEngine {
     /** Format every sample read from this engine uses. */
     val format: AudioFormat
 
+    /**
+     * The platform audio session this stream belongs to, or `null` when the
+     * implementation does not expose one.
+     *
+     * It exists so an optional platform effect (the echo canceller) can be
+     * attached to exactly this capture session; it carries no audio or identity.
+     */
+    val audioSessionId: Int?
+        get() = null
+
     /** Allocates the stream and starts reading. Throws [VoiceAgentException] on failure. */
     fun start()
 

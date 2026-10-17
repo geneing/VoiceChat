@@ -20,8 +20,8 @@ import com.voicechat.agent.log.AppLog
 import com.voicechat.agent.log.LogLevel
 import com.voicechat.agent.log.RecordingLogSink
 import com.voicechat.agent.providers.CredentialValidationPolicy
-import com.voicechat.agent.providers.DocumentedModelCatalog
 import com.voicechat.agent.providers.CredentialValidationResult
+import com.voicechat.agent.providers.DocumentedModelCatalog
 import com.voicechat.agent.providers.KnownProviders
 import com.voicechat.agent.providers.LlmCapabilityReconciler
 import com.voicechat.agent.providers.ProviderCapabilityRegistry
@@ -361,14 +361,22 @@ class OpenCodeGoLanguageModelTest {
                 val engine = sseEngine(OpenCodeGoFixtures.text("chat_normal.sse"))
                 adapter(engine, credentialStore())
                     .consume(request(model = "glm-5.3-flash", reasoning = ReasoningLevel.LOW))
-                val body = engine.requests.single().body.orEmpty()
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
                 assertTrue("expected reasoning_effort in $body", body.contains("\"reasoning_effort\":\"low\""))
             }
             run {
                 val engine = sseEngine(OpenCodeGoFixtures.text("chat_normal.sse"))
                 adapter(engine, credentialStore())
                     .consume(request(model = "glm-5.3-flash", reasoning = ReasoningLevel.NONE))
-                val body = engine.requests.single().body.orEmpty()
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
                 assertTrue(
                     "glm-5.3-flash now rejects every off form, so the field is omitted: $body",
                     !body.contains("\"reasoning_effort\""),
@@ -378,7 +386,11 @@ class OpenCodeGoLanguageModelTest {
                 val engine = sseEngine(OpenCodeGoFixtures.text("chat_normal.sse"))
                 adapter(engine, credentialStore())
                     .consume(request(model = "deepseek-v4.1-flash", reasoning = ReasoningLevel.NONE))
-                val body = engine.requests.single().body.orEmpty()
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
                 assertTrue("`none` must be sent, not omitted: $body", body.contains("\"reasoning_effort\":\"none\""))
             }
             // Responses: reasoning.effort, and `none` is explicit for the model
@@ -387,14 +399,22 @@ class OpenCodeGoLanguageModelTest {
                 val engine = sseEngine(OpenCodeGoFixtures.text("responses_normal.sse"))
                 adapter(engine, credentialStore())
                     .consume(request(model = "gpt-6-luna", reasoning = ReasoningLevel.NONE))
-                val body = engine.requests.single().body.orEmpty()
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
                 assertTrue("omitting the field leaves the reasoning default: $body", body.contains("\"reasoning\":{\"effort\":\"none\"}"))
             }
             run {
                 val engine = sseEngine(OpenCodeGoFixtures.text("responses_normal.sse"))
                 adapter(engine, credentialStore())
                     .consume(request(model = "gpt-6-luna", reasoning = ReasoningLevel.LOW))
-                val body = engine.requests.single().body.orEmpty()
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
                 assertTrue("expected reasoning.effort in $body", body.contains("\"reasoning\":{\"effort\":\"low\"}"))
             }
             // A model that rejects `none` omits the field instead.
@@ -402,7 +422,11 @@ class OpenCodeGoLanguageModelTest {
                 val engine = sseEngine(OpenCodeGoFixtures.text("responses_normal.sse"))
                 adapter(engine, credentialStore())
                     .consume(request(model = "grok-4.7", reasoning = ReasoningLevel.NONE))
-                val body = engine.requests.single().body.orEmpty()
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
                 assertTrue("grok-4.7 rejects `none`: $body", !body.contains("\"reasoning\""))
             }
             // Messages: adaptive thinking plus an effort hint.
@@ -410,7 +434,11 @@ class OpenCodeGoLanguageModelTest {
                 val engine = sseEngine(OpenCodeGoFixtures.text("messages_normal.sse"))
                 adapter(engine, credentialStore())
                     .consume(request(model = "claude-haiku-5-5", reasoning = ReasoningLevel.LOW))
-                val body = engine.requests.single().body.orEmpty()
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
                 assertTrue("expected adaptive thinking in $body", body.contains("\"thinking\":{\"type\":\"adaptive\"}"))
                 assertTrue("expected the effort hint in $body", body.contains("\"output_config\":{\"effort\":\"low\"}"))
             }
@@ -418,7 +446,11 @@ class OpenCodeGoLanguageModelTest {
                 val engine = sseEngine(OpenCodeGoFixtures.text("messages_normal.sse"))
                 adapter(engine, credentialStore())
                     .consume(request(model = "claude-haiku-5-5", reasoning = ReasoningLevel.NONE))
-                val body = engine.requests.single().body.orEmpty()
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
                 assertTrue("no thinking block expected in $body", !body.contains("\"thinking\""))
             }
             // A thinking-only Messages model sends only its verified off value.
@@ -426,7 +458,11 @@ class OpenCodeGoLanguageModelTest {
                 val engine = sseEngine(OpenCodeGoFixtures.text("messages_normal.sse"))
                 adapter(engine, credentialStore())
                     .consume(request(model = "qwen3.8-flash", reasoning = ReasoningLevel.NONE))
-                val body = engine.requests.single().body.orEmpty()
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
                 assertTrue("expected the explicit off in $body", body.contains("\"thinking\":{\"type\":\"disabled\"}"))
             }
             // A model with no verified control is sent no field at all.
@@ -434,7 +470,11 @@ class OpenCodeGoLanguageModelTest {
                 val engine = sseEngine(OpenCodeGoFixtures.text("messages_normal.sse"))
                 adapter(engine, credentialStore())
                     .consume(request(model = "minimax-m3", reasoning = ReasoningLevel.NONE))
-                val body = engine.requests.single().body.orEmpty()
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
                 assertTrue("no reasoning field expected in $body", !body.contains("\"reasoning\""))
                 assertTrue("no thinking field expected in $body", !body.contains("\"thinking\""))
             }
@@ -501,7 +541,10 @@ class OpenCodeGoLanguageModelTest {
             )
         voiceModels.forEach { (id, family) ->
             assertEquals(id, family, OpenCodeGoModels.familyFor(ModelId(id)))
-            assertNotNull("$id must be offered by the picker's documented catalog", catalog.modelCapabilities(KnownProviders.OPENCODE_GO, ModelId(id)))
+            assertNotNull(
+                "$id must be offered by the picker's documented catalog",
+                catalog.modelCapabilities(KnownProviders.OPENCODE_GO, ModelId(id)),
+            )
         }
         // The documented catalog the M22 picker reads is the family map itself.
         val offered = DocumentedModelCatalog.availableModels().map { it.model.id }

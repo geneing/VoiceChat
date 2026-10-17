@@ -431,6 +431,25 @@ class ConversationViewModel(
         }
     }
 
+    override fun onLiveAssistantText(text: String) {
+        _uiState.update { state ->
+            state.copy(dialog = state.dialog?.copy(liveAssistantText = text, phase = TurnPhase.GENERATING))
+        }
+    }
+
+    override fun onAssistantReplySpoken(
+        generatedText: String,
+        deliveredText: String,
+    ) {
+        AppLog.d {
+            "ui: voice reply spoken generated=${generatedText.length} delivered=${deliveredText.length} " +
+                "interrupted=${deliveredText.length < generatedText.length}"
+        }
+        _uiState.update { state ->
+            state.copy(dialog = state.dialog?.copy(liveAssistantText = null, phase = TurnPhase.LISTENING))
+        }
+    }
+
     override fun onConversationChanged(conversation: Conversation) {
         currentConversation = conversation
         _uiState.update { state ->
@@ -453,6 +472,7 @@ class ConversationViewModel(
     private fun VoiceSessionState.toTurnPhase(): TurnPhase =
         when (this) {
             VoiceSessionState.LISTENING -> TurnPhase.LISTENING
+            VoiceSessionState.SPEAKING -> TurnPhase.GENERATING
             VoiceSessionState.FAILED -> TurnPhase.FAILED
             VoiceSessionState.IDLE, VoiceSessionState.STOPPED -> TurnPhase.IDLE
         }
@@ -1069,6 +1089,17 @@ class ConversationViewModel(
             transcript: Transcript,
         ) {
             if (isCurrent()) delegate.onUtteranceCommitted(turnId, transcript)
+        }
+
+        override fun onLiveAssistantText(text: String) {
+            if (isCurrent()) delegate.onLiveAssistantText(text)
+        }
+
+        override fun onAssistantReplySpoken(
+            generatedText: String,
+            deliveredText: String,
+        ) {
+            if (isCurrent()) delegate.onAssistantReplySpoken(generatedText, deliveredText)
         }
 
         override fun onConversationChanged(conversation: Conversation) {

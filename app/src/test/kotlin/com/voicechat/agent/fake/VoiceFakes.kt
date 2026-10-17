@@ -301,6 +301,23 @@ class RecordingVoiceSessionListener : VoiceSessionListener {
         committed += turnId to transcript
     }
 
+    /** Assistant text seen live, in order. */
+    val liveAssistantText: MutableList<String> = mutableListOf()
+
+    /** Spoken replies: the generated text and what was delivered. */
+    val spokenReplies: MutableList<Pair<String, String>> = mutableListOf()
+
+    override fun onLiveAssistantText(text: String) {
+        liveAssistantText += text
+    }
+
+    override fun onAssistantReplySpoken(
+        generatedText: String,
+        deliveredText: String,
+    ) {
+        spokenReplies += generatedText to deliveredText
+    }
+
     override fun onConversationChanged(conversation: Conversation) {
         conversations += conversation
     }

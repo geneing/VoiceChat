@@ -2,7 +2,7 @@ package com.voicechat.agent.voice
 
 import com.voicechat.agent.domain.TurnId
 
-/** Session-level state for the STT-only voice capture path. */
+/** Session-level state for the voice capture path. */
 enum class VoiceSessionState {
     /** No session is active. */
     IDLE,
@@ -10,10 +10,18 @@ enum class VoiceSessionState {
     /** Capture is running and the loop is waiting for or transcribing speech. */
     LISTENING,
 
+    /**
+     * The assistant is generating or speaking a reply.
+     *
+     * Capture and VAD keep running in this state; speech onset returns the loop to
+     * [LISTENING] immediately, so the state never delays a barge-in.
+     */
+    SPEAKING,
+
     /** The user stopped the session. */
     STOPPED,
 
-    /** A typed capture, recognition, or persistence error surfaced. */
+    /** A typed capture, recognition, persistence, or provider error surfaced. */
     FAILED,
 }
 
