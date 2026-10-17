@@ -311,7 +311,6 @@ class VoiceSessionCoordinator(
 
             SttEvent.EndOfSpeech -> {
                 AppLog.i { "voice: recognizer end of speech turn=${turn.turnId.value}" }
-                turn.recognizerEndOfSpeech = true
                 if (activeListening === turn) {
                     listener.onSttEndOfSpeech(turn.turnId)
                 }
@@ -409,7 +408,6 @@ class VoiceSessionCoordinator(
         var final: Transcript? = null
         var failure: VoiceAgentError? = null
         var vadEndpointOffsetMillis: Long? = null
-        var recognizerEndOfSpeech: Boolean = false
     }
 
     private companion object {

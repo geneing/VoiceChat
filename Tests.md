@@ -1234,7 +1234,7 @@ What the JVM suite proves (details in the linked document):
 device-testing policy it is compiled only, and it is a structural smoke check
 with inline fakes, not a voice-quality or timing measurement.
 
-### Platform SpeechRecognizer STT (M27; device run not recorded yet)
+### Platform SpeechRecognizer STT (M27; Pixel 10 run recorded 2026-10-16)
 
 The STT engine is the platform `android.speech.SpeechRecognizer`, preferred
 on-device (`createOnDeviceSpeechRecognizer` / `EXTRA_PREFER_OFFLINE`), with the
@@ -1245,11 +1245,12 @@ replaced the app-managed Parakeet-EOU ONNX engine, which was removed; see
 The debug-only `DebugFileAudioInput` (selected when `files/debug-audio/input.wav`
 or `input.m4a` exists; release ignores it) replays a recording through the real
 `capture → VAD/onset → platform STT` path with the UI in the foreground, so no
-live speech is needed. No Pixel 10 run has been recorded for this engine yet
-(R-0243, R-0244); recognition accuracy, partial latency, and end-of-speech timing
-are unmeasured.
+live speech is needed. On Pixel 10 the staged-file harness path (below) returned
+partials and a final transcript for both clips, confirming the recognizer reads
+the piped PCM (R-0243). Recognition accuracy is not asserted; the transcripts are
+recorded for review.
 
-### STT pipeline stage timing harness (opt-in; Pixel 10 run pending)
+### STT pipeline stage timing harness (opt-in; run on Pixel 10, 2026-10-16)
 
 `SttPipelineHarnessInstrumentedTest` (`app/src/androidTest/.../voice/`) replays a
 recorded clip (WAV or M4A, decoded on the device) as real-time paced 20 ms frames
@@ -1266,6 +1267,18 @@ and the final text are additionally logged to logcat.
 It is opt-in: without `-e sttHarnessRunId <id>` it is skipped, so ordinary
 `connectedDebugAndroidTest` runs never replay personal audio. It also skips on a
 device that exposes no on-device recognizer.
+
+Run (Pixel 10 `57220DLCR002R6`, Android 17 / API 37, 2026-10-16, VAD-only):
+both clips finished `FINAL`. `Walking .m4a` (22.7 s): first partial 8077 ms after
+capture start (1131 ms after onset), VAD-endpoint → final 343 ms, input-end →
+final 167 ms, 43 partials, final `Latest news please`. `eng-000001-000081dd.wav`
+(13.0 s): first partial 1608 ms (585 ms after onset), VAD-endpoint → final
+269 ms, input-end → final 1542 ms, 81 partials, final `What is the complete
+government process for applying for a passport for a minor under the age of 16
+including all necessary documentation parental consent forms and Associated
+official fees`. The engine's `onEndOfSpeech` fired 14273 ms before the final on
+the long clip, so it is not a turn boundary. One recording each; not accuracy
+claims. Reports: `build/stt-harness/<runId>/`.
 
 ```powershell
 # Replays test_data/Walking .m4a and test_data/eng-000001-000081dd.wav through the
@@ -1554,22 +1567,13 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 Keep all run outcomes, latency/accuracy progress, and tested source hashes in
 the single [speech latency results log](./docs/voice-latency-results.md).
 
-For the offline Parakeet comparison, fetch the pinned candidate artifacts first,
-then run the same corpus on the attached Pixel 10:
+The former offline Parakeet candidate lane (`-Engine Parakeet`, its
+`scripts/fetch-parakeet-candidate.ps1`/`scripts/push-parakeet-candidate.ps1`
+fetchers, and the `parakeet-tdt-ctc-110m-en-int8` sherpa-onnx model set) was
+**retired in M27** with the app-managed Parakeet STT engine; see
+[docs/android-speech-recognition.md](./docs/android-speech-recognition.md). The
+LiteRT ASR benchmark lane below is separate.
 
-```powershell
-$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
-.\scripts\fetch-parakeet-candidate.ps1
-.\scripts\run-stt-paced-replay.ps1 `
-  -Engine Parakeet -DeviceSerial '57220DLCR002R6' `
-  -ParakeetOutputCsv "$env:TEMP\voicechat-parakeet.csv" `
-  -ExportParakeetDraftLabels
-```
-
-This candidate is offline, so this run records model-open, audio-decode, and
-full-phrase decode time; it has no first-partial metric. The runner stages
-checksum-verified weights only to the debug app's private storage. Draft text is
-saved to an ignored local CSV for manual review.
 ## LiteRT ASR CPU instrumentation spike (optimization/litert-speech-benchmark)
 
 This debug/test-only spike loads the converted sample Moonshine Tiny FP32 model

@@ -1,6 +1,7 @@
 package com.voicechat.agent.stt
 
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.speech.RecognitionListener
@@ -30,11 +31,73 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * The platform operations one recognition session needs.
+ *
+ * It is the seam that keeps [AndroidSpeechRecognizerSpeechToText]'s lifecycle
+ * logic JVM-testable: the real implementation delegates to
+ * `android.speech.SpeechRecognizer`, and a test drives a fake.
+ */
+interface PlatformRecognizer {
+    fun setListener(listener: RecognitionListener)
+
+    fun startListening(intent: android.content.Intent)
+
+    fun stopListening()
+
+    fun cancel()
+
+    fun destroy()
+}
+
+/** Supplies the platform recognizer for a session; faked in JVM tests. */
+interface RecognizerProvider {
+    /** True when the device exposes an on-device recognizer. */
+    fun isOnDeviceAvailable(): Boolean
+
+    /** Creates one recognizer, on-device when [onDevice] is true. */
+    fun create(onDevice: Boolean): PlatformRecognizer
+}
+
+/** The production [RecognizerProvider] over the platform `SpeechRecognizer`. */
+class AndroidRecognizerProvider(
+    context: Context,
+) : RecognizerProvider {
+    private val appContext = context.applicationContext
+
+    override fun isOnDeviceAvailable(): Boolean = SpeechRecognizer.isOnDeviceRecognitionAvailable(appContext)
+
+    override fun create(onDevice: Boolean): PlatformRecognizer =
+        AndroidPlatformRecognizer(
+            if (onDevice) {
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext)
+            } else {
+                SpeechRecognizer.createSpeechRecognizer(appContext)
+            },
+        )
+}
+
+private class AndroidPlatformRecognizer(
+    private val speech: SpeechRecognizer,
+) : PlatformRecognizer {
+    override fun setListener(listener: RecognitionListener) = speech.setRecognitionListener(listener)
+
+    override fun startListening(intent: android.content.Intent) = speech.startListening(intent)
+
+    override fun stopListening() = speech.stopListening()
+
+    override fun cancel() = speech.cancel()
+
+    override fun destroy() = speech.destroy()
+}
 
 /**
  * On-device [SpeechToText] backed by the platform `android.speech.SpeechRecognizer`
@@ -47,6 +110,12 @@ import java.util.concurrent.atomic.AtomicReference
  * recognizer is selected on the user's behalf, and availability is gated by
  * [AndroidSpeechSttStatus] before a session starts.
  *
+ * **One session at a time.** The platform recognizer permits exactly one active
+ * session and answers a second `startListening` with `ERROR_RECOGNIZER_BUSY`.
+ * The coordinator deliberately lets turn *N*'s finalization overlap turn *N+1*,
+ * so [transcribe] serializes on [sessionMutex]: a new turn's session waits for
+ * the previous one to finish instead of colliding with it.
+ *
  * **Audio path.** The recognizer's custom-audio source
  * (`RecognizerIntent.EXTRA_AUDIO_SOURCE`, API 33+) is fed the same captured
  * 16 kHz mono 16-bit PCM frames the VAD already sees: the adapter drains the M02
@@ -57,16 +126,21 @@ import java.util.concurrent.atomic.AtomicReference
  * (`docs/android-speech-recognition.md`).
  *
  * **End of speech.** The recognizer's `onEndOfSpeech` is surfaced as
- * [SttEvent.EndOfSpeech] and recorded, but it is **not** the authority for
- * ending a turn: the bounded M09 VAD/Smart Turn endpoint closes the turn and
- * this adapter's input, which then calls `stopListening()` and waits, bounded,
- * for the final result. Partial hypotheses are surfaced as interim
- * [SttEvent.Result]s through [SttResultAssembler].
+ * [SttEvent.EndOfSpeech] and recorded (`END_OF_SPEECH_MILLIS`), but it is **not**
+ * a turn boundary. Measured on Pixel 10 (M27), the on-device recognizer emits
+ * `onEndOfSpeech` well before the utterance ends and keeps streaming partials,
+ * and it delivers `onResults` only when the custom audio closes. So the bounded
+ * M09 VAD/Smart Turn endpoint closes the turn input, the adapter closes the pipe,
+ * and `onResults` then follows (measured 150-350 ms after input end); the
+ * silence cap remains the fallback when the engine never signals end-of-speech.
+ * Neither a stop from inside the `onEndOfSpeech` callback nor a
+ * `stopListening()` while the recognizer reads the pipe is used: both made the
+ * on-device recognizer answer `ERROR_CLIENT`.
  *
- * **Logging.** Every recognition callback is logged. Partial text is logged only
- * at verbose level (developer logs, off in release); the structured logs and the
- * diagnostics sink carry counts, stable codes, and timings, never transcript
- * content.
+ * **Logging.** Every recognition callback is logged. High-frequency callbacks
+ * (`onRmsChanged`, `onBufferReceived`) and repeated `onEndOfSpeech` are
+ * verbose-only, and partial text is verbose-only, so release logs stay
+ * content-free and the main thread is not saturated by logging.
  *
  * **Lifecycle.** One recognizer is created per [transcribe] session and released
  * when the session ends; [close] is idempotent. Platform recognizer calls run on
@@ -78,181 +152,222 @@ class AndroidSpeechRecognizerSpeechToText(
     private val diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
     private val clock: MonotonicClock = SystemMonotonicClock,
     private val preferOnDevice: Boolean = true,
+    private val recognizerProvider: RecognizerProvider = AndroidRecognizerProvider(context),
 ) : SpeechToText {
     private val appContext = context.applicationContext
 
     override val engineId: EngineId = engine.engineId
 
-    private val activeRecognizer = AtomicReference<SpeechRecognizer?>(null)
+    private val activeRecognizer = AtomicReference<PlatformRecognizer?>(null)
     private val closed = AtomicBoolean(false)
+
+    /** Serializes sessions: the platform recognizer allows only one at a time. */
+    private val sessionMutex = Mutex()
 
     override fun transcribe(audio: Flow<AudioFrame>): Flow<SttEvent> =
         flow {
             check(!closed.get()) { "AndroidSpeechRecognizerSpeechToText has been closed" }
-
-            val languageTag = AndroidSpeechSttMapping.languageTag(engine)
-            val startedAtNanos = clock.nanoTime()
-            var frameCount = 0
-            var partialCount = 0
-            var firstPartialNanos: Long? = null
-            var endOfSpeechNanos: Long? = null
-            var finalCharacterCount = 0
-            var outcome = DiagnosticOutcome.CANCELLED
-            var errorCode: String? = null
-            AppLog.i {
-                "asr: session start engine=${engine.engineId.value} model=${engine.modelId.value} locale=$languageTag"
-            }
-            record(DiagnosticOutcome.STARTED, startedAtNanos, frameCount, partialCount, firstPartialNanos, endOfSpeechNanos, null)
-
-            val pipe = ParcelFileDescriptor.createPipe()
-            val readEnd = pipe[0]
-            val writeEnd = pipe[1]
-            val responses = Channel<SttEngineResponse>(Channel.UNLIMITED)
-            val terminated = CompletableDeferred<Unit>()
-            val assembler = SttResultAssembler(languageTag)
-            val onDevice = preferOnDevice && SpeechRecognizer.isOnDeviceRecognitionAvailable(appContext)
-            val bridge =
-                PlatformRecognitionBridge(
-                    responses = responses,
-                    terminated = terminated,
-                    onEvent = { event -> logCallback(event) },
-                    onPartial = {
-                        partialCount++
-                        if (firstPartialNanos == null) firstPartialNanos = clock.nanoTime()
-                    },
-                    onEndOfSpeech = {
-                        if (endOfSpeechNanos == null) endOfSpeechNanos = clock.nanoTime()
-                    },
+            sessionMutex.withLock {
+                val languageTag = AndroidSpeechSttMapping.languageTag(engine)
+                val startedAtNanos = clock.nanoTime()
+                val onDevice = preferOnDevice && recognizerProvider.isOnDeviceAvailable()
+                var frameCount = 0
+                var partialCount = 0
+                var firstPartialNanos: Long? = null
+                var endOfSpeechNanos: Long? = null
+                var finalCharacterCount = 0
+                var outcome = DiagnosticOutcome.CANCELLED
+                var errorCode: String? = null
+                AppLog.i {
+                    "asr: session start engine=${engine.engineId.value} model=${engine.modelId.value} " +
+                        "mode=${AndroidSpeechSttMapping.modeLabel(onDevice)} locale=$languageTag"
+                }
+                record(
+                    DiagnosticOutcome.STARTED,
+                    startedAtNanos,
+                    frameCount,
+                    partialCount,
+                    firstPartialNanos,
+                    endOfSpeechNanos,
+                    onDevice,
+                    null,
                 )
 
-            try {
-                coroutineScope {
-                    // Drain the M02 audio stream into a small channel, then write it
-                    // to the pipe from a separate coroutine. Decoupling the two keeps
-                    // input completion observable even when the recognizer never
-                    // reads the pipe (for example a recognizer that ignores
-                    // EXTRA_AUDIO_SOURCE and opens the microphone instead).
-                    val frames =
-                        Channel<AudioFrame>(
-                            capacity = FRAME_BUFFER,
-                            onBufferOverflow = BufferOverflow.DROP_OLDEST,
-                        )
-                    val drain =
-                        launch {
-                            try {
-                                audio.collect { frame ->
-                                    frameCount++
-                                    frames.trySend(frame)
+                val pipe = ParcelFileDescriptor.createPipe()
+                val readEnd = pipe[0]
+                val writeEnd = pipe[1]
+                val responses = Channel<SttEngineResponse>(Channel.UNLIMITED)
+                val terminated = CompletableDeferred<Unit>()
+                val assembler = SttResultAssembler(languageTag)
+
+                try {
+                    coroutineScope {
+                        // Drain the M02 audio stream into a small channel, then write it
+                        // to the pipe from a separate coroutine. Decoupling the two keeps
+                        // input completion observable even when the recognizer never
+                        // reads the pipe (for example a recognizer that ignores
+                        // EXTRA_AUDIO_SOURCE and opens the microphone instead).
+                        val frames =
+                            Channel<AudioFrame>(
+                                capacity = FRAME_BUFFER,
+                                onBufferOverflow = BufferOverflow.DROP_OLDEST,
+                            )
+                        val drain =
+                            launch {
+                                try {
+                                    audio.collect { frame ->
+                                        frameCount++
+                                        frames.trySend(frame)
+                                    }
+                                } finally {
+                                    frames.close()
                                 }
-                            } finally {
-                                frames.close()
+                            }
+                        val writer =
+                            launch(Dispatchers.IO) {
+                                writeFrames(frames, writeEnd)
+                            }
+
+                        val recognizer =
+                            withContext(Dispatchers.Main) {
+                                recognizerProvider.create(onDevice)
+                            }
+                        activeRecognizer.set(recognizer)
+
+                        // One stop per session, shared by the end-of-speech handler and the
+                        // input-end stopper, so the recognizer is never stopped twice.
+                        val stopRequested = AtomicBoolean(false)
+
+                        fun requestStop() {
+                            if (stopRequested.compareAndSet(false, true)) {
+                                runCatching { recognizer.stopListening() }
                             }
                         }
-                    val writer =
-                        launch(Dispatchers.IO) {
-                            writeFrames(frames, writeEnd)
-                        }
 
-                    val recognizer =
+                        val bridge =
+                            PlatformRecognitionBridge(
+                                responses = responses,
+                                terminated = terminated,
+                                onRecognitionEvent = { event -> logCallback(event) },
+                                onPartial = {
+                                    partialCount++
+                                    if (firstPartialNanos == null) firstPartialNanos = clock.nanoTime()
+                                },
+                                recordEndOfSpeech = {
+                                    if (endOfSpeechNanos == null) endOfSpeechNanos = clock.nanoTime()
+                                },
+                            )
                         withContext(Dispatchers.Main) {
-                            createRecognizer(onDevice).also { it.setRecognitionListener(bridge) }
-                        }
-                    activeRecognizer.set(recognizer)
-
-                    val intent = AndroidSpeechSttMapping.recognizerIntent(engine, readEnd)
-                    withContext(Dispatchers.Main) {
-                        AppLog.i { "asr: startListening mode=${AndroidSpeechSttMapping.modeLabel(onDevice)}" }
-                        recognizer.startListening(intent)
-                    }
-
-                    // When the turn's input ends (the bounded VAD endpoint closed it),
-                    // stop recognition and bound the wait for the final result.
-                    val stopper =
-                        launch {
-                            drain.join()
-                            AppLog.i { "asr: input ended frames=$frameCount; stopping recognition" }
-                            if (assembler.onInputEnded()) {
-                                withContext(Dispatchers.Main) { runCatching { recognizer.stopListening() } }
-                            }
-                            writer.cancel()
-                            runCatching { writeEnd.close() }
-                            if (withTimeoutOrNull(STOP_COMPLETION_TIMEOUT_MILLIS) { terminated.await() } == null) {
-                                AppLog.w { "asr: recognition did not complete after stop; finalizing anyway" }
-                                responses.close()
-                            }
+                            recognizer.setListener(bridge)
+                            AppLog.i { "asr: startListening mode=${AndroidSpeechSttMapping.modeLabel(onDevice)}" }
+                            recognizer.startListening(AndroidSpeechSttMapping.recognizerIntent(engine, readEnd))
                         }
 
-                    try {
-                        for (response in responses) {
-                            logResponse(response)
-                            assembler.onResponse(response).forEach { event ->
-                                when (event) {
-                                    is SttEvent.Result -> {
-                                        if (event.transcript.isFinal) {
-                                            outcome = DiagnosticOutcome.COMPLETED
-                                            finalCharacterCount = event.transcript.text.length
+                        // When the turn's input ends (the bounded VAD endpoint closed it),
+                        // end recognition and bound the wait for the final result. With a
+                        // custom audio source the documented end signal is closing the
+                        // audio, so the pipe is closed first; an explicit stop is only
+                        // needed for a recognizer that opened the microphone (API < 33,
+                        // where EXTRA_AUDIO_SOURCE does not exist). Calling stopListening
+                        // on the on-device recognizer while it reads the pipe made it
+                        // answer ERROR_CLIENT (observed on Pixel 10, M27).
+                        val stopper =
+                            launch {
+                                drain.join()
+                                AppLog.i { "asr: input ended frames=$frameCount; ending recognition" }
+                                writer.cancel()
+                                runCatching { writeEnd.close() }
+                                if (Build.VERSION.SDK_INT < CUSTOM_AUDIO_SOURCE_MIN_API) {
+                                    withContext(Dispatchers.Main) { requestStop() }
+                                }
+                                if (withTimeoutOrNull(STOP_COMPLETION_TIMEOUT_MILLIS) { terminated.await() } == null) {
+                                    AppLog.w { "asr: recognition did not complete after input end; finalizing anyway" }
+                                    responses.close()
+                                }
+                            }
+
+                        try {
+                            for (response in responses) {
+                                logResponse(response)
+                                assembler.onResponse(response).forEach { event ->
+                                    when (event) {
+                                        is SttEvent.Result -> {
+                                            if (event.transcript.isFinal) {
+                                                outcome = DiagnosticOutcome.COMPLETED
+                                                finalCharacterCount = event.transcript.text.length
+                                            }
+                                        }
+
+                                        is SttEvent.Failed -> {
+                                            outcome = DiagnosticOutcome.FAILED
+                                            errorCode = event.error.detail ?: event.error.code.name
+                                        }
+
+                                        SttEvent.EndOfSpeech -> {
+                                            Unit
                                         }
                                     }
-
-                                    is SttEvent.Failed -> {
-                                        outcome = DiagnosticOutcome.FAILED
-                                        errorCode = event.error.detail ?: event.error.code.name
-                                    }
-
-                                    SttEvent.EndOfSpeech -> {
-                                        Unit
-                                    }
+                                    emit(event)
                                 }
-                                emit(event)
                             }
+                        } finally {
+                            stopper.cancel()
+                            writer.cancel()
+                            drain.cancel()
                         }
-                    } finally {
-                        stopper.cancel()
-                        writer.cancel()
-                        drain.cancel()
-                    }
 
-                    // The terminal response (onResults/onError) always finishes the
-                    // assembler; this is a no-op then, and a safety net otherwise.
-                    assembler.finish().forEach { event ->
-                        if (event is SttEvent.Result) {
-                            outcome = DiagnosticOutcome.COMPLETED
-                            finalCharacterCount = event.transcript.text.length
+                        // The terminal response (onResults/onError) always finishes the
+                        // assembler; this is a no-op then, and a safety net otherwise.
+                        assembler.finish().forEach { event ->
+                            if (event is SttEvent.Result) {
+                                outcome = DiagnosticOutcome.COMPLETED
+                                finalCharacterCount = event.transcript.text.length
+                            }
+                            emit(event)
                         }
-                        emit(event)
-                    }
 
-                    withContext(NonCancellable) { withContext(Dispatchers.Main) { runCatching { recognizer.stopListening() } } }
-                    withContext(Dispatchers.Main) { runCatching { recognizer.destroy() } }
-                    activeRecognizer.compareAndSet(recognizer, null)
-                }
-            } catch (cancellation: CancellationException) {
-                AppLog.i { "asr: session cancelled frames=$frameCount" }
-                outcome = DiagnosticOutcome.CANCELLED
-                throw cancellation
-            } catch (failure: Throwable) {
-                AppLog.w(failure) { "asr: recognition session failed" }
-                outcome = DiagnosticOutcome.FAILED
-                errorCode = "ASR_SESSION_ERROR"
-                emit(
-                    SttEvent.Failed(
-                        VoiceAgentError(
-                            ErrorCode.STT_RECOGNITION_FAILED,
-                            "speech recognition failed (${failure.javaClass.simpleName})",
+                        withContext(Dispatchers.Main) { runCatching { recognizer.destroy() } }
+                        activeRecognizer.compareAndSet(recognizer, null)
+                    }
+                } catch (cancellation: CancellationException) {
+                    AppLog.i { "asr: session cancelled frames=$frameCount" }
+                    outcome = DiagnosticOutcome.CANCELLED
+                    throw cancellation
+                } catch (failure: Throwable) {
+                    AppLog.w(failure) { "asr: recognition session failed" }
+                    outcome = DiagnosticOutcome.FAILED
+                    errorCode = "ASR_SESSION_ERROR"
+                    emit(
+                        SttEvent.Failed(
+                            VoiceAgentError(
+                                ErrorCode.STT_RECOGNITION_FAILED,
+                                "speech recognition failed (${failure.javaClass.simpleName})",
+                            ),
                         ),
-                    ),
-                )
-            } finally {
-                runCatching { responses.close() }
-                record(outcome, startedAtNanos, frameCount, partialCount, firstPartialNanos, endOfSpeechNanos, errorCode)
-                AppLog.i {
-                    "asr: session end outcome=$outcome frames=$frameCount partials=$partialCount chars=$finalCharacterCount"
+                    )
+                } finally {
+                    runCatching { responses.close() }
+                    record(
+                        outcome,
+                        startedAtNanos,
+                        frameCount,
+                        partialCount,
+                        firstPartialNanos,
+                        endOfSpeechNanos,
+                        onDevice,
+                        errorCode,
+                    )
+                    AppLog.i {
+                        "asr: session end outcome=$outcome frames=$frameCount partials=$partialCount chars=$finalCharacterCount"
+                    }
+                    activeRecognizer.getAndSet(null)?.let { recognizer ->
+                        withContext(NonCancellable) {
+                            runCatching { withContext(Dispatchers.Main) { recognizer.destroy() } }
+                        }
+                    }
+                    runCatching { readEnd.close() }
+                    runCatching { writeEnd.close() }
                 }
-                activeRecognizer.getAndSet(null)?.let { recognizer ->
-                    withContext(NonCancellable) { runCatching { withContext(Dispatchers.Main) { recognizer.destroy() } } }
-                }
-                runCatching { readEnd.close() }
-                runCatching { writeEnd.close() }
             }
         }
 
@@ -265,13 +380,6 @@ class AndroidSpeechRecognizerSpeechToText(
             }
         }
     }
-
-    private fun createRecognizer(onDevice: Boolean): SpeechRecognizer =
-        if (onDevice) {
-            SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext)
-        } else {
-            SpeechRecognizer.createSpeechRecognizer(appContext)
-        }
 
     /** Writes framed PCM to the recognizer's audio pipe until [frames] closes. */
     private suspend fun writeFrames(
@@ -297,7 +405,7 @@ class AndroidSpeechRecognizerSpeechToText(
         when (event) {
             RecognitionEvent.ReadyForSpeech -> AppLog.i { "asr: onReadyForSpeech" }
             RecognitionEvent.BeginningOfSpeech -> AppLog.i { "asr: onBeginningOfSpeech" }
-            RecognitionEvent.EndOfSpeech -> AppLog.i { "asr: onEndOfSpeech" }
+            RecognitionEvent.EndOfSpeech -> AppLog.v { "asr: onEndOfSpeech" }
             is RecognitionEvent.RmsChanged -> AppLog.v { "asr: onRmsChanged rms=${event.rms}" }
             is RecognitionEvent.BufferReceived -> AppLog.v { "asr: onBufferReceived bytes=${event.byteCount}" }
             is RecognitionEvent.Event -> AppLog.d { "asr: onEvent type=${event.type}" }
@@ -321,7 +429,7 @@ class AndroidSpeechRecognizerSpeechToText(
             }
 
             SttEngineResponse.EndOfSpeech -> {
-                AppLog.i { "asr: end of speech" }
+                AppLog.v { "asr: end of speech" }
             }
 
             SttEngineResponse.Stopped -> {
@@ -341,6 +449,7 @@ class AndroidSpeechRecognizerSpeechToText(
         partialCount: Int,
         firstPartialNanos: Long?,
         endOfSpeechNanos: Long?,
+        onDevice: Boolean,
         errorCode: String?,
     ) {
         val now = clock.nanoTime()
@@ -354,6 +463,7 @@ class AndroidSpeechRecognizerSpeechToText(
                     buildMap {
                         put(DiagnosticAttribute.ENGINE_ID, engine.engineId.value)
                         put(DiagnosticAttribute.MODEL_ID, engine.modelId.value)
+                        put(DiagnosticAttribute.RECOGNIZER_MODE, AndroidSpeechSttMapping.modeLabel(onDevice))
                         put(DiagnosticAttribute.FRAME_COUNT, frameCount.toString())
                         if (outcome != DiagnosticOutcome.STARTED) {
                             put(DiagnosticAttribute.PARTIAL_COUNT, partialCount.toString())
@@ -380,6 +490,9 @@ class AndroidSpeechRecognizerSpeechToText(
         const val FRAME_BUFFER = 64
         const val STOP_COMPLETION_TIMEOUT_MILLIS = 3_000L
         const val NANOS_PER_MILLI = 1_000_000L
+
+        /** API level that added `RecognizerIntent.EXTRA_AUDIO_SOURCE`. */
+        const val CUSTOM_AUDIO_SOURCE_MIN_API = 33
     }
 }
 
@@ -408,35 +521,46 @@ private sealed interface RecognitionEvent {
  * Bridges `RecognitionListener` callbacks into the channel the session flow reads.
  *
  * Callbacks arrive on the main thread, so they only log and `trySend`; the
- * session flow does the actual assembling off the main thread.
+ * session flow does the actual assembling off the main thread. `onEndOfSpeech`
+ * is forwarded at most once and never stops the recognizer from the callback:
+ * the stop is driven by the input-end path, and a re-entrant stop made the
+ * on-device recognizer answer `ERROR_CLIENT`.
  */
 private class PlatformRecognitionBridge(
     private val responses: Channel<SttEngineResponse>,
     private val terminated: CompletableDeferred<Unit>,
-    private val onEvent: (RecognitionEvent) -> Unit,
+    private val onRecognitionEvent: (RecognitionEvent) -> Unit,
     private val onPartial: () -> Unit,
-    private val onEndOfSpeech: () -> Unit,
+    private val recordEndOfSpeech: () -> Unit,
 ) : RecognitionListener {
+    private val endOfSpeechForwarded = AtomicBoolean(false)
+
     override fun onReadyForSpeech(params: Bundle?) {
-        onEvent(RecognitionEvent.ReadyForSpeech)
+        onRecognitionEvent(RecognitionEvent.ReadyForSpeech)
     }
 
     override fun onBeginningOfSpeech() {
-        onEvent(RecognitionEvent.BeginningOfSpeech)
+        onRecognitionEvent(RecognitionEvent.BeginningOfSpeech)
     }
 
     override fun onRmsChanged(rmsdB: Float) {
-        onEvent(RecognitionEvent.RmsChanged(rmsdB))
+        onRecognitionEvent(RecognitionEvent.RmsChanged(rmsdB))
     }
 
     override fun onBufferReceived(buffer: ByteArray?) {
-        onEvent(RecognitionEvent.BufferReceived(buffer?.size ?: 0))
+        onRecognitionEvent(RecognitionEvent.BufferReceived(buffer?.size ?: 0))
     }
 
     override fun onEndOfSpeech() {
-        onEvent(RecognitionEvent.EndOfSpeech)
-        onEndOfSpeech()
-        responses.trySend(SttEngineResponse.EndOfSpeech)
+        onRecognitionEvent(RecognitionEvent.EndOfSpeech)
+        recordEndOfSpeech()
+        // Forwarded at most once. The recognizer finalizes on its own after this;
+        // stopping re-entrantly from the callback made the on-device recognizer
+        // answer ERROR_CLIENT (observed on Pixel 10, M27), so the stop is driven
+        // only by the input-end path.
+        if (endOfSpeechForwarded.compareAndSet(false, true)) {
+            responses.trySend(SttEngineResponse.EndOfSpeech)
+        }
     }
 
     override fun onError(error: Int) {
@@ -469,7 +593,7 @@ private class PlatformRecognitionBridge(
         eventType: Int,
         params: Bundle?,
     ) {
-        onEvent(RecognitionEvent.Event(eventType))
+        onRecognitionEvent(RecognitionEvent.Event(eventType))
     }
 }
 

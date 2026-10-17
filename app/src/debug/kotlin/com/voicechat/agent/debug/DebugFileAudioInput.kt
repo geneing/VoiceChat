@@ -90,7 +90,7 @@ internal class DebugFileAudioInput(
     private fun decode(file: File): ShortArray =
         when (file.extension.lowercase()) {
             "wav" -> DebugPcmWav.readMono16k(file)
-            "m4a", "mp4" -> DebugM4aDecoder.decode(file)
+            "m4a", "mp4" -> DebugM4aDecoder.decodeSamples(file)
             else -> error("unsupported debug audio container: ${file.extension}")
         }
 

@@ -12,6 +12,7 @@ import com.voicechat.agent.contracts.DiagnosticEvent
 import com.voicechat.agent.contracts.DiagnosticStage
 import com.voicechat.agent.contracts.DiagnosticsSink
 import com.voicechat.agent.contracts.TurnCompletionDetector
+import com.voicechat.agent.debug.DebugM4aDecoder
 import com.voicechat.agent.diagnostics.SystemMonotonicClock
 import com.voicechat.agent.domain.AudioFormat
 import com.voicechat.agent.domain.AudioFrame
@@ -21,7 +22,6 @@ import com.voicechat.agent.domain.ConversationSummary
 import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.log.AndroidLogging
 import com.voicechat.agent.log.LogLevel
-import com.voicechat.agent.stt.AndroidM4aReplayDecoder
 import com.voicechat.agent.stt.AndroidSpeechRecognizerSpeechToText
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttMode
@@ -151,7 +151,7 @@ class SttPipelineHarnessInstrumentedTest {
             }
         val pcm =
             decoded.getOrElse { failure ->
-                val code = (failure as? AndroidM4aReplayDecoder.DecodeException)?.code ?: "AUDIO_DECODE_FAILED"
+                val code = (failure as? DebugM4aDecoder.DecodeException)?.code ?: "AUDIO_DECODE_FAILED"
                 Log.w(TAG, "HARNESS ${file.name} decode failed code=$code")
                 return HarnessRow.failure(fileId, code)
             }
@@ -241,15 +241,15 @@ class SttPipelineHarnessInstrumentedTest {
             clock = SystemMonotonicClock,
         ).detector()
 
-    private fun decodeAudio(file: File): AndroidM4aReplayDecoder.PcmAudio =
+    private fun decodeAudio(file: File): DebugM4aDecoder.PcmAudio =
         when (file.extension.lowercase(Locale.ROOT)) {
             "wav" -> readPcmWav(file)
-            "m4a" -> AndroidM4aReplayDecoder.decode(file)
-            else -> throw AndroidM4aReplayDecoder.DecodeException("UNSUPPORTED_AUDIO_CONTAINER")
+            "m4a" -> DebugM4aDecoder.decode(file)
+            else -> throw DebugM4aDecoder.DecodeException("UNSUPPORTED_AUDIO_CONTAINER")
         }
 
     /** Minimal 16 kHz mono 16-bit PCM WAV reader, mirroring the other replay harnesses. */
-    private fun readPcmWav(file: File): AndroidM4aReplayDecoder.PcmAudio {
+    private fun readPcmWav(file: File): DebugM4aDecoder.PcmAudio {
         RandomAccessFile(file, "r").use { input ->
             require(input.length() >= 12L)
             require(readFourCc(input) == "RIFF")
@@ -293,7 +293,7 @@ class SttPipelineHarnessInstrumentedTest {
                 shorts[index++] = ((bytes[byteIndex].toInt() and 0xFF) or (bytes[byteIndex + 1].toInt() shl 8)).toShort()
                 byteIndex += 2
             }
-            return AndroidM4aReplayDecoder.PcmAudio(shorts)
+            return DebugM4aDecoder.PcmAudio(shorts)
         }
     }
 

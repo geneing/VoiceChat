@@ -17,11 +17,20 @@ import android.media.AudioFormat as AndroidAudioFormat
  * It uses the platform [MediaExtractor]/[MediaCodec] to decode any codec the
  * device ships, then resamples to the 16 kHz mono PCM16 the recognizer's
  * custom-audio source expects. It is compiled into the **debug** source set
- * only; no media is packaged in the APK and no recording leaves the device.
+ * only; no media is packaged in the APK and no recording leaves the device. The
+ * instrumented replay harnesses share it, so there is a single decoder
+ * implementation.
  */
-internal object DebugM4aDecoder {
-    /** 16 kHz mono PCM16 samples decoded from the file. */
-    fun decode(file: File): ShortArray {
+object DebugM4aDecoder {
+    /** 16 kHz mono PCM16 audio decoded from a file. */
+    class PcmAudio(
+        val samples: ShortArray,
+    ) {
+        val durationMillis: Long get() = samples.size.toLong() * 1_000L / SAMPLE_RATE_HZ
+    }
+
+    /** Decodes [file] to 16 kHz mono PCM16 samples. */
+    fun decodeSamples(file: File): ShortArray {
         val extractor = MediaExtractor()
         var decoder: MediaCodec? = null
         try {
@@ -143,6 +152,9 @@ internal object DebugM4aDecoder {
     class DecodeException(
         val code: String,
     ) : Exception(code)
+
+    /** Decodes [file], matching the shape the replay harnesses consume. */
+    fun decode(file: File): PcmAudio = PcmAudio(decodeSamples(file))
 
     private fun validateOutputFormat(
         sampleRate: Int,

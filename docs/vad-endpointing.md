@@ -243,10 +243,10 @@ the policy.
    The platform engine emits its own end-of-speech signal. The adapter surfaces it
    as `SttEvent.EndOfSpeech` and records its timing, but it is **never** the
    authority for ending a turn: the bounded VAD endpoint closes the turn and the
-   adapter's input, after which the recognizer is stopped and its final result is
-   awaited (bounded). An early engine signal therefore cannot truncate a
-   still-speaking user, and a silence cap still commits a finished turn
-   (`docs/android-speech-recognition.md`).
+   adapter's audio, after which the recognizer delivers its final result
+   (bounded). The on-device recognizer was measured to fire `onEndOfSpeech` well
+   before the utterance ends while partials keep arriving, so treating it as a
+   boundary would truncate (`docs/android-speech-recognition.md`, R-0245).
 
 All three reuse the existing endpoint contract; no new `EndpointReason` is added.
 

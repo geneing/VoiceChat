@@ -8,6 +8,7 @@ import com.voicechat.agent.contracts.DiagnosticAttribute
 import com.voicechat.agent.contracts.DiagnosticEvent
 import com.voicechat.agent.contracts.DiagnosticsSink
 import com.voicechat.agent.contracts.SttEvent
+import com.voicechat.agent.debug.DebugM4aDecoder
 import com.voicechat.agent.domain.AudioFormat
 import com.voicechat.agent.domain.AudioFrame
 import kotlinx.coroutines.CancellationException
@@ -108,11 +109,11 @@ class MoonshineSttPacedReplayInstrumentedTest {
                 withContext(Dispatchers.IO) {
                     when (file.extension.lowercase(Locale.ROOT)) {
                         "wav" -> readPcmWav(file)
-                        "m4a" -> AndroidM4aReplayDecoder.decode(file)
+                        "m4a" -> DebugM4aDecoder.decode(file)
                         else -> throw ReplayDecodeException("UNSUPPORTED_AUDIO_CONTAINER")
                     }
                 }
-            } catch (failure: AndroidM4aReplayDecoder.DecodeException) {
+            } catch (failure: DebugM4aDecoder.DecodeException) {
                 errorCode = failure.code
                 null
             } catch (failure: ReplayDecodeException) {
@@ -240,7 +241,7 @@ class MoonshineSttPacedReplayInstrumentedTest {
         }
     }
 
-    private fun readPcmWav(file: File): AndroidM4aReplayDecoder.PcmAudio {
+    private fun readPcmWav(file: File): DebugM4aDecoder.PcmAudio {
         RandomAccessFile(file, "r").use { input ->
             require(input.length() >= 12L)
             require(readFourCc(input) == "RIFF")
@@ -292,7 +293,7 @@ class MoonshineSttPacedReplayInstrumentedTest {
                 val high = bytes[index * 2 + 1].toInt()
                 samples[index] = ((high shl 8) or low).toShort()
             }
-            return AndroidM4aReplayDecoder.PcmAudio(samples)
+            return DebugM4aDecoder.PcmAudio(samples)
         }
     }
 

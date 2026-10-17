@@ -159,10 +159,10 @@ enum class DiagnosticAttribute {
     /** Number of interim hypotheses the recognizer delivered for the session. */
     PARTIAL_COUNT,
 
-    /** Latency from the recognizer becoming ready to its first interim result. */
+    /** Latency from the recognition session start (before `createRecognizer`) to its first interim result. */
     FIRST_PARTIAL_MILLIS,
 
-    /** Latency from this turn's input start to the recognizer's own end-of-speech. */
+    /** Latency from the recognition session start to the recognizer's own end-of-speech. */
     END_OF_SPEECH_MILLIS,
 }
 

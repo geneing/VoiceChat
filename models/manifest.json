@@ -1,5 +1,5 @@
 {
-  "$comment": "Machine-readable mirror of pinned artifacts. Keep checksums and revisions aligned with scripts/fetch-models.sh and scripts/fetch-parakeet-candidate.ps1. Candidate evaluation artifacts remain gitignored and are not bundled in release APKs.",
+  "$comment": "Machine-readable mirror of pinned artifacts. Keep checksums and revisions aligned with scripts/fetch-models.sh. Candidate evaluation artifacts remain gitignored and are not bundled in release APKs. The sherpa-onnx Parakeet TDT-CTC 110M candidate lane was retired with the app-managed Parakeet engine (M27); the LiteRT ASR benchmark lane uses its own litert-asr inputs (scripts/stage-litert-asr-inputs.sh).",
   "artifacts": [
     {
       "id": "smart-turn",
@@ -11,38 +11,6 @@
       "license": "BSD-2-Clause",
       "source": "soniqo/Smart-Turn-v3.2-ONNX@b48fdbe20772bcec1fef02f4a1a355236ef6359e",
       "runtime": "onnxruntime-android 1.29.0"
-    },
-    {
-      "id": "parakeet-110m-int8",
-      "filename": "model.int8.onnx",
-      "destination": "parakeet-tdt-ctc-110m-en-int8/model.int8.onnx",
-      "url": "https://huggingface.co/VocaHQ/sherpa-onnx-nemo-parakeet-tdt-ctc-110m-en-int8/resolve/43869f7/model.int8.onnx",
-      "sizeBytes": 131652171,
-      "sha256": "9177a9146cf32ee0cc8152276ef95116f312018d316be37ccf57f7efea81fc1a",
-      "license": "CC-BY-4.0",
-      "source": "VocaHQ/sherpa-onnx-nemo-parakeet-tdt-ctc-110m-en-int8@43869f7 (NVIDIA Parakeet TDT-CTC 110M; upstream export csukuangfj/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000@3af92f152d32c836acabf38f4c993bc96b80eb2d)",
-      "runtime": "sherpa-onnx 1.13.8 Android AAR; ONNX Runtime JNI selected by app packaging"
-    },
-    {
-      "id": "parakeet-110m-tokens",
-      "filename": "tokens.txt",
-      "destination": "parakeet-tdt-ctc-110m-en-int8/tokens.txt",
-      "url": "https://huggingface.co/VocaHQ/sherpa-onnx-nemo-parakeet-tdt-ctc-110m-en-int8/resolve/43869f7/tokens.txt",
-      "sizeBytes": 9953,
-      "sha256": "450e56bd2f036fe5b6aa821865838cc5aa9d8b0106134ce9a9ba0664abe6cd10",
-      "license": "CC-BY-4.0",
-      "source": "VocaHQ/sherpa-onnx-nemo-parakeet-tdt-ctc-110m-en-int8@43869f7",
-      "runtime": "sherpa-onnx 1.13.8 Android AAR"
-    },
-    {
-      "id": "sherpa-onnx-android-1.13.8",
-      "filename": "sherpa-onnx-1.13.8.aar",
-      "destination": "sherpa-onnx-1.13.8.aar",
-      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-1.13.8.aar",
-      "sha256": "633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96",
-      "license": "Apache-2.0",
-      "source": "k2-fsa/sherpa-onnx@v1.13.8",
-      "runtime": "Android AAR; bundles ONNX Runtime 1.28.2"
     }
   ]
 }

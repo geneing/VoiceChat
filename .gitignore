@@ -72,3 +72,7 @@ test_data/openai-stt-reference-review/
 # Local WER inputs for the LiteRT ASR spike: per-case hypotheses and references.
 # They may contain speech transcripts and must stay out of Git until verified.
 test_data/litert-asr-wer/
+
+# Editor settings are machine-specific
+.vscode/
+

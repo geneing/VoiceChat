@@ -48,20 +48,27 @@ same 16 kHz mono 16-bit PCM frames the VAD already sees:
 
 This gives one microphone owner and one code path for live capture and replay.
 It is also why the app can replay a recorded file with no host conversion and no
-speaker. **Limitation:** a recognizer that ignores `EXTRA_AUDIO_SOURCE` (possible
-per the platform docs, and on API 31-32 where the extra does not exist) opens the
-microphone instead; that is recorded as R-0243, not hidden.
+speaker. **Confirmed on Pixel 10 (M27):** the on-device recognizer reads the piped
+PCM and returns partials and a final transcript for a staged clip. **Limitation:**
+`EXTRA_AUDIO_SOURCE` is API 33+, and per the platform docs a recognizer may ignore
+it ("no effect") and open the microphone instead; on API 31-32 the extra does not
+exist. In that case live recognition still works from the microphone, but the
+file-replay path cannot drive it (R-0243).
 
 ### End of speech
 
-The recognizer's `onEndOfSpeech` is surfaced as `SttEvent.EndOfSpeech` and
-recorded, but it is **not** the authority for ending a turn. The bounded M09
-VAD/Smart Turn endpoint closes the turn and its input; the adapter then closes
-the pipe, calls `stopListening()`, and waits, bounded (3 s), for the final
-`onResults`. This is deliberate: a request-time engine signal must not truncate a
-still-speaking user, and a silence cap must still commit a finished turn. In
-short, VAD/turn detection make the engine's end-of-speech robust rather than
-being replaced by it.
+The recognizer's `onEndOfSpeech` is surfaced as `SttEvent.EndOfSpeech` and timed
+(`END_OF_SPEECH_MILLIS`), but it is **not** a turn boundary. Measured on Pixel 10
+(M27), the on-device recognizer emits `onEndOfSpeech` well before the utterance
+ends (14.3 s before the final on one 22.7 s clip) and keeps streaming partials;
+`onResults` arrives only when the custom audio closes. So the bounded M09
+VAD/Smart Turn endpoint closes the turn and its input, the adapter closes the
+pipe, and `onResults` follows (measured 150-350 ms later). The adapter never
+calls `stopListening()` while the recognizer reads the pipe and never stops from
+inside the `onEndOfSpeech` callback — both produced `ERROR_CLIENT` on the device.
+This is the "use the API's end-of-speech but let VAD/turn detection make it
+robust" behavior: VAD decides the turn, and the engine signal is corroborating
+metadata.
 
 Partial hypotheses become interim `SttEvent.Result`s through `SttResultAssembler`
 (monotonic revisions, stale interims dropped by the coordinator); the final
@@ -117,5 +124,19 @@ content-free `summary.csv` / `stages.csv` beside the clip, plus a
 
 With `-e sttHarnessLogTranscripts true` each partial and the final text are also
 logged to logcat (`SttHarness`, `STT_HARNESS_TRANSCRIPT`); the CSV stays
-content-free. No Pixel 10 run has been recorded yet, so no latency claim is made
-(R-0244).
+content-free.
+
+### Pixel 10 device run (2026-10-16, M27)
+
+`Pixel 10 (57220DLCR002R6)`, Android 17 / API 37, on-device recognizer, VAD-only
+(no Smart Turn). Two staged clips, one run each:
+
+| clip | audio | first partial (capture start) | onset to first partial | VAD endpoint to final | input end to final | partials | final |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `Walking .m4a` | 22.7 s | 8077 ms | 1131 ms | 343 ms | 167 ms | 43 | "Latest news please" |
+| `eng-000001-000081dd.wav` | 13.0 s | 1608 ms | 585 ms | 269 ms | 1542 ms | 81 | "What is the complete government process for applying for a passport for a minor under the age of 16 including all necessary documentation parental consent forms and Associated official fees" |
+
+Both finished `FINAL`. The engine's `onEndOfSpeech` fired 14273 ms before the
+final on the long clip, confirming it is not a turn boundary (VAD end-of-speech
+is). This resolves the file-replay and end-of-speech questions (R-0243, R-0244);
+the numbers come from one recording each and are not accuracy claims.

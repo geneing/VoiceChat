@@ -45,19 +45,19 @@ class AndroidSpeechSttMappingTest {
     }
 
     @Test
-    fun clientAndNetworkErrorsAreRecognitionFailures() {
+    fun clientStopIsBenignAndNetworkErrorsAreRecognitionFailures() {
         val client = AndroidSpeechSttMapping.toEngineResponse(SpeechRecognizer.ERROR_CLIENT)
         val network = AndroidSpeechSttMapping.toEngineResponse(SpeechRecognizer.ERROR_NETWORK)
 
-        assertEquals(SttFailureKind.RECOGNITION_FAILED, (client as SttEngineResponse.Failure).kind)
+        assertEquals(SttEngineResponse.Stopped, client)
         assertEquals(SttFailureKind.RECOGNITION_FAILED, (network as SttEngineResponse.Failure).kind)
     }
 
     @Test
     fun theFailureDetailCarriesOnlyAStableCode() {
-        val response = AndroidSpeechSttMapping.toEngineResponse(SpeechRecognizer.ERROR_CLIENT) as SttEngineResponse.Failure
+        val response = AndroidSpeechSttMapping.toEngineResponse(SpeechRecognizer.ERROR_NETWORK) as SttEngineResponse.Failure
 
-        assertEquals("ASR_ERROR_${SpeechRecognizer.ERROR_CLIENT}", response.detail)
+        assertEquals("ASR_ERROR_${SpeechRecognizer.ERROR_NETWORK}", response.detail)
     }
 
     @Test

@@ -5,7 +5,6 @@ import android.media.AudioFormat
 import android.os.ParcelFileDescriptor
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import java.util.Locale
 
 /**
  * Translations between the platform `android.speech` API and the app's
@@ -92,11 +91,17 @@ internal object AndroidSpeechSttMapping {
             SpeechRecognizer.ERROR_NETWORK,
             SpeechRecognizer.ERROR_SERVER,
             SpeechRecognizer.ERROR_SERVER_DISCONNECTED,
-            SpeechRecognizer.ERROR_CLIENT,
             SpeechRecognizer.ERROR_AUDIO,
             SpeechRecognizer.ERROR_TOO_MANY_REQUESTS,
             -> {
                 SttEngineResponse.Failure(SttFailureKind.RECOGNITION_FAILED, detail = "ASR_ERROR_$error")
+            }
+
+            // ERROR_CLIENT covers a stop/close-induced client error as well as a real
+            // one. It is surfaced as a benign stop: the assembler ignores a stop that
+            // has assembled text, and still reports a failure when there is none.
+            SpeechRecognizer.ERROR_CLIENT -> {
+                SttEngineResponse.Stopped
             }
 
             else -> {
@@ -109,7 +114,4 @@ internal object AndroidSpeechSttMapping {
 
     /** Locale used for the recognizer intent; extracted so the mapping stays testable. */
     internal fun languageTag(engine: SttEngine): String = engine.locale.toLanguageTag()
-
-    /** The set of locales a settings surface should treat as the app default. */
-    internal val DEFAULT_LOCALE: Locale = SttEngines.DEFAULT_LOCALE
 }
