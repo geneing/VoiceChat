@@ -138,8 +138,9 @@ its detector — the audio path does not change.
 
 | Field | Default | Validation |
 | --- | --- | --- |
-| `onsetRmsThreshold` | `0.02` | positive, finite |
-| `hangoverRmsThreshold` | `0.01` | positive, finite, `<= onset` |
+| `onsetRmsThreshold` | `0.012` | positive, finite |
+| `playbackOnsetRmsThreshold` | `0.03` | finite, `>= onset` |
+| `hangoverRmsThreshold` | `0.006` | positive, finite, `<= onset` |
 | `maxZeroCrossingRate` | `0.5` | finite, within `[0, 1]` |
 | `onsetFrames` | `3` (~60 ms) | `>= 1` |
 | `pauseFrames` | `14` (~280 ms) | `>= 1` |
@@ -152,6 +153,22 @@ built-in mic. `CaptureTurnDetection` maps the route observed at the capture
 boundary to the config. **All numeric values are provisional starting points,
 not Pixel 10 measurements**; M25 owns calibration and R-0045 forbids copying
 another project's thresholds.
+
+**Playback-aware onset (`playbackOnsetRmsThreshold`).** The assistant is audible
+through the same microphone that is listening. Echo cancellation reduces that
+audio but does not remove it: a Pixel 10 probe
+(`audio.EchoCancellationEffectivenessInstrumentedTest`) measured a residual mean
+`0.005` / p95 `0.010` / peak `~0.02` with AEC enabled (AEC roughly halves the
+uncancelled level; `MODE_IN_COMMUNICATION` adds little and `VOICE_COMMUNICATION`
+is worse). The original `0.02` onset threshold therefore sat right on that
+residual — the assistant's own opening words were recognized as user speech and
+triggered a false barge-in. While the assistant is audible, onset now requires
+`playbackOnsetRmsThreshold`; the user's own voice, closer to the mic, still
+clears it. This is a **state**, not a fixed grace period: the bar drops back the
+moment playback ends. The `0.012` idle threshold was lowered from `0.02` after a
+report that normal speech had to be raised to trigger onset; the room floor
+measured on that device was `~0.0005-0.0015`, so it still clears it by ~10-20x.
+Both values are provisional (R-0061, R-0260).
 
 ## Diagnostics
 
