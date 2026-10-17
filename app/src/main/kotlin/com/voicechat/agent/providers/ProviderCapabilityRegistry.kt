@@ -147,18 +147,34 @@ class ProviderCapabilityRegistry(
                         configurable = false,
                         expectedHost = "opencode.ai",
                         streaming = true,
-                        // Go names three protocol families but does not spell out
-                        // the SSE framing, so streaming stays marked (R-0014).
-                        unverified = setOf(UnverifiedCapability.STREAMING),
+                        // Streaming was verified live for all three families on
+                        // 2026-10-17, so the framing is no longer marked unknown
+                        // (R-0014).
                     ),
                 models =
                     ProviderModelAccess(
                         discovery = ModelDiscovery.ENDPOINT,
-                        // Go documents no reasoning control, and does not promise
-                        // usage reporting; claim neither (R-0014, R-0072).
-                        reasoningLevels = emptySet(),
-                        usageReporting = false,
-                        unverified = setOf(UnverifiedCapability.REASONING, UnverifiedCapability.USAGE),
+                        // Re-measured live on 2026-10-16/17
+                        // (`docs/voice-llm-selection.md`): the gateway accepts and
+                        // honours a per-model reasoning field on all three families,
+                        // and reports token usage on each. This row is the union
+                        // across measured models; the per-model set comes from
+                        // `OpenCodeGoModelCatalog` and the adapter's own check, so a
+                        // level this union lists is still refused for a model that
+                        // was not measured to take it (R-0135).
+                        reasoningLevels =
+                            setOf(
+                                ReasoningLevel.NONE,
+                                ReasoningLevel.LOW,
+                                ReasoningLevel.MEDIUM,
+                                ReasoningLevel.HIGH,
+                                ReasoningLevel.XHIGH,
+                                ReasoningLevel.MAX,
+                            ),
+                        usageReporting = true,
+                        // The model list itself is still identity-only, so which
+                        // model takes which field is not discoverable from the wire.
+                        unverified = setOf(UnverifiedCapability.REASONING),
                     ),
                 dataRetentionNote =
                     "Per-model retention/training: Grok/GPT keep data 30 days, most models 0 days, " +

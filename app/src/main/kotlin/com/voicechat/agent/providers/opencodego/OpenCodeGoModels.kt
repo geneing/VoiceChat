@@ -26,6 +26,12 @@ import com.voicechat.agent.remote.stringField
  *
  * Verified against <https://opencode.ai/v2/docs/console/go/> on **2026-09-29**;
  * sources and the unverified list are in `docs/opencode-go-adapter.md`.
+ *
+ * Re-verified against the live gateway on **2026-10-17** (`docs/voice-llm-selection.md`):
+ * `space-bunny-free` answers "Model is unavailable" while the served id is
+ * `space-bunny`, `step-5-preview` and `beam-free` are Chat Completions models,
+ * `mimo-v2.6-flash` is not served yet, and `claude-haiku-5-5` is a Messages
+ * model. A model the gateway does not place still has no verified family.
  */
 enum class OpenCodeGoFamily(
     /** The completion endpoint path, relative to the Go base URL. */
@@ -87,7 +93,9 @@ object OpenCodeGoModels {
                 "mimo-v2.5-pro",
                 "hy4-preview",
                 "hy3",
-                "space-bunny-free",
+                "step-5-preview",
+                "beam-free",
+                "space-bunny",
                 "longcat-2.5-preview-free",
             ).forEach { put(it, OpenCodeGoFamily.CHAT_COMPLETIONS) }
 
@@ -101,6 +109,7 @@ object OpenCodeGoModels {
             ).forEach { put(it, OpenCodeGoFamily.RESPONSES) }
 
             listOf(
+                "claude-haiku-5-5",
                 "minimax-m3",
                 "minimax-m2.7",
                 "qwen3.8-max",

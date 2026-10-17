@@ -6,6 +6,7 @@ import com.voicechat.agent.contracts.LlmRole
 import com.voicechat.agent.contracts.LlmUsage
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.ModelId
+import com.voicechat.agent.domain.ReasoningLevel
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.remote.JsonNode
 import com.voicechat.agent.remote.RemoteJson
@@ -42,6 +43,22 @@ object OpenCodeGoResponses {
                 "store" to RemoteJson.bool(false),
                 "stream" to RemoteJson.bool(true),
             )
+        // Responses expresses effort as `reasoning: {"effort": …}`, and only a
+        // model measured to accept the field is sent one (R-0135). For a model
+        // whose default reasons, `none` is sent explicitly: omitting the field
+        // means "provider default", not "off" — measured on gpt-6-luna, where the
+        // omitted form answered in 7.70 s (median of three) with ~650 reasoning
+        // tokens and the explicit `none` in 0.93 s with none.
+        val level = request.reasoning
+        val support = OpenCodeGoReasoning.support(request.model.modelId)
+        if (
+            level != null &&
+            support?.style == OpenCodeGoReasoningStyle.RESPONSES_EFFORT &&
+            support.sendsFieldFor(level)
+        ) {
+            fields["reasoning"] =
+                RemoteJson.obj("effort" to RemoteJson.str(OpenCodeGoReasoning.effortWire(level)))
+        }
         return RemoteJson.stringify(RemoteJson.obj(fields))
     }
 
