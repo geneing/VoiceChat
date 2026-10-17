@@ -3,6 +3,7 @@ package com.voicechat.agent.ui
 import android.content.Context
 import com.voicechat.agent.log.AppLog
 import com.voicechat.agent.providers.DocumentedModelCatalog
+import com.voicechat.agent.settings.KokoroState
 import com.voicechat.agent.settings.SettingsCapabilities
 import com.voicechat.agent.settings.SettingsCapabilityProvider
 import com.voicechat.agent.stt.AndroidSpeechSttStatus
@@ -11,27 +12,31 @@ import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttEngines
 import com.voicechat.agent.stt.SttMode
-import com.voicechat.agent.tts.AndroidTtsEngine
-import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
+import com.voicechat.agent.tts.kokoro.KokoroArtifact
+import com.voicechat.agent.tts.kokoro.KokoroModelState
+import com.voicechat.agent.tts.kokoro.KokoroModelStore
+import com.voicechat.agent.tts.kokoro.KokoroTtsEngine
+import com.voicechat.agent.tts.kokoro.KokoroVoiceArtifact
 import com.voicechat.agent.turn.SmartTurnCatalog
 import com.voicechat.agent.turn.SmartTurnModelStore
 import kotlinx.coroutines.CancellationException
 import java.io.File
+import java.util.Locale
 
 /**
  * App-boundary [SettingsCapabilityProvider] that reads the **real** runtime
  * availability (M22).
  *
  * It is the only settings-adjacent platform file: it queries the M08 ML Kit
- * feature status per catalog mode and enumerates the M11 platform TTS voices, so
- * the settings options come from what the device actually reports rather than a
- * static assumption. It never claims a capability it did not just read:
+ * feature status per catalog mode and verifies the app-private Kokoro graph, so
+ * the settings options come from runtime state rather than a static assumption.
+ * It never claims a capability it did not just read:
  *
  * - STT modes come from `checkStatus()`, so an unprovisioned/unavailable mode is
  *   reported as such;
- * - TTS voices come from `getVoices()` and the settings screen filters to embedded
- *   voices;
+ * - TTS voices come only from graphs verified by KokoroModelStore; platform
+ *   speech engines and voices are not offered;
  * - Smart Turn availability (M10) comes from the app-private model file and its
  *   size + SHA-256 integrity check: installed → Available, missing →
  *   DownloadRequired, wrong size/hash → Unavailable with a reason;
@@ -48,13 +53,16 @@ class AndroidSettingsCapabilityProvider(
     // app-private directory; verification runs off the main thread inside state().
     private val smartTurnStore: SmartTurnModelStore =
         SmartTurnModelStore(File(appContext.filesDir, SmartTurnModelStore.DIRECTORY_NAME))
+    private val kokoroStore: KokoroModelStore =
+        KokoroModelStore(File(appContext.filesDir, KokoroArtifact.DIRECTORY_NAME))
 
     override suspend fun snapshot(): SettingsCapabilities {
-        val (voices, engines) = readTts()
+        val tts = readTts()
         return SettingsCapabilities(
             sttAvailability = readSttAvailability(),
-            ttsVoices = voices,
-            ttsEngines = engines,
+            ttsVoices = tts.voices,
+            ttsEngines = emptyList(),
+            kokoro = tts.state,
             smartTurn = SmartTurnCatalog.settingsState(smartTurnStore.state()),
             models = DocumentedModelCatalog.availableModels(),
         )
@@ -72,28 +80,47 @@ class AndroidSettingsCapabilityProvider(
             AndroidSpeechSttStatus.check(appContext, SttEngine(SttMode.ANDROID_SPEECH, SttEngines.DEFAULT_LOCALE)),
         ) + SttEngines.mlKitCatalog().map { MlKitSttStatus.check(it) }
 
-    private suspend fun readTts(): Pair<List<TtsVoice>, List<TtsEngineInfo>> {
-        val engine = AndroidTtsEngine(appContext)
-        return try {
-            // initialize() discovers and selects a voice; installedVoices() then
-            // returns the full list (the settings screen keeps only embedded ones),
-            // and installedEngines() reads the platform's TTS engine list from the
-            // same instance.
-            engine.initialize()
-            engine.installedVoices() to engine.installedEngines()
+    private suspend fun readTts(): TtsSnapshot =
+        try {
+            val states =
+                mutableMapOf<KokoroVoiceArtifact, KokoroModelState>().also { voiceStates ->
+                    for (voice in KokoroArtifact.VOICES) {
+                        voiceStates[voice] = kokoroStore.state(voice)
+                    }
+                }
+            val voices =
+                states.mapNotNull { (voice, state) ->
+                    if (state is KokoroModelState.Installed) {
+                        TtsVoice(
+                            id = voice.id,
+                            displayName = voice.displayName,
+                            locale = Locale.forLanguageTag(voice.languageTag),
+                            requiresNetwork = false,
+                            quality = KokoroTtsEngine.DISTILLED_QUALITY_RANK,
+                            latency = KokoroTtsEngine.ON_DEVICE_LATENCY_RANK,
+                        )
+                    } else {
+                        null
+                    }
+                }
+            val defaultState = states[KokoroArtifact.DEFAULT]
+            val kokoroState =
+                when (defaultState) {
+                    is KokoroModelState.Installed -> KokoroState.Installed
+                    KokoroModelState.Missing -> KokoroState.DownloadRequired
+                    is KokoroModelState.Corrupt -> KokoroState.Unavailable(defaultState.reason)
+                    null -> KokoroState.Unavailable("Kokoro model availability could not be checked.")
+                }
+            TtsSnapshot(voices, kokoroState)
         } catch (cancellation: CancellationException) {
-            // A cancelled refresh must stay cancelled, not become a successful
-            // "no voices" snapshot (CODE_REVIEW P2, R-0225).
             throw cancellation
         } catch (failure: Throwable) {
-            // An engine that cannot initialize reports no voices rather than a
-            // fabricated list; the screen shows the explicit no-voice state.
-            // (A distinct init-failure state is part of the settings-state
-            // simplification still tracked as R-0164/R-0221.)
-            AppLog.w(failure) { "settings: TTS voice discovery failed" }
-            emptyList<TtsVoice>() to emptyList()
-        } finally {
-            runCatching { engine.close() }
+            AppLog.w(failure) { "settings: Kokoro model discovery failed" }
+            TtsSnapshot(emptyList(), KokoroState.Unavailable("Kokoro model availability could not be checked."))
         }
-    }
+
+    private data class TtsSnapshot(
+        val voices: List<TtsVoice>,
+        val state: KokoroState,
+    )
 }

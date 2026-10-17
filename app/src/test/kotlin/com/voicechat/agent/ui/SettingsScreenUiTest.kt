@@ -33,6 +33,8 @@ import com.voicechat.agent.providers.ModelCapabilities
 import com.voicechat.agent.providers.ProviderCapabilityRegistry
 import com.voicechat.agent.providers.StaticModelCapabilityCatalog
 import com.voicechat.agent.settings.InMemorySettingsStore
+import com.voicechat.agent.settings.KokoroSettingsSection
+import com.voicechat.agent.settings.KokoroState
 import com.voicechat.agent.settings.LlmSettingsSection
 import com.voicechat.agent.settings.SettingsActions
 import com.voicechat.agent.settings.SettingsCapabilities
@@ -47,7 +49,6 @@ import com.voicechat.agent.settings.VoiceSettings
 import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttMode
-import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -276,28 +277,25 @@ class SettingsScreenUiTest {
     }
 
     @Test
-    fun theTtsEnginesAreOfferedAsADropdownWhenMoreThanOneIsInstalled() {
+    fun aMissingKokoroModelOffersItsInstallAction() {
         val actions = RecordingSettingsActions()
-        render(baseState(), actions)
+        render(baseState().copy(kokoro = KokoroSettingsSection(state = KokoroState.DownloadRequired)), actions)
 
-        composeRule.onNodeWithTag(SettingsTestTags.TTS_ENGINE_DROPDOWN).performScrollTo().performClick()
-        composeRule.onNodeWithTag(SettingsTestTags.menuOption("com.example.tts")).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTestTags.KOKORO_MODEL_DOWNLOAD).performScrollTo().performClick()
 
-        assertEquals("com.example.tts", actions.lastEngine)
+        assertEquals(1, actions.downloadKokoroCount)
     }
 
     @Test
-    fun aSingleInstalledTtsEngineShowsNoEngineDropdown() {
+    fun installingKokoroModelShowsProgressAndHidesTheAction() {
         render(
             baseState().copy(
-                tts =
-                    baseState().tts.copy(
-                        engines = baseState().tts.engines.take(1),
-                    ),
+                kokoro = KokoroSettingsSection(state = KokoroState.DownloadRequired, installing = true, totalBytes = 1024),
             ),
         )
 
-        composeRule.onNodeWithTag(SettingsTestTags.TTS_ENGINE_DROPDOWN).assertDoesNotExist()
+        composeRule.onNodeWithTag(SettingsTestTags.KOKORO_MODEL_PROGRESS).performScrollTo().assertExists()
+        composeRule.onNodeWithTag(SettingsTestTags.KOKORO_MODEL_DOWNLOAD).assertDoesNotExist()
     }
 
     @Test
@@ -442,21 +440,6 @@ class SettingsScreenUiTest {
                 ),
             tts =
                 TtsSettingsSection(
-                    engines =
-                        listOf(
-                            com.voicechat.agent.settings.SelectableOption(
-                                value = TtsEngineInfo("com.google.android.tts", "Google speech services", isSystemDefault = true),
-                                label = "Google speech services (system default)",
-                                state = com.voicechat.agent.settings.OptionState.Available,
-                                selected = true,
-                            ),
-                            com.voicechat.agent.settings.SelectableOption(
-                                value = TtsEngineInfo("com.example.tts", "Example engine"),
-                                label = "Example engine",
-                                state = com.voicechat.agent.settings.OptionState.Available,
-                            ),
-                        ),
-                    selectedEngineId = "com.google.android.tts",
                     options =
                         listOf(
                             com.voicechat.agent.settings.SelectableOption(
@@ -468,6 +451,7 @@ class SettingsScreenUiTest {
                         ),
                     selectedVoiceId = "voice-on-device",
                 ),
+            kokoro = KokoroSettingsSection(state = KokoroState.Installed),
             smartTurn = SmartTurnSettingsSection(enabled = true, state = SmartTurnState.Available),
         )
 
@@ -475,6 +459,7 @@ class SettingsScreenUiTest {
         SettingsCapabilities(
             sttAvailability = listOf(SttAvailability.Ready(SttEngine(SttMode.ADVANCED, Locale.US))),
             ttsVoices = listOf(TtsVoice("voice-on-device", "On-device", Locale.US, requiresNetwork = false)),
+            kokoro = KokoroState.Installed,
             smartTurn = SmartTurnState.Available,
             models = listOf(ModelAvailability.Ready(model)),
         )
@@ -499,12 +484,12 @@ private class RecordingSettingsActions : SettingsActions {
     var lastReasoning: ReasoningLevel? = null
     var lastSttMode: SttMode? = null
     var lastVoice: String? = null
-    var lastEngine: String? = null
     var lastSmartTurn: Boolean? = null
     var lastDestination: String? = null
     var lastCredential: String? = null
     var downloadSttCount: Int = 0
     var downloadSmartTurnCount: Int = 0
+    var downloadKokoroCount: Int = 0
     var removeCount: Int = 0
     var signInCount: Int = 0
     var refreshCount: Int = 0
@@ -537,9 +522,7 @@ private class RecordingSettingsActions : SettingsActions {
         lastVoice = voiceId
     }
 
-    override fun onSelectTtsEngine(engineId: String) {
-        lastEngine = engineId
-    }
+    override fun onSelectTtsEngine(engineId: String) = Unit
 
     override fun onSetSmartTurnEnabled(enabled: Boolean) {
         lastSmartTurn = enabled
@@ -547,6 +530,10 @@ private class RecordingSettingsActions : SettingsActions {
 
     override fun onDownloadSmartTurnModel() {
         downloadSmartTurnCount++
+    }
+
+    override fun onDownloadKokoroModel() {
+        downloadKokoroCount++
     }
 
     override fun onDestinationChanged(text: String) {

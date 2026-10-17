@@ -58,6 +58,7 @@ genuinely unknown, write "unknown" rather than guessing.
 - [Voice-loop LLM measurement (M25 input)](#voice-loop-llm-measurement-m25-input) - R-0248-R-0255
 - [TTS configuration and harness (dev/TTS)](#tts-configuration-and-harness-devtts) - R-0256-R-0258
 - [Voice-loop opening audio and echo (dev)](#voice-loop-opening-audio-and-echo-dev) - R-0259-R-0260
+- [Distilled Kokoro TTS (M28)](#distilled-kokoro-tts-m28) - R-0261
 
 ## Speech: on-device STT, TTS, VAD, and turn completion
 
@@ -416,6 +417,15 @@ device half is compiled only.
 | R-0256 | resolved (dev/TTS, Pixel 10) | speech | The TTS-stage harness (`VoiceTtsHarnessInstrumentedTest`) had not been run, so no `tts_first_audible`/`tts_completion` device number existed for the platform engine or the configured voice. | docs/tts.md, docs/evaluation.md, scripts/run-tts-harness-device.ps1 | dev/TTS | Resolved: `.\\scripts\\run-tts-harness-device.ps1 -Repeats 3` ran on 2026-10-17 on Pixel 10 (`frankel`, Android 17/API 37, build `CP3A.261005.005`, debug; engine `com.google.android.tts`, voice `en-us-x-tpf-local` quality 400, locale `en-US`, built-in speaker). All 9 attempts delivered; `tts_first_audible` p50 23 ms (first `speak()` after init 305 ms, later attempts 15-26 ms), `tts_completion` p50 4958 ms for 51-94 characters. One device, one voice, one moment; route/echo and audible naturalness stay R-0254/R-0258. |
 | R-0257 | open | speech | Speech-engine selection is validated against `TextToSpeech.getEngines()`, but the platform does not expose which engine a live `TextToSpeech` instance actually bound to, so a device/engine that ignores the constructor package cannot be detected from the API. The 2026-10-17 device run used the default engine (`com.google.android.tts`); only one engine was installed, so a non-default selection is still unexercised. | docs/tts.md, tts/AndroidTtsEngine.kt | M25/M26 | A Pixel 10 run with a second TTS engine installed showing the selected engine is the one used, and that a removed engine yields the typed `SelectedEngineUnavailable`/`TTS_NO_ON_DEVICE_VOICE` rather than a silent default. |
 | R-0258 | open | speech | "Most natural voice" is `Voice.getQuality()`, the only naturalness signal `android.speech.tts` exposes; the rank is coarse (the platform's own supertonic voices share the same ranks) and the choice is not calibrated against perceived naturalness on Pixel 10. The 2026-10-17 run selected `en-us-x-tpf-local` (quality 400, latency 200) for `en-US`, which is the highest-quality embedded voice reported, but the audible result was not judged. | docs/tts.md, tts/TtsVoice.kt | M25 | A device run comparing the selected voice's audible naturalness across the embedded voices, or a newer platform naturalness/feature signal to rank on. |
+
+## Distilled Kokoro TTS (M28)
+
+The active voice path now uses the pinned distilled Kokoro `af_heart` ONNX
+student instead of the retained M11 platform TTS adapter.
+
+| ID | Status | Area | Item and open question | Source | Resolves in | Evidence to close |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-0261 | open | speech/runtime | The Kokoro TTS path has JVM coverage with fakes, but the pinned graph and streaming `AudioTrack` sink have not been exercised on Pixel 10. Graph load/memory, first-audible and completion latency, output route, underruns, immediate stop/barge-in, and audible naturalness are unknown; the earlier M11 platform-TTS measurements do not transfer. | docs/tts.md, docs/model-runtime.md, KokoroTtsEngine.kt, AudioTrackKokoroSink.kt | M28 device validation | On Pixel 10, record graph identity/runtime/device conditions, model-load duration and memory, first-audible/completion timings, output route, underruns, and onset-to-stop behavior; listen to the voice and report the subjective result separately from timing. Do not reuse M11 platform measurements. |
 
 ## Voice-loop opening audio and echo (dev)
 

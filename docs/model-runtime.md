@@ -1,11 +1,10 @@
 # Model and Runtime Support
 
-This document defines the intended selection policy. It is not a list of
-currently integrated models; the repository has no model catalog or inference
-runtime yet. The verified runtime versions, the current (empty) speech-model
-allow-list, and the pinned Smart Turn artifact identity are recorded in the
-[decision record](./decisions.md); this document stays the policy the catalog
-must satisfy.
+This document defines the intended selection policy and the narrow app-managed
+model allow-list. The app currently uses the pinned Smart Turn v3.2 ONNX graph
+and the distilled Kokoro `af_heart` ONNX TTS graph. This does not permit arbitrary
+ONNX files or model URLs. Runtime versions and artifact identities are recorded
+in the [decision record](./decisions.md).
 
 ## Runtime categories
 
@@ -44,19 +43,19 @@ Do not assume that every `.tflite` model is compatible with every TFLite /
 LiteRT runtime or delegate. Validate tokenizer, tensor shapes, input/output
 contracts, quantization, and model-specific preprocessing/postprocessing.
 
-### ONNX Runtime for Smart Turn v3.2
+### ONNX Runtime for Smart Turn v3.2 and Kokoro TTS
 
-Include ONNX Runtime support for the planned optional Smart Turn v3.2 semantic
-end-of-turn model. Scope that runtime path to this model and its
-replaceable turn-detector interface; it does not add open-ended support for
-arbitrary ONNX models. The speech-android reference uses a pinned dynamic-int8
+ONNX Runtime is allow-listed only for the pinned Smart Turn v3.2 semantic
+end-of-turn model and the pinned Kokoro `af_heart` TTS graph below. Smart Turn's
+runtime path stays behind its replaceable turn-detector interface; this does not
+add open-ended support for arbitrary ONNX models. The speech-android reference uses a pinned dynamic-int8
 ONNX graph (`smart-turn-v3.2-int8.onnx`, 11,123,370 bytes) with ONNX Runtime on
 CPU. Its model manager pins source revision
 `b48fdbe20772bcec1fef02f4a1a355236ef6359e`; its README documents a BSD-2-Clause
 license. Verify the exact artifact and license during implementation. Do not
 assume a TFLite runtime can load the ONNX artifact directly.
 
-Keep the model optional, version-pinned, and replaceable. Verify the upstream
+For Smart Turn, keep the model optional, version-pinned, and replaceable. Verify the upstream
 license, artifact integrity, input sample rate/window, preprocessing, and
 probability contract, and account for storage and startup cost. Start with the
 reference CPU path to avoid NNAPI partition/fallback variability; benchmark
@@ -66,6 +65,19 @@ configured VAD-only endpoint policy. See the reference
 [model manifest](https://github.com/soniqo/speech-android/blob/main/sdk/src/main/kotlin/audio/soniqo/speech/ModelManager.kt)
 and [integration test](https://github.com/soniqo/speech-android/blob/main/sdk/src/androidTest/kotlin/audio/soniqo/speech/SmartTurnTest.kt)
 for the pinned artifact and exercised endpoint behavior.
+
+The only ONNX TTS graph is the distilled `af_heart` student from
+[`MithrilMan/teacher-in-the-loop`](https://huggingface.co/MithrilMan/teacher-in-the-loop),
+pinned by `KokoroArtifact`: revision `115a6c0469632a84fbcc6c8ed0ad7b1e06154b92`,
+9,168,506 bytes, SHA-256
+`f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7`. Its graph
+maps padded Kokoro phoneme ids and a speed scalar to 24 kHz mono float samples.
+The upstream model card marks the weights Apache-2.0. The app downloads into
+app-private storage, verifies the pinned identity before loading the native
+session, and reports missing/corrupt/load-failed states instead of falling back
+to platform TTS. Piece-wise synthesis and playback preserve first-audible timing
+and delivered-text accounting; device latency and audible quality remain unmeasured
+(R-0261).
 
 ### External LLM API
 

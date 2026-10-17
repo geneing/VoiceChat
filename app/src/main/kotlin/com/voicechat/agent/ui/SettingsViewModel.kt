@@ -32,6 +32,8 @@ import com.voicechat.agent.settings.AuthorizationOutcome
 import com.voicechat.agent.settings.AuthorizationRejection
 import com.voicechat.agent.settings.AuthorizationUiState
 import com.voicechat.agent.settings.EmptyModelCapabilityCatalog
+import com.voicechat.agent.settings.KokoroSettingsSection
+import com.voicechat.agent.settings.KokoroState
 import com.voicechat.agent.settings.LlmSettingsSection
 import com.voicechat.agent.settings.ProviderAuthFlow
 import com.voicechat.agent.settings.SettingsActions
@@ -53,6 +55,9 @@ import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttDownloadStatus
 import com.voicechat.agent.stt.SttEngines
 import com.voicechat.agent.stt.SttMode
+import com.voicechat.agent.tts.kokoro.KokoroInstallStatus
+import com.voicechat.agent.tts.kokoro.KokoroModelInstaller
+import com.voicechat.agent.tts.kokoro.UnavailableKokoroModelInstaller
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -95,6 +100,7 @@ class SettingsViewModel(
     private val smartTurnInstaller: SmartTurnModelInstaller = UnavailableSmartTurnModelInstaller,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     scope: CoroutineScope? = null,
+    private val kokoroInstaller: KokoroModelInstaller = UnavailableKokoroModelInstaller,
 ) : ViewModel(),
     SettingsActions {
     private val externalScope = scope
@@ -114,6 +120,9 @@ class SettingsViewModel(
     private var sttDownloadJob: Job? = null
     private var smartTurnInstalling: Boolean = false
     private var smartTurnInstallJob: Job? = null
+    private var kokoroInstalling: Boolean = false
+    private var kokoroInstallTotalBytes: Long? = null
+    private var kokoroInstallJob: Job? = null
     private var closed: Boolean = false
 
     private val startupJob: Job =
@@ -276,6 +285,49 @@ class SettingsViewModel(
                     AppLog.w(failure) { "settings: smart turn install failed" }
                     smartTurnInstalling = false
                     notice = SettingsNotice.Failure(ErrorCode.MODEL_DOWNLOAD_FAILED, "The Smart Turn model could not be installed.")
+                    rebuild()
+                }
+            }
+    }
+
+    override fun onDownloadKokoroModel() {
+        if (kokoroInstallJob?.isActive == true) return
+        if (capabilities.kokoro is KokoroState.Installed) return
+        kokoroInstalling = true
+        kokoroInstallTotalBytes = null
+        rebuild()
+        kokoroInstallJob =
+            coroutineScope().launch(dispatcher) {
+                try {
+                    kokoroInstaller.install().collect { status ->
+                        when (status) {
+                            is KokoroInstallStatus.Started -> {
+                                kokoroInstallTotalBytes = status.totalBytes
+                            }
+
+                            KokoroInstallStatus.Completed -> {
+                                kokoroInstalling = false
+                                kokoroInstallTotalBytes = null
+                                capabilities = readCapabilities()
+                            }
+
+                            is KokoroInstallStatus.Failed -> {
+                                kokoroInstalling = false
+                                kokoroInstallTotalBytes = null
+                                notice = SettingsNotice.Failure(ErrorCode.MODEL_DOWNLOAD_FAILED, status.message)
+                            }
+                        }
+                        rebuild()
+                    }
+                } catch (cancellation: CancellationException) {
+                    kokoroInstalling = false
+                    kokoroInstallTotalBytes = null
+                    throw cancellation
+                } catch (failure: Throwable) {
+                    AppLog.w(failure) { "settings: Kokoro model install failed" }
+                    kokoroInstalling = false
+                    kokoroInstallTotalBytes = null
+                    notice = SettingsNotice.Failure(ErrorCode.MODEL_DOWNLOAD_FAILED, "The Kokoro voice model could not be installed.")
                     rebuild()
                 }
             }
@@ -563,12 +615,20 @@ class SettingsViewModel(
                 installing = smartTurnInstalling,
             )
 
+        val kokoro =
+            KokoroSettingsSection(
+                state = capabilities.kokoro,
+                installing = kokoroInstalling,
+                totalBytes = kokoroInstallTotalBytes,
+            )
+
         _uiState.value =
             SettingsUiState(
                 isLoading = false,
                 stt = stt,
                 llm = llm,
                 tts = tts,
+                kokoro = kokoro,
                 smartTurn = smartTurn,
                 notice = notice,
             )
@@ -587,6 +647,7 @@ class SettingsViewModel(
         startupJob.cancel()
         sttDownloadJob?.cancel()
         smartTurnInstallJob?.cancel()
+        kokoroInstallJob?.cancel()
     }
 
     override fun onCleared() {
@@ -637,6 +698,7 @@ fun settingsViewModelFactory(
     authFlow: ProviderAuthFlow = UnimplementedProviderAuthFlow,
     sttDownloader: SttModelDownloader = MlKitSttModelDownloader,
     smartTurnInstaller: SmartTurnModelInstaller = UnavailableSmartTurnModelInstaller,
+    kokoroInstaller: KokoroModelInstaller = UnavailableKokoroModelInstaller,
 ): ViewModelProvider.Factory =
     viewModelFactory {
         initializer {
@@ -649,6 +711,7 @@ fun settingsViewModelFactory(
                 authFlow = authFlow,
                 sttDownloader = sttDownloader,
                 smartTurnInstaller = smartTurnInstaller,
+                kokoroInstaller = kokoroInstaller,
             )
         }
     }

@@ -151,14 +151,24 @@ Considered and **not adopted initially**:
 
 ### 2.2 Text-to-speech (TTS)
 
-**Decision: the Android platform `android.speech.tts.TextToSpeech` API is the
-initial TTS engine, restricted at runtime to embedded (non-network) voices.**
-There is no ML Kit GenAI / AICore TTS API: the GenAI overview lists
-Summarization, Proofreading, Rewriting, Image description, Speech recognition,
-and Prompt only (accessed 2026-09-28). TTS therefore cannot be an AICore path.
+**Decision (M28): the voice path uses the pinned, distilled Kokoro `af_heart`
+student on-device through ONNX Runtime.** The graph is downloaded only after user
+action, stored app-privately, verified against its pinned size and SHA-256, and
+loaded only after verification. A missing/corrupt graph is visible and leaves the
+app text-only; it never falls back to platform or network TTS. The Android
+platform `TextToSpeech` adapter remains in the tree as the M11 implementation but
+is no longer wired for voice replies. There is no ML Kit GenAI / AICore TTS API.
 
-Verified contract (`developer.android.com/reference/android/speech/tts/*`,
-accessed 2026-09-28):
+The graph is `MithrilMan/teacher-in-the-loop` `af_heart/model_int8.onnx`, pinned
+at revision `115a6c0469632a84fbcc6c8ed0ad7b1e06154b92`, 9,168,506 bytes,
+SHA-256 `f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7`.
+The upstream model card marks the weights Apache-2.0 and identifies Kokoro-82M
+and the Paradee-derived architecture. The pinned graph, runtime contract, and
+scope are recorded in [model-runtime.md](./model-runtime.md) and
+[`KokoroArtifact.kt`](../app/src/main/kotlin/com/voicechat/agent/tts/kokoro/KokoroArtifact.kt).
+
+The retained M11 platform adapter follows the verified Android contract
+(`developer.android.com/reference/android/speech/tts/*`, accessed 2026-09-28):
 
 - Discover engines with `getEngines()` (API 14) and voices with `getVoices()`
   (API 21); select with `setVoice(Voice)` (API 21).
@@ -169,7 +179,14 @@ accessed 2026-09-28):
 - `synthesizeToFile()` supports producing audio without immediate playback;
   `getMaxSpeechInputLength()` bounds a single utterance.
 
-Fallback/unavailable behavior:
+The active Kokoro path reports `Ready` only after the model store returns a
+verified graph and ONNX session creation succeeds. It emits `Started` only from
+the playback sink's first-audible callback and counts a text piece as delivered
+only after its samples finish playing. These are measured-playback requirements
+from [voice-quality-and-latency.md](./voice-quality-and-latency.md) §Latency
+strategy and §Responsive barge-in.
+
+Retained platform fallback/unavailable behavior (M11, not the active path):
 
 - If no non-network voice is installed for the requested locale, surface an
   explicit "no on-device voice" state and continue text-only. **Do not silently
@@ -182,7 +199,8 @@ Fallback/unavailable behavior:
 **Deferred to M09 with an explicit constraint.** No VAD model is allow-listed at
 M00:
 
-- The project scopes ONNX Runtime narrowly to Smart Turn v3.2, so an ONNX VAD
+- ONNX Runtime is allow-listed only for the pinned Smart Turn and Kokoro TTS
+  graphs; an ONNX VAD
   (e.g. Silero) is **out of scope** unless that scope is deliberately changed.
 - No TFLite/LiteRT VAD artifact is verified (§3), so M09 must not assume one.
 - M09 must therefore select and measure a VAD/onset path from the audio itself
@@ -198,14 +216,14 @@ M00:
 | --- | --- | --- |
 | LiteRT (formerly TFLite) | Allow-listed as the app-managed `.tflite` runtime; no model uses it yet | LiteRT v2.2.0 (2026-08-14), min SDK 23, min NDK r26a; Maven `com.google.ai.edge.litert:litert`; code samples Apache-2.0, docs CC-BY-4.0. |
 | LiteRT-LM | Allow-listed only for the optional local-LLM path (M20) | `com.google.ai.edge.litertlm:litertlm-android`; current docs describe v0.16.0; `.litertlm` bundles sourced from the Google AI Edge Hugging Face community. |
-| ONNX Runtime for Android | Allow-listed **only** for the pinned Smart Turn v3.2 artifact | `com.microsoft.onnxruntime:onnxruntime-android` 1.29.0 (2026-08-13), MIT license; Android tested at API 28, "may be compatible with API level 21+"; NNAPI EP requires Android 8.1+; add `-keep class ai.onnxruntime.** { *; }` for R8. |
+| ONNX Runtime for Android | Allow-listed only for pinned Smart Turn v3.2 and Kokoro `af_heart` TTS graphs | `com.microsoft.onnxruntime:onnxruntime-android` 1.29.0 (2026-08-13), MIT license; Android tested at API 28, "may be compatible with API level 21+"; NNAPI EP requires Android 8.1+; add `-keep class ai.onnxruntime.** { *; }` for R8. |
 | AICore / ML Kit GenAI | Used only through the ML Kit GenAI Speech Recognition API | AICore models are system-managed; never download, copy, inspect, or delete them (ML Kit GenAI docs). |
 
 ### 3.2 Allow-listed speech-task models
 
-**None yet.** No STT, TTS, or VAD `.tflite`/LiteRT artifact with verified
-provenance, license, runtime contract, and device fit is allow-listed for M00.
-This is a deliberate, evidence-backed emptiness, not an omission:
+**Speech-task allow-list:** the pinned Kokoro `af_heart` int8 ONNX graph is the
+active TTS model; no STT or VAD `.tflite`/LiteRT artifact is allow-listed. The
+TTS graph is not a LiteRT model and is not interchangeable with LiteRT:
 
 - There is no first-party Google on-device STT or TTS model published for LiteRT
   that the documentation presents as such. LiteRT-LM supports multimodal **input**
@@ -222,12 +240,11 @@ before adoption:
   neighboring `speech-android` SDK (`ModelManager.kt` points at a LiteRT
   encoder/decoder/joint bundle for its Nemotron-3.5 recognizer). Identity,
   license, and size must be verified from the publisher before use.
-- A TTS model in LiteRT format. The same reference project ships ONNX TTS
-  (Kokoro) and a LiteRT TTS ("Supertonic") path, but none of those artifacts are
-  verified for this app, and adopting ONNX beyond Smart Turn would require an
-  explicit scope change.
+- A LiteRT TTS model remains a separate evaluation candidate. The active Kokoro
+  student is supported only by its pinned ONNX Runtime path; it does not establish
+  general ONNX or LiteRT TTS support.
 
-Rule carried into M20: an artifact may be executed only after its task, source,
+Model allow-list rule: an artifact may be executed only after its task, source,
 license, format/runtime, operators/delegates, ABI, tensor contract, and
 integrity are recorded and it passes device tests. Arbitrary model URLs/files
 remain rejected.

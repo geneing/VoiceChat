@@ -95,11 +95,11 @@ data class SttDownloadProgress(
         get() = if (bytesToDownload > 0L) (bytesDownloaded.toDouble() / bytesToDownload.toDouble()).toFloat().coerceIn(0f, 1f) else null
 }
 
-/** TTS section: the platform speech engine plus installed embedded voices only. */
+/** TTS section: installed on-device voices; engine fields remain for M11 settings compatibility. */
 data class TtsSettingsSection(
-    /** The platform TTS engines the device reports; empty when none could be read. */
+    /** Legacy platform TTS engines; the active Kokoro path reports none. */
     val engines: List<SelectableOption<TtsEngineInfo>> = emptyList(),
-    /** The selected engine id, or `null` for the platform default engine. */
+    /** Legacy platform engine id; `null` for Kokoro. */
     val selectedEngineId: String? = null,
     val options: List<SelectableOption<TtsVoice>> = emptyList(),
     val selectedVoiceId: String? = null,
@@ -173,6 +173,20 @@ data class SmartTurnSettingsSection(
             }
 }
 
+/** Kokoro voice graph install state, shown alongside the selected on-device voice. */
+data class KokoroSettingsSection(
+    val state: KokoroState = KokoroState.Unavailable("Kokoro voice model is not available."),
+    val installing: Boolean = false,
+    val totalBytes: Long? = null,
+) {
+    /** True when the pinned graph is absent and the install action can be offered. */
+    val needsDownload: Boolean get() = state is KokoroState.DownloadRequired
+
+    /** The safe explanation for an unusable model, or `null` while installable/installed. */
+    val unavailableReason: String?
+        get() = (state as? KokoroState.Unavailable)?.reason
+}
+
 /**
  * Immutable UI state for the settings surface (M22).
  *
@@ -186,6 +200,7 @@ data class SettingsUiState(
     val stt: SttSettingsSection = SttSettingsSection(),
     val llm: LlmSettingsSection = LlmSettingsSection(),
     val tts: TtsSettingsSection = TtsSettingsSection(),
+    val kokoro: KokoroSettingsSection = KokoroSettingsSection(),
     val smartTurn: SmartTurnSettingsSection = SmartTurnSettingsSection(),
     val notice: SettingsNotice? = null,
 )
@@ -219,10 +234,10 @@ interface SettingsActions {
     /** Selects a reasoning level supported by the current provider+model. */
     fun onSelectReasoningLevel(level: ReasoningLevel)
 
-    /** Selects an installed embedded TTS voice. */
+    /** Selects an installed on-device voice. */
     fun onSelectTtsVoice(voiceId: String)
 
-    /** Selects the platform TTS engine (speech API) the app speaks through. */
+    /** Legacy platform TTS selection; the Kokoro settings surface does not expose this action. */
     fun onSelectTtsEngine(engineId: String)
 
     /** Enables or disables Smart Turn (only persisted when it is available). */
@@ -233,6 +248,9 @@ interface SettingsActions {
      * A no-op when it is already installed or an install is already running.
      */
     fun onDownloadSmartTurnModel()
+
+    /** Downloads and installs the pinned Kokoro voice model after user approval. */
+    fun onDownloadKokoroModel()
 
     /** Updates the configurable destination draft; validated before it is stored. */
     fun onDestinationChanged(text: String)
