@@ -34,8 +34,8 @@ Smart Turn v3.2 semantic end-of-turn detection through ONNX Runtime (M10,
 opt-in and default off), plus eligible on-device local LLM runtimes with a
 curated (currently empty) model catalog and explicit local-versus-remote
 selection (M20). Speech/latency evaluation (M25) now has a pure-Kotlin harness
-(`eval/`, including a TTS-stage step) with host tests, but its Pixel 10 result
-rows are empty, so no latency
+(`eval/`, including a TTS-stage step) with host tests and a Pixel 10 TTS-stage
+run, but its STT/LLM/end-to-end rows are empty, so no full-loop latency
 or accuracy claim exists. Release hardening (M26) is in progress: the voice loop
 bounds a stalled recognizer, surfaces typed STT errors, and honors the persisted
 STT mode; the transport bounds in-flight calls; and app-scoped
