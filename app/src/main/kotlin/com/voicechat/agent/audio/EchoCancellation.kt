@@ -93,10 +93,18 @@ class PlatformEchoCanceller : EchoCanceller {
                 EchoCancellation(EchoCancellationState.FAILED, "the platform refused an echo canceller for this session")
             } else {
                 canceller = created
-                val enabled = created.enabled
+                // A freshly created AudioEffect is disabled; enabling it is what
+                // actually inserts the canceller into the capture session, so the
+                // reported state must come from the enable call, not the bare
+                // creation. A non-zero result means the platform refused to enable
+                // it for this session/route and the app reports that honestly.
+                val enableResult = runCatching { created.setEnabled(true) }.getOrNull()
+                val enabled = runCatching { created.enabled }.getOrDefault(false)
                 val state = echoCancellationState(available = true, reportedEnabled = enabled)
-                AppLog.i { "capture: echo canceller state=$state session=$audioSessionId" }
-                EchoCancellation(state, if (enabled) null else "the canceller would not enable")
+                AppLog.i {
+                    "capture: echo canceller state=$state session=$audioSessionId enableResult=${enableResult ?: "threw"}"
+                }
+                EchoCancellation(state, if (enabled) null else "the canceller would not enable (result=$enableResult)")
             }
         } catch (failure: Throwable) {
             AppLog.w(failure) { "capture: attaching the echo canceller failed" }
