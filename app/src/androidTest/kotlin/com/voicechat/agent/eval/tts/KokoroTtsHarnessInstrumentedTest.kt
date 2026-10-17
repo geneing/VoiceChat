@@ -8,12 +8,12 @@ import com.voicechat.agent.eval.MeasurementConditions
 import com.voicechat.agent.log.AndroidLogging
 import com.voicechat.agent.log.LogLevel
 import com.voicechat.agent.settings.PreferencesSettingsStore
-import com.voicechat.agent.tts.kokoro.DefaultKokoroPhonemizer
 import com.voicechat.agent.tts.kokoro.KokoroArtifact
 import com.voicechat.agent.tts.kokoro.KokoroModelState
 import com.voicechat.agent.tts.kokoro.KokoroModelStore
 import com.voicechat.agent.tts.kokoro.KokoroTts
 import com.voicechat.agent.tts.kokoro.OnnxKokoroEngine
+import com.voicechat.agent.tts.kokoro.phonemes.DefaultKokoroPhonemizer
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue

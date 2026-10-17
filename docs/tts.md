@@ -183,6 +183,12 @@ offline. The measured sentence-exact agreement with the Python reference, and th
 categories that differ, are reported by the parity test and in
 [Tests.md](../Tests.md) M28 (R-0263).
 
+One deliberate deviation from the Python chunk list: a chunk whose phonemes carry
+no letter (a punctuation-only fragment such as a bare `.`) is dropped rather than
+handed to the graph, because a graph call for it can only produce noise or
+silence. The engine therefore reports "nothing to play" and completes without
+`Started`, which the publisher's chunker would not distinguish from speech.
+
 ## Kokoro playback route
 
 `AudioTrackKokoroSink` writes the graph's native 24 kHz mono `ENCODING_PCM_FLOAT`
