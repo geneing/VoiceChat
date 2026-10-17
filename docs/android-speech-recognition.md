@@ -70,6 +70,20 @@ This is the "use the API's end-of-speech but let VAD/turn detection make it
 robust" behavior: VAD decides the turn, and the engine signal is corroborating
 metadata.
 
+### Recognition text
+
+On Pixel 10 the on-device recognizer returns an **empty** `onResults` (12/12
+sessions, `chars=0`): all recognized text arrives through `onPartialResults`. The
+adapter's `SttResultAssembler` therefore commits its last partial as the final
+transcript. The engine's partial text can reset or re-emit after its own
+`onEndOfSpeech`, so for a long single VAD turn the committed text is sometimes
+only the engine's last internal segment (`eng-000004` committed "No no no no"
+where ML Kit returned the fuller sentence; `Walking .m4a` committed "Latest news
+please"). Concatenating the per-segment partials was tried and duplicates or
+truncates depending on the clip, so it is not done; R-0247 tracks a robust
+strategy. Keep VAD turns short for now and treat the committed text as the
+engine's last hypothesis, not a gold transcript.
+
 Partial hypotheses become interim `SttEvent.Result`s through `SttResultAssembler`
 (monotonic revisions, stale interims dropped by the coordinator); the final
 `onResults` becomes the single final transcript, and `ERROR_NO_MATCH` /

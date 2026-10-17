@@ -14,7 +14,10 @@ param(
     [string]$MoonshineDraftLabelsPath
 )
 
-$ErrorActionPreference = "Stop"
+# Native tools (Gradle, adb) write progress to stderr; "Continue" keeps that from
+# being reported as a script failure. Each critical native call is instead checked
+# through $LASTEXITCODE explicitly.
+$ErrorActionPreference = "Continue"
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $inputCandidate = if ([System.IO.Path]::IsPathRooted($InputPath)) { $InputPath } else { Join-Path $repoRoot $InputPath }

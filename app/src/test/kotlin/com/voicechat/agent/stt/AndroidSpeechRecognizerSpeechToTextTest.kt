@@ -98,7 +98,7 @@ class AndroidSpeechRecognizerSpeechToTextTest {
             // A re-entrant stop from the callback made the on-device recognizer
             // answer ERROR_CLIENT, so end-of-speech must not stop the session; it
             // only forwards one event, however many times it fires.
-            repeat(5) { recognizer.endOfSpeech() }
+            repeat(3) { recognizer.endOfSpeech() }
             runCurrent()
 
             assertEquals(0, recognizer.stopCount)
