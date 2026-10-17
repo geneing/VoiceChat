@@ -300,3 +300,37 @@ audio, transcript, or model binary is committed.
 | 2026-10-02 | `ec192cd` (docs-only; no source change) | Added a `docs/voice-latency-results.md` section that scores the 110M sherpa-onnx hypothesis sidecar against the same local Whisper pseudo-reference. | Pixel 10 (`frankel`), Android 17/API 37, build `CP3A.260905.009`. Model: Parakeet TDT-CTC 110M INT8, sherpa-onnx 1.13.8 offline batch. Reuses the existing `parakeet-110m-int8--*.hypothesis.txt` sidecar (run `0edf380`) — no new device run; device conditions were not resampled. | 10/12 clips produced in-window full-phrase text with no truncation: WER 0.033/0.100/0.000/0.143/0.100/0.063/0.000/0.400/0.000/1.000. The two >16 s outdoor clips are sentence-truncated in the sidecar and were not scored. No new latency. | WER is agreement with a machine pseudo-reference, not human-reviewed gold. The 1.00 row is the `$2,500`↔"two thousand five hundred" number-formatting convention (S/D/I 2/0/3), not misrecognition; combined with the 0.40 `self-cleaning`→"self cleaning" repeat, exact word tokens already match on ≤5-word clips. No transcript text copied here. |
 | 2026-10-02 | `fd39960` | Linked the sample tokenizer JNI (tracked JNI shim + build script), decoded token IDs to text on-device, added the on-device Parakeet corpus runner, a pure-Kotlin log-Mel port plus a jlibrosa-backed variant, a Git-ignored local-Whisper reference script, and the host WER harness. | Windows Gradle `spotlessApply spotlessCheck :app:testDebugUnitTest :app:assembleDebugAndroidTest` passed; Pixel 10 corpus run transcribed all 12 clips with Parakeet CTC. Tokenizer JNI built with NDK 28.2 into `models/litert-asr/tokenizer-jni`. | CTC corpus WER recorded above; R-0239 TDT feature parity was subsequently resolved at `22766a7`; no committed audio/transcript/model. |
 | 2026-10-02 | `22766a7` | Matched the pure-Kotlin Parakeet TDT preprocessor to the frozen 499-valid-frame, mel-major tensor; added an on-device parity diagnostic and made it the TDT corpus default. | Pixel 10 (`frankel`), Android 17/API 37, LiteRT 2.1.5 CPU-only. `LiteRtParakeetFeatureParityInstrumentedTest`, frozen `LiteRtParakeetComparisonInstrumentedTest`, and two `LiteRtParakeetCorpusInstrumentedTest` runs passed. Frozen-control TDT: 23 tokens/text. Corpus: 9/10 TDT hypotheses, 4/4 in-window; all 10 CTC hypotheses still emitted text. | On-device feature parity max/mean abs `0.0002205372 / 0.0000006845` versus pre-fix raw-flat `5.9926624 / 1.1226038`; aligned pre-fix `5.4071398 / 0.1306500`. The four in-window TDT pseudo-reference rows are above (mean WER 0.186/CER 0.150); the reference is local Whisper, not human-reviewed. |
+
+## Platform SpeechRecognizer and ML Kit STT latency (M27, Pixel 10, 2026-10-16)
+
+Environment: Pixel 10 (`57220DLCR002R6`, `frankel`), Android 17 / API 37, debug
+build, on-device recognizer. Corpus: the 12 staged clips (10 `eng-*.wav`,
+`Walking .m4a`, `Walking headphones .m4a`), one paced run each, VAD-only unless
+noted. Reports under `build/stt-harness/<runId>/` and `%TEMP%\mlkit-replay-*.csv`.
+One run per clip: evidence, not a distribution.
+
+Platform `SpeechRecognizer` (`android-speech-recognizer`, `EXTRA_AUDIO_SOURCE`
+pipe), VAD-only, 12 clips (11 `FINAL`, 1 no-speech turn):
+
+- **first partial after speech onset**: min 611 / median 933 / max 1561 ms
+- **VAD endpoint → final**: min 0 / median 121 / max 400 ms
+- partially removable: the recognizer's `onEndOfSpeech` fired well before the
+  turn end (14.2 s before the final on `Walking .m4a`), so VAD, not the engine
+  signal, ended the turn (R-0245)
+
+Platform recognizer with Smart Turn enabled: first partial median 932 ms
+(unchanged); endpoints rose (`Walking .m4a` 5 vs 1; `Walking headphones`
+5 vs 3) with the same final text, re-confirming the mid-utterance
+fragmentation of R-0242.
+
+ML Kit GenAI paced replay over the same 12 clips, both modes `FINAL` on every
+clip (this supersedes the earlier all-failed note, R-0235):
+
+- **Advanced**: input start → first partial median 1,508 ms; input end → final
+  median 455 ms
+- **Basic**: input start → first partial median 1,699 ms (two clips ~8 s);
+  input end → final median 168 ms
+
+No accuracy/WER claim: platform transcripts were recorded but not scored against
+gold. ML Kit timings start when the adapter begins feeding audio, the platform
+timings from VAD onset/endpoint, so the two clocks are close but not identical.
