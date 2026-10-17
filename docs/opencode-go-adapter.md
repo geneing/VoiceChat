@@ -35,6 +35,23 @@ placed by the page (for example `omen-alpha`, `hy3-preview`, `glm-5.1`,
 `grok-4.5`, `qwen3.7-max`) has **no verified family**, so the adapter refuses it
 with a typed `LLM_INVALID_REQUEST` rather than guessing a protocol (R-0137).
 
+## Re-verification (2026-10-17, live credential)
+
+The 2026-09-29 facts above were re-checked against the live gateway with a
+credential on 2026-10-17. Four rows and one test expectation are wrong or
+incomplete; the measurements and the model choice behind them are in
+[voice-llm-selection.md](./voice-llm-selection.md) and
+[voice-llm-results.md](./voice-llm-results.md) (R-0248-R-0252).
+
+| Concern | 2026-09-29 text above | Measured 2026-10-17 |
+| --- | --- | --- |
+| Authentication | Bearer for all families | **Messages needs `x-api-key` + `anthropic-version`.** With `Authorization: Bearer`, Messages-family calls return HTTP 401 `"Go requires a credential"`. Chat Completions and Responses keep Bearer. The `eachFamilyGoesToItsDocumentedEndpointWithBearerAuthAndClientHeaders` expectation must be split per family. |
+| Client identity | "Both are sent; neither carries a credential." | `x-opencode-session` is **required**, not merely advisory: without it every family returns HTTP 400 `MissingSessionID`. |
+| Reasoning control | "Not documented … the adapter declares no reasoning level" | The parameters are not documented, but the gateway accepts and honours them: Responses `reasoning.effort` (`none`…`max`; first token 0.93 s at `none` vs 41.80 s at `max` on one planning question), Chat `reasoning_effort` and `thinking.type=disabled`, Messages `thinking.type=adaptive` with `output_config.effort` (`budget_tokens` is rejected with "use adaptive"). `space-bunny` and `grok-4.7` reject these fields with HTTP 400 and `step-5-preview` accepts them without stopping its reasoning. |
+| Usage reporting | "Not promised" | All three families report usage when asked, including per-family cached-token fields. |
+| Prompt caching | Session id is a "routing/prompt-caching hint" | Confirmed with a stable session id and prefix: 1703 of 1706 tokens cached on the second call, first token 0.88 s → 0.71 s. |
+| Model list drift | Static dated map | `space-bunny-free` answers "Model is unavailable" while `space-bunny` works, `mimo-v2.6-flash` is `model_coming_soon`, and `step-5-preview`/`beam-free` are Chat Completions models. `claude-haiku-5-5` is served but is not in the map. |
+
 ## Request mapping
 
 `OpenCodeGoLanguageModel` classifies `request.model.modelId` and calls the family
