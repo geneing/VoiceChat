@@ -79,6 +79,14 @@ because some providers reject `"none"`; here the models that were measured to
 accept it (`gpt-6-luna`, `gpt-5.6-luna`, `deepseek-v4.1-flash`, `kimi-k3`) get it
 explicitly, and `grok-4.7`, which rejects it, does not.
 
+**On the Pixel 10** the same harness reports the same order with the phone's own
+network path: `claude-haiku-5-5` 1.11 s, `gpt-6-luna` (none) 1.16 s,
+`minimax-m3` 1.22 s, `qwen3.8-flash` 1.32 s, `gpt-5.6-luna` 1.41 s,
+`deepseek-v4.1-flash` 2.08 s to the first token, and a full answer in
+1.78-3.10 s. The device adds roughly a quarter to half a second over the host
+(`docs/voice-llm-results.md`, "Device run"). TTS time-to-first-audio is not
+included in those numbers.
+
 Alternates, in order of usefulness:
 
 - `deepseek-v4.1-flash` (Chat Completions, `reasoning_effort=none`): 1.79 s TTFT
@@ -206,12 +214,14 @@ remains is verification rather than plumbing:
 
 ## Not measured
 
-- Anything on device: Android TTS time-to-first-audio, whether 160-character
-  chunks sound natural, echo cancellation on the real speaker and headset routes,
-  and the end-to-end voice turn (R-0254, R-0255).
+- Anything on device **after the model call**: Android TTS time-to-first-audio,
+  whether 160-character chunks sound natural, echo cancellation on the real
+  speaker and headset routes, and the end-to-end voice turn (R-0255, R-0254). The
+  model call itself has device rows (above).
 - Percentiles. A single call is not a measurement — the same model and
-  parameters moved by more than 7x between single runs on 2026-10-17 — so the
-  harness repeats and reports the median of three; it is still not a p50/p95.
+  parameters moved by more than 7x between single runs on 2026-10-17 — so both
+  harnesses repeat and report the median of three; that is still not a p50/p95,
+  and the device row is one device, one Wi-Fi network, and one moment.
 - Whether Go's terms accept a non-coding voice client (R-0012/R-0020).
 - Answer accuracy: the Yosemite suggestions were not checked against National
   Park Service guidance.

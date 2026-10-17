@@ -800,8 +800,31 @@ records the timings and the verbatim answers. It is skipped unless
 It **was run** on 2026-10-17 with three attempts per model; the medians and the
 answers are recorded in
 [voice-llm-results.md](./docs/voice-llm-results.md#harness-run-2026-10-17). It is
-host-side only — no Pixel, microphone, or TTS — so it is model-choice evidence,
-not a voice-loop latency result (R-0253).
+host-side only — no Pixel, microphone, or TTS — so it is model-choice evidence
+from the host, not a device result.
+
+### On-device LLM harness (Pixel 10, run on 2026-10-17)
+
+`com.voicechat.agent.eval.llm.VoiceLlmHarnessInstrumentedTest` runs the same
+harness and the same case list **on the phone**, so the timings include the
+device's network path and runtime. It is opt-in (`-e llmHarnessRunId`), takes its
+credential from the app's AndroidKeyStore-backed store, and writes a content-free
+`summary.md` plus a `record.md` with the answers into app-private cache.
+
+```powershell
+# Stages the credential, builds/installs, runs the instrumented harness, and
+# copies both reports into build/llm-harness-device/<runId>/.
+.\scripts\run-llm-harness-device.ps1
+.\scripts\run-llm-harness-device.ps1 -Repeats 5 -DeviceSerial 57220DLCR002R6
+```
+
+It **was run** on 2026-10-17 on Pixel 10 (`frankel`), Android 17 / API 37, build
+`google/frankel/frankel:17/CP3A.261005.005/16271449:user/release-keys`, three
+attempts per model, on Wi-Fi, USB-powered at 80%, battery 29.0 °C (sampled after
+the run). All eight configurations completed; the medians are in
+[voice-llm-results.md](./docs/voice-llm-results.md#device-run-pixel-10-2026-10-17).
+Still unmeasured: TTS time-to-first-audio, echo behaviour per route, and the
+end-to-end voice turn (R-0254, R-0255).
 
 ## M18 — OpenCode Zen adapter
 
