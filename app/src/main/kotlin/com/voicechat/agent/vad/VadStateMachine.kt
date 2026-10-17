@@ -38,6 +38,13 @@ data class VadTransition(
  */
 class VadStateMachine(
     private val config: VadConfig,
+    /**
+     * Whether assistant playback is audible right now. Onset uses the higher
+     * [VadConfig.playbackOnsetRmsThreshold] while it is true, so the assistant's own
+     * residual audio through the microphone cannot start a turn; it drops back to
+     * [VadConfig.onsetRmsThreshold] the moment playback ends.
+     */
+    private val playbackActive: () -> Boolean = { false },
 ) {
     private enum class State { SILENCE, SPEECH, PAUSE }
 
@@ -60,8 +67,10 @@ class VadStateMachine(
         val features = AudioFrameFeatures.of(frame)
         val offsetMillis = currentOffsetMillis
         val transitions = mutableListOf<VadTransition>()
+        val onsetThreshold =
+            if (playbackActive()) config.playbackOnsetRmsThreshold else config.onsetRmsThreshold
         val onsetQualified =
-            features.rms >= config.onsetRmsThreshold &&
+            features.rms >= onsetThreshold &&
                 features.zeroCrossingRate <= config.maxZeroCrossingRate
 
         when (state) {

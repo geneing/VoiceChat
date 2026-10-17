@@ -69,6 +69,16 @@ class VadConfigTest {
     }
 
     @Test
+    fun aPlaybackBarBelowTheOnsetThresholdOrNonFiniteIsRejected() {
+        assertThrows(IllegalArgumentException::class.java) {
+            VadConfig(onsetRmsThreshold = 0.05f, playbackOnsetRmsThreshold = 0.02f)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VadConfig(playbackOnsetRmsThreshold = Float.NaN)
+        }
+    }
+
+    @Test
     fun zeroCrossingRateOutsideZeroToOneIsRejected() {
         assertThrows(IllegalArgumentException::class.java) { VadConfig(maxZeroCrossingRate = -0.1f) }
         assertThrows(IllegalArgumentException::class.java) { VadConfig(maxZeroCrossingRate = 1.1f) }

@@ -194,6 +194,7 @@ class VoiceSessionCoordinator(
                 finalizationJob = null
                 assistantActive = false
                 assistantOnsetAtNanos = null
+                turnDetector.setPlaybackActive(false)
                 sessionScope = null
                 setState(if (stopped) VoiceSessionState.STOPPED else VoiceSessionState.IDLE)
             }
@@ -208,6 +209,7 @@ class VoiceSessionCoordinator(
         if (assistantActive) {
             assistant?.interrupt(clock.nanoTime())
         }
+        turnDetector.setPlaybackActive(false)
         detectorJob?.cancel()
         detectInput?.close()
         captureJob?.cancel()
@@ -496,6 +498,10 @@ class VoiceSessionCoordinator(
         val userTurn = UserTurn(id = turnId, transcript = transcript, source = UserTurnSource.VOICE)
         assistantActive = true
         assistantOnsetAtNanos = null
+        // The assistant is about to be audible: raise the onset bar so its own
+        // residual audio through the microphone cannot start a turn. It drops back
+        // in the finally, the moment playback ends.
+        turnDetector.setPlaybackActive(true)
         setState(VoiceSessionState.SPEAKING)
         val attempt =
             try {
@@ -506,6 +512,7 @@ class VoiceSessionCoordinator(
                 AssistantAttempt.Threw(failure.toVoiceAgentError())
             } finally {
                 assistantActive = false
+                turnDetector.setPlaybackActive(false)
             }
         when (attempt) {
             is AssistantAttempt.Threw -> {

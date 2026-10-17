@@ -26,6 +26,16 @@ import com.voicechat.agent.audio.AudioRouteType
 data class VadConfig(
     /** Frame RMS at or above which speech onset may start, normalized to `[0, 1]`. */
     val onsetRmsThreshold: Float = DEFAULT_ONSET_RMS_THRESHOLD,
+    /**
+     * Frame RMS required for onset while assistant playback is audible.
+     *
+     * The assistant is heard through the microphone (echo cancellation reduces but
+     * does not remove it, measured mean ~0.005 / p95 ~0.010 on Pixel 10), so onset
+     * uses a higher bar during playback: the user's own voice, closer to the mic,
+     * still clears it, while the residual echo does not. It is not a time-based
+     * grace period — the bar drops again the moment playback ends.
+     */
+    val playbackOnsetRmsThreshold: Float = DEFAULT_PLAYBACK_ONSET_RMS_THRESHOLD,
     /** Frame RMS below which speech is considered paused; lower than onset for hysteresis. */
     val hangoverRmsThreshold: Float = DEFAULT_HANGOVER_RMS_THRESHOLD,
     /** Maximum zero-crossing rate still considered speech-like; rejects hiss/transients. */
@@ -53,6 +63,9 @@ data class VadConfig(
         require(hangoverRmsThreshold <= onsetRmsThreshold) {
             "hangoverRmsThreshold ($hangoverRmsThreshold) must not exceed onsetRmsThreshold ($onsetRmsThreshold)"
         }
+        require(playbackOnsetRmsThreshold.isFinite() && playbackOnsetRmsThreshold >= onsetRmsThreshold) {
+            "playbackOnsetRmsThreshold ($playbackOnsetRmsThreshold) must be finite and at least onsetRmsThreshold ($onsetRmsThreshold)"
+        }
         require(maxZeroCrossingRate.isFinite() && maxZeroCrossingRate in 0f..1f) {
             "maxZeroCrossingRate must be finite and within [0, 1], was $maxZeroCrossingRate"
         }
@@ -63,11 +76,22 @@ data class VadConfig(
     }
 
     companion object {
-        /** ~0.02 RMS, deliberately low; M25 calibrates this on device. */
-        const val DEFAULT_ONSET_RMS_THRESHOLD: Float = 0.02f
+        /**
+         * ~0.012 RMS. Lowered from the original 0.02 after a Pixel 10 report that
+         * normal speech had to be raised to trigger onset; the room floor measured
+         * there was ~0.0005-0.0015, so this still clears it by ~10-20x. Provisional;
+         * M25 calibrates it (`docs/decisions.md` §2.3, R-0045).
+         */
+        const val DEFAULT_ONSET_RMS_THRESHOLD: Float = 0.012f
 
-        /** ~0.01 RMS hysteresis floor that keeps an active turn open through soft frames. */
-        const val DEFAULT_HANGOVER_RMS_THRESHOLD: Float = 0.01f
+        /**
+         * ~0.03 RMS, above the residual of the assistant's own audio through the
+         * microphone (measured mean ~0.005 / p95 ~0.010 / peak ~0.02 with AEC on).
+         */
+        const val DEFAULT_PLAYBACK_ONSET_RMS_THRESHOLD: Float = 0.03f
+
+        /** ~0.006 RMS hysteresis floor that keeps an active turn open through soft frames. */
+        const val DEFAULT_HANGOVER_RMS_THRESHOLD: Float = 0.006f
 
         /** 0.5 is permissive; energy is the primary gate and this rejects clearly hissy frames. */
         const val DEFAULT_MAX_ZERO_CROSSING_RATE: Float = 0.5f

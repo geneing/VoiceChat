@@ -41,12 +41,14 @@ class EnergyVoiceActivityDetector(
     route: AudioRouteType? = null,
     traceId: TraceId? = null,
     turnId: TurnId? = null,
+    /** Whether assistant playback is audible; raises the onset bar while true. */
+    private val playbackActive: () -> Boolean = { false },
 ) : VoiceActivityDetector {
     private val diagnostics = TurnDetectionDiagnostics(sink, clock, route, traceId, turnId)
 
     override fun observe(audio: Flow<AudioFrame>): Flow<VadEvent> =
         flow {
-            val machine = VadStateMachine(config)
+            val machine = VadStateMachine(config, playbackActive)
             var failure: VoiceAgentError? = null
 
             audio

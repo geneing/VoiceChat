@@ -37,6 +37,7 @@ object CaptureTurnDetection {
         clock: MonotonicClock = SystemMonotonicClock,
         traceId: TraceId? = null,
         turnId: TurnId? = null,
+        playbackActive: () -> Boolean = { false },
     ): VoiceActivityDetector =
         EnergyVoiceActivityDetector(
             config = configFor(route),
@@ -45,6 +46,7 @@ object CaptureTurnDetection {
             route = route?.type,
             traceId = traceId,
             turnId = turnId,
+            playbackActive = playbackActive,
         )
 
     /**
@@ -52,6 +54,8 @@ object CaptureTurnDetection {
      *
      * [semanticDetector] is the M10 extension point; leave it `null` for the
      * VAD-only bounded endpoint that must always work without Smart Turn.
+     * [playbackActive] raises the onset bar while the assistant is audible, so its
+     * own residual audio cannot start a turn.
      */
     fun endpointPolicy(
         route: AudioRoute? = null,
@@ -60,10 +64,12 @@ object CaptureTurnDetection {
         clock: MonotonicClock = SystemMonotonicClock,
         traceId: TraceId? = null,
         turnId: TurnId? = null,
+        playbackActive: () -> Boolean = { false },
     ): BoundedTurnEndpointPolicy =
         BoundedTurnEndpointPolicy(
             config = configFor(route),
             semanticDetector = semanticDetector,
+            playbackActive = playbackActive,
             sink = diagnostics,
             clock = clock,
             route = route?.type,
