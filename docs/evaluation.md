@@ -94,6 +94,30 @@ outcome with no latency sample, so an unmeasured stage is absent rather than zer
   A device with no embedded voice is skipped, never measured against a network
   voice.
 
+### The Kokoro TTS stage (M28)
+
+The distilled-Kokoro engine splits the same question into two measurable halves,
+so a regression is attributable rather than just visible. `KokoroTtsStageHarness`
+drives the real phonemizer and the real ONNX graph — no audio device — and
+records three stages from one instant (the start of the text):
+
+- `tts_phonemize` — text → phoneme chunks planned;
+- `tts_first_pcm` — text → the first synthesized piece is in memory. This is
+  **the synthesis side of time-to-first-sound**: everything that must happen
+  before the audio sink can be handed its first buffer;
+- `tts_synthesis_complete` — text → every piece is in memory, with the
+  synthesized audio duration alongside it so the run reports a realtime factor
+  (audio seconds per synthesis second).
+
+`tts_first_audible` from `VoiceTtsHarness` remains the perceived number, measured
+through real playback; the gap between it and `tts_first_pcm` is the audio
+device's own start cost. Both run in one opt-in pass,
+`KokoroTtsHarnessInstrumentedTest` (`-e kokoroHarnessRunId`), staged by
+`scripts/run-kokoro-tts-latency.ps1`, and both use the same fixed texts so the
+rows are comparable. A run with no installed voice is skipped, never downloaded
+mid-measurement. The host aggregation is proven by `KokoroTtsStageHarnessTest`
+with a deterministic clock, which is not a device claim.
+
 ## Endpoint sweep
 
 `EndpointSweep` runs the production bounded policy over each labeled case for
@@ -156,6 +180,14 @@ first-audio time still needs the manual route/echo checks (R-0254).
 | metric | n | p50 ms | p90 ms | p95 ms | max ms |
 | --- | --- | --- | --- | --- | --- |
 | *(speech end → first text / barge-in rows: no run recorded — R-0043, R-0047)* | | | | | |
+
+**Kokoro TTS stage** — `scripts/run-kokoro-tts-latency.ps1`, no run recorded yet
+(R-0264). The table is the exact shape the run fills in; the four metrics come
+from one pass, so a row is left out rather than guessed:
+
+| metric | n | p50 ms | p90 ms | p95 ms | max ms |
+| --- | --- | --- | --- | --- | --- |
+| *(tts_phonemize / tts_first_pcm / tts_synthesis_complete / tts_first_audible — no run recorded — R-0264)* | | | | | |
 
 ### Endpoint sweep (Pixel 10)
 
