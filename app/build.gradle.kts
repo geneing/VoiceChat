@@ -72,6 +72,16 @@ android {
             isIncludeAndroidResources = true
         }
     }
+
+    // The M28 Kokoro phoneme data ships as assets: Kokoro's `vocab.json` plus
+    // Misaki's English lexicon, which is committed gzipped (~1.4 MB) because it
+    // is 6 MB of JSON. A `.gz` asset must not be compressed a second time by the
+    // packager, so it stays byte-identical to what
+    // scripts/fetch-kokoro-phoneme-data.sh produced and the phonemizer can
+    // inflate it with GZIPInputStream.
+    androidResources {
+        noCompress += "gz"
+    }
 }
 
 // The pinned ONNX Runtime native libraries, extracted from the

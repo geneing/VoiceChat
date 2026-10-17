@@ -190,6 +190,56 @@ M00:
   the architecture already requires. Barge-in onset stays on the fast acoustic
   path, never on Smart Turn.
 
+### 2.4 Distilled Kokoro TTS engine (`dev/TTS_kokoro`)
+
+**Decision: the app's speech path is the distilled "Teacher in the Loop"
+Kokoro-82M student (`MithrilMan/teacher-in-the-loop`), run on-device through ONNX
+Runtime. The platform `android.speech.tts` engine stays in the tree
+(`AndroidTtsEngine`, §2.2) but is no longer what the voice loop speaks through.**
+
+The platform engine was the M00 choice because no on-device neural TTS was
+available: there is no AICore/ML Kit TTS API. A published, permissively licensed,
+small enough to ship-as-a-download neural voice changes that: the student is
+8.07M parameters, 9.17 MB as an int8 graph, one graph per voice from phoneme ids
+to 24 kHz audio, and the publisher measures it at 24-26x real time on one CPU
+thread (model card, accessed 2026-10-17). That is the first option that can both
+sound like a modern TTS voice and stay on-device, which `AGENTS.md` requires.
+
+Verified facts, all from the pinned revision
+`MithrilMan/teacher-in-the-loop@115a6c0469632a84fbcc6c8ed0ad7b1e06154b92`
+(`SHA256SUMS` + model card + `export-validation.json`, accessed 2026-10-17):
+
+| Decision | Value | Basis |
+| --- | --- | --- |
+| Engine | ONNX Runtime (Android) CPU execution provider | Same runtime the M10 Smart Turn artifact is allow-listed on (§3.1); the graph is exported for it and the publisher ships an int8 CPU variant. |
+| Artifact | `af_heart/model_int8.onnx`, 9,168,506 bytes, SHA-256 `f3daed94…` | `SHA256SUMS` of the pinned revision; downloaded app-privately, never packaged (R-0262). |
+| Graph contract | `input_ids` int64 `[1,T]`, `speed` float32 `[1]` → `waveform` float32 `[1,N]` at 24 kHz | Model card "ONNX contract"; re-measured by `scripts/kokoro-onnx-contract.py`. |
+| Phonemes | Kokoro-82M's `vocab.json` (1,147 bytes, SHA-256 `c985ed32…`), padding id `0` at both ends, at most 510 phonemes per call | Publisher's `titl/phonemes.py`; the text side has 512 positions, two of which are padding. |
+| English G2P | A Kotlin port of Misaki 0.9.4's English pipeline, with Misaki's US gold+silver lexicon | This is what Kokoro's own pipeline and the publisher's `Phonemizer("en")` use; the port is `tts/kokoro/phonemes/`. |
+| Lexicon | Misaki's `us_gold.json` + `us_silver.json`, committed **gzipped** as app assets (~1.4 MB) | Apache-2.0 (misaki 0.9.4 `LICENSE`); fetched by `scripts/fetch-kokoro-phoneme-data.sh`. It is data the phonemizer needs synchronously and offline, not a model, so it is bundled rather than downloaded. |
+| Voice scope | English (`af_heart`) only | The app offers `en-*` and `es-*` speech locales (`OnDeviceVoiceSelector`); the other two published students are Italian and need an eSpeak-NG-derived phonemization this app does not have (R-0261). |
+
+Deliberate limits of the port, recorded rather than hidden:
+
+- **No spaCy POS tagger.** Misaki selects tag-specific lexicon entries with
+  `en_core_web_sm`'s tagger. Shipping a neural tagger for this is not
+  proportionate, so the port selects the `DEFAULT` entry and replaces the
+  handful of tag-dependent special cases with documented heuristics. Heteronyms
+  whose pronunciation is genuinely tag-dependent can therefore differ from the
+  Python reference.
+- **No eSpeak NG, no BART fallback.** The Python falls back to eSpeak NG
+  (GPL-3.0) and, without it, a ~200 MB BART model, for out-of-vocabulary words.
+  Neither is acceptable here (license and size), so the port uses a
+  deterministic rule-based grapheme→phoneme fallback and measures how far it
+  agrees with the reference (`docs/tts.md`).
+- **The excitation is random.** Two runs of the same input are not
+  bit-identical, by design; tests assert shape, range, and non-silence rather
+  than exact samples.
+
+Fallback/unavailable behavior follows §2.2 unchanged: a missing or corrupt graph
+is a typed, visible "install the voice model" state, never a silent switch to
+another voice or a fabricated success.
+
 ## 3. Model runtime and model allow-list
 
 ### 3.1 Runtime allow-list

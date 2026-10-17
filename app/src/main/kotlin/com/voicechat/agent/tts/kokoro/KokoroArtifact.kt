@@ -106,7 +106,7 @@ object KokoroArtifact {
      * [com.voicechat.agent.tts.OnDeviceVoiceSelector.SUPPORTED_LANGUAGE_TAGS],
      * which are English and Spanish, and the other two published students are
      * Italian (`if_sara`, `im_nicola`) with an eSpeak-NG-derived phonemization
-     * this app does not have (R-0273). Adding one is a new entry here plus a
+     * this app does not have (R-0261). Adding one is a new entry here plus a
      * language phonemizer — no engine change.
      */
     val AF_HEART: KokoroVoiceArtifact =
