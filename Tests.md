@@ -75,7 +75,7 @@ they do not fake availability, and none requires a human speaker.
 | `audio.VadCaptureInstrumentedTest` | Live M07 capture feeds the real M09 `EnergyVoiceActivityDetector` and `BoundedTurnEndpointPolicy`: a bounded window of real audio produces typed events without failing, and the policy emits at least one endpoint with a non-negative offset. It is a runs-and-does-not-crash smoke check, not a quality measurement. |
 | `stt.MlKitSttInstrumentedTest` | Both catalog modes return a typed `SttAvailability` without throwing; the adapter reports the single engine ID; and, when the engine is **not** ready, the adapter refuses to run and emits a typed `STT_MODEL_NOT_READY`/`STT_UNAVAILABLE` failure. When the engine is ready this case is skipped (`Assume`), never faked. |
 | `tts.AndroidTtsInstrumentedTest` | The platform TTS engine initializes and enumerates installed voices and installed engines; a "ready" voice must be one `getVoices()` reported and not network-required (network voices are never selectable); immediate `stop()` during playback ends the utterance with a terminal event without hanging (skipped with `Assume` when no embedded voice exists); the `OnDeviceTts` contract adapter rejects empty input and closes. Availability is recorded, never faked. |
-| `eval.tts.VoiceTtsHarnessInstrumentedTest` | Opt-in (`-e ttsHarnessRunId`): speaks the fixed `VoiceTtsHarnessCases` texts through the real platform engine and the selected embedded voice and records `tts_first_audible` / `tts_completion` to app-private cache. **Not run** — no Pixel 10 attached; skipped (`Assume`) when no embedded voice exists. |
+| `eval.tts.VoiceTtsHarnessInstrumentedTest` | Opt-in (`-e ttsHarnessRunId`): speaks the fixed `VoiceTtsHarnessCases` texts through the real platform engine and the configured embedded voice and records `tts_first_audible` / `tts_completion` to app-private cache. Skipped (`Assume`) when no embedded voice exists. |
 | `ui.ConversationAppInstrumentedTest` | **Removed.** The app-launch/Compose smoke check is not automatable on Android 17 with `androidx.test.ext:junit` 1.3.0 (Espresso `InputManager.getInstance()` reflection fails). The Compose surface is covered by Robolectric JVM tests; launch is a manual step. |
 | `credentials.AndroidKeystoreCredentialStoreInstrumentedTest` | The real AndroidKeyStore-backed store stores/replaces/removes a credential against the device KeyStore; a second store instance reads the persisted value (restart proxy); the app-private preferences file holds only ciphertext, never the plaintext secret. |
 | `orchestration.TurnOrchestrationInstrumentedTest` | Runs the real M21 `TurnOrchestrator`/`TurnStateMachine` on device with an inline fake provider and an in-memory repository: one text turn completes and persists a truthful assistant turn. No network, credential, microphone, or real TTS; a structural smoke check, not a provider/voice measurement. |
@@ -192,6 +192,24 @@ What to record for every run:
 | Immediate stop | Start a long phrase, then call `stop()` mid-playback (the instrumented test does this unattended). | Playback stops promptly; the `speak` flow ends with an `Interrupted` terminal (or `Completed` if it had already finished); never hangs. |
 | Failed input | Where reproducible, force an engine error (for example unavailable engine). | A typed `TTS_SYNTHESIS_FAILED`/`TTS_PLAYBACK_FAILED` event; no silent success. |
 | On-device confirmation | After voices are installed, repeat playback in airplane mode. | Playback still works, confirming on-device synthesis with no network voice. |
+
+### TTS-stage harness run (Pixel 10, 2026-10-17)
+
+`.\\scripts\\run-tts-harness-device.ps1 -Repeats 3` on the Pixel 10 (`frankel`,
+Android 17 / API 37, build `CP3A.261005.005`, debug). Conditions: locale `en-US`,
+engine `com.google.android.tts`, voice `en-us-x-tpf-local` (quality 400,
+latency 200) chosen by the most-natural policy (`selectedVoice=most-natural`),
+built-in speaker (assumed). All 9 attempts delivered.
+
+| metric | n | p50 ms | p90 ms | max ms |
+| --- | --- | --- | --- | --- |
+| tts_first_audible | 9 | 23 | 305 | 305 |
+| tts_completion | 9 | 4958 | 6055 | 6055 |
+
+The 305 ms first-audible sample is the first `speak()` after engine
+initialization; every later attempt was 15-26 ms. `tts_completion` is full
+playback time, not a start delay. This is one device, one voice, one moment; the
+route/echo and audible-naturalness rows above are still manual and unrun.
 
 Genuinely manual and **not** automated: audible first-audible timing, speaker /
 wired / Bluetooth routing, focus interaction, real voice quality, and the

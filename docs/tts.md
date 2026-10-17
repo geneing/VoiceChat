@@ -14,9 +14,11 @@ and [validation.md](./validation.md).
 > default voice is the most natural embedded one (highest platform quality). A
 > TTS-stage harness (`eval/tts/`) measures time-to-first-audible and full
 > playback on the JVM with a deterministic fake and on the device with the real
-> engine. The platform engine has **not** been run from this repository on a
-> device; that is the manual test in [Tests.md](../Tests.md) (M11). No
-> first-audible or stop-latency number is claimed.
+> engine. The device harness **has been run** on the Pixel 10 (2026-10-17):
+> `tts_first_audible` p50 23 ms (cold 305 ms), `tts_completion` p50 4958 ms for
+> 51-94 characters, voice `en-us-x-tpf-local`. Route/echo behavior, audio-focus
+> interaction, immediate-stop latency, and audible naturalness remain manual and
+> unrun ([Tests.md](../Tests.md) M11, R-0057, R-0254, R-0258).
 
 ## Engine and decision
 
@@ -162,11 +164,12 @@ The TTS stage is measured in `app/src/main/kotlin/com/voicechat/agent/eval/tts/`
 
 `VoiceTtsHarnessTest` runs it on the JVM with a deterministic clock-advancing
 `TextToSpeech`, proving the aggregation and failure handling. The device run is
-`VoiceTtsHarnessInstrumentedTest` (opt-in via `-e ttsHarnessRunId`), which speaks
-through the real platform engine and selected embedded voice; it is **not run**
-for this change (no Pixel 10 attached). `scripts/run-tts-harness-device.ps1`
-stages, runs, and copies the reports back. See
-[evaluation.md](./evaluation.md#the-tts-stage-harness).
+`VoiceTtsHarnessInstrumentedTest` (opt-in via `-e ttsHarnessRunId`), which reads
+the persisted locale/engine/voice from the settings store, speaks through the
+real platform engine, and writes the reports. It **was run** on 2026-10-17 on the
+Pixel 10 (see the status note above and
+[evaluation.md](./evaluation.md#latency-pixel-10));
+`scripts/run-tts-harness-device.ps1` stages, runs, and copies the reports back.
 
 ## Automated tests
 
@@ -204,22 +207,27 @@ compiles on the host (`:app:assembleDebugAndroidTest`) and runs only on a device
 - the `OnDeviceTts` contract adapter rejects empty input and closes.
 
 `app/src/androidTest/.../eval/tts/VoiceTtsHarnessInstrumentedTest.kt` is the
-opt-in device harness and is compiled but **not run**.
+opt-in device harness; it was run on 2026-10-17 (see the status note above).
 
-## Manual Pixel 10 test (deferred)
+## Pixel 10 test
 
-The platform engine requires a real device, so the manual checks in
-[Tests.md](../Tests.md) (M11) were **not** executed for this milestone — no Pixel
-10 was attached — and no on-device result is claimed. Record device/build, OS,
-build variant, commit, installed voice list (`getVoices()` with the
-network-required flag), selected voice, output route, first-audible time,
-immediate-stop latency, and empty/failed-input behavior.
+The TTS-stage harness was run on a Pixel 10 on 2026-10-17
+(`.\\scripts\\run-tts-harness-device.ps1 -Repeats 3`): Android 17 / API 37,
+build `CP3A.261005.005`, `debug`, engine `com.google.android.tts`, voice
+`en-us-x-tpf-local` (quality 400, latency 200), locale `en-US`, built-in
+speaker. All 9 attempts delivered; `tts_first_audible` p50 23 ms (the first
+`speak()` after init 305 ms, later attempts 15-26 ms) and `tts_completion` p50
+4958 ms for 51-94 characters. The remaining manual checks in
+[Tests.md](../Tests.md) (M11) — route/headset/Bluetooth routing, focus
+interaction, immediate-stop latency, audible naturalness, and the airplane-mode
+proof — are **not** run; no claim is made for them.
 
 ## Known limitations and open risks
 
-- **No on-device validation yet (R-0057).** Voice enumeration, first-audible
-  latency, speaker/headset routing, focus changes, and immediate-stop latency are
-  unverified on hardware.
+- **On-device validation (R-0057, partial).** The TTS-stage harness now measures
+  voice enumeration and first-audible/playback time on the Pixel 10 (2026-10-17).
+  Speaker/headset/Bluetooth routing, focus changes, and immediate-stop latency
+  remain unverified on hardware.
 - **Interrupted-prefix precision (R-0058).** The confirmed audible prefix comes
   from `UtteranceProgressListener.onRangeStart`, which not every engine calls. If
   it is never called, an interrupted chunk reports an empty delivered prefix —
@@ -232,8 +240,9 @@ immediate-stop latency, and empty/failed-input behavior.
   and the final duck/pause policy are unvalidated until M24.
 - **Wiring.** Voice and speech-engine selection are M22 and the voice-loop
   integration is M24; both are implemented and wired through `AppContainer`, so
-  the persisted engine/voice drives the session's TTS engine. The device run is
-  still unmeasured (R-0057).
+  the persisted engine/voice drives the session's TTS engine. The harness
+  exercises that same persisted-configuration path on the Pixel 10; the full app
+  voice session (route, focus, barge-in stop) is still unmeasured (R-0057).
 - **Naturalness rank (R-0258).** "Most natural" is `Voice.getQuality()`, the only
   naturalness signal `android.speech.tts` exposes. It is coarse; on Android 15+
   the platform's own supertonic voices are reported with the same quality ranks,

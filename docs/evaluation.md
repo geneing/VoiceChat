@@ -9,7 +9,9 @@ matrix), because the two have very different evidence strength.
 STT measurements exist in [`voice-latency-results.md`](./voice-latency-results.md)
 for ML Kit replay attempts, Moonshine streaming, and sherpa-onnx Parakeet offline
 recognition; those rows are separate from this document's still-empty endpoint
-sweep and full voice-loop latency tables. The current LiteRT benchmark branch
+sweep and full voice-loop latency tables. The **TTS stage** now has a Pixel 10
+run (see [Latency](#latency-pixel-10)); the STT/LLM/end-to-end rows stay empty.
+The current LiteRT benchmark branch
 has no Pixel inference measurements yet. No performance budget is fixed.
 Smart Turn stays opt-in and default-off until the endpoint/device rows meet the
 acceptance criteria stated here (`docs/smart-turn.md`, R-0190, R-0192).
@@ -130,12 +132,30 @@ row out rather than guessing a value.
 
 ### Latency (Pixel 10)
 
-The `tts_first_audible` / `tts_completion` metrics (the TTS harness) belong in
-this table once a device run exists.
+No end-to-end voice-loop latency row exists yet; the STT/LLM/barge-in metrics
+remain unmeasured (R-0043, R-0047). The **TTS stage** has been measured on its
+own.
+
+**TTS stage** — `scripts/run-tts-harness-device.ps1`, 2026-10-17, Pixel 10
+(`frankel`), Android 17 / API 37, build `CP3A.261005.005`, engine
+`com.google.android.tts`, voice `en-us-x-tpf-local` (quality 400, latency 200),
+locale `en-US`, built-in speaker, 3 attempts per text (n=9). Every attempt
+delivered.
 
 | metric | n | p50 ms | p90 ms | p95 ms | max ms |
 | --- | --- | --- | --- | --- | --- |
-| *(no run recorded — R-0043, R-0047, R-0256)* | | | | | |
+| tts_first_audible | 9 | 23.0 | 305.0 | 305.0 | 305.0 |
+| tts_completion | 9 | 4958.0 | 6055.0 | 6055.0 | 6055.0 |
+
+The single 305 ms `tts_first_audible` sample is the first `speak()` after engine
+initialization (cold); every later attempt was 15-26 ms. `tts_completion` is the
+full playback time for the utterance (51-94 characters), not a start delay. This
+is one device, one voice, and one moment — not a p50/p95 claim, and the audible
+first-audio time still needs the manual route/echo checks (R-0254).
+
+| metric | n | p50 ms | p90 ms | p95 ms | max ms |
+| --- | --- | --- | --- | --- | --- |
+| *(speech end → first text / barge-in rows: no run recorded — R-0043, R-0047)* | | | | | |
 
 ### Endpoint sweep (Pixel 10)
 
