@@ -41,6 +41,9 @@ object MicrophoneAudioCapture {
             config = config,
             routeMonitor = AndroidAudioRouteMonitor(appContext),
             focusController = AndroidAudioFocusController(appContext),
+            // Attached per capture session; a device without an echo canceller reports
+            // that explicitly instead of pretending the mic is echo-free.
+            echoCanceller = PlatformEchoCanceller(),
             sourceLabel = audioSourceName(audioSource),
             diagnostics = diagnostics,
             clock = clock,

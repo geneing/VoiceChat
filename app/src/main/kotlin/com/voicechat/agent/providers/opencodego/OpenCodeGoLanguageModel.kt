@@ -41,18 +41,22 @@ import java.util.UUID
  * a guessed protocol.
  *
  * **Verified facts, sources, and the unverified list** are recorded, with the
- * access date, in `docs/opencode-go-adapter.md`. Reasoning controls are not
- * documented for Go, so the adapter declares **no** reasoning level: a request
- * that asks for one is refused by [LlmRequestValidator] before a request is built
- * (only `ReasoningLevel.NONE` is accepted, as everywhere). Usage is echoed only
- * when a family's protocol actually reports it; no usage is promised.
+ * access date, in `docs/opencode-go-adapter.md`. The live gateway was measured on
+ * 2026-10-16/17 (`docs/voice-llm-selection.md`): reasoning control is not
+ * documented but **is** accepted and honoured per model, so the adapter maps a
+ * requested level through [OpenCodeGoReasoning] and refuses a level the selected
+ * model was not measured to take, before anything is sent (R-0135). Usage is
+ * echoed when a family's protocol reports it, and all three families do.
  *
  * **Credential handling.** The adapter loads the M13 credential at request time
- * and places it only in the `Authorization` header, which [RemoteHttpRequest]
- * redacts on `toString`. No credential means `LLM_NOT_CONFIGURED`, never an
- * empty-key send. Go documents a client-identifying user agent and a stable
- * `x-opencode-session` conversation id; both are sent and neither carries a
- * credential.
+ * and places it only in the request headers, which [RemoteHttpRequest] redacts on
+ * `toString`. No credential means `LLM_NOT_CONFIGURED`, never an empty-key send.
+ * The two documented client headers are always sent and neither carries a
+ * credential: a client-identifying user agent, and a stable `x-opencode-session`
+ * conversation id the gateway **requires** (HTTP 400 `MissingSessionID` without
+ * it). Authentication is per family: Chat Completions and Responses take
+ * `Authorization: Bearer`, while Messages takes Anthropic's `x-api-key` plus
+ * `anthropic-version`, because the gateway rejects Bearer there.
  */
 class OpenCodeGoLanguageModel(
     private val credentialStore: CredentialStore,
@@ -72,8 +76,10 @@ class OpenCodeGoLanguageModel(
         get() = provider.providerId
 
     /**
-     * The verified provider-level capability. Go's documented reasoning control
-     * is empty and its usage reporting is unverified, so neither is claimed.
+     * The provider-level capability union: streaming, usage reporting, and every
+     * reasoning level any measured Go model accepts. A specific model's own set is
+     * narrower and is what [OpenCodeGoReasoning.supports] enforces per request
+     * (the M22 UI intersects the two through `LlmCapabilityReconciler`).
      */
     override val capabilities: LlmCapabilities
         get() = provider.toLlmCapabilities()
@@ -83,6 +89,23 @@ class OpenCodeGoLanguageModel(
             val validation = LlmRequestValidator.validate(request, capabilities)
             if (validation is LlmRequestValidation.Unsupported) {
                 emit(LlmStreamEvent.Failed(error = validation.error, partialText = ""))
+                return@flow
+            }
+
+            // Per-model reasoning support: the provider-level union above cannot
+            // express that one Go model rejects the field and another accepts it.
+            val reasoning = request.reasoning
+            if (reasoning != null && !OpenCodeGoReasoning.supports(request.model.modelId, reasoning)) {
+                emit(
+                    LlmStreamEvent.Failed(
+                        error =
+                            VoiceAgentError(
+                                ErrorCode.LLM_INVALID_REQUEST,
+                                "the selected model has no verified reasoning control for that level",
+                            ),
+                        partialText = "",
+                    ),
+                )
                 return@flow
             }
 
@@ -120,7 +143,7 @@ class OpenCodeGoLanguageModel(
                 RemoteHttpRequest(
                     method = "POST",
                     url = destination.url(family.path),
-                    headers = headers(credential),
+                    headers = headers(family, credential),
                     body = encode(family, request),
                 )
 
@@ -227,14 +250,32 @@ class OpenCodeGoLanguageModel(
         )
     }
 
-    private fun headers(credential: Credential): List<RemoteHttpHeader> =
-        listOf(
-            RemoteHttpHeader(name = "Authorization", value = "Bearer ${credential.secret}"),
-            RemoteHttpHeader(name = "Content-Type", value = "application/json"),
-            RemoteHttpHeader(name = "Accept", value = "text/event-stream"),
-            RemoteHttpHeader(name = "User-Agent", value = CLIENT_USER_AGENT),
-            RemoteHttpHeader(name = SESSION_HEADER, value = sessionId),
-        )
+    /**
+     * The request headers for one protocol [family].
+     *
+     * Go's three families do not share one auth scheme. Chat Completions and
+     * Responses authenticate with `Authorization: Bearer`; the Messages family is
+     * Anthropic-shaped and requires `x-api-key` (plus `anthropic-version`), and
+     * answers HTTP 401 `"Go requires a credential"` when sent a Bearer token.
+     * `RemoteHttpHeader` values are redacted by `RemoteHttpRequest.toString`, so
+     * the key never reaches a log or a trace.
+     */
+    private fun headers(
+        family: OpenCodeGoFamily,
+        credential: Credential,
+    ): List<RemoteHttpHeader> =
+        buildList {
+            if (family == OpenCodeGoFamily.MESSAGES) {
+                add(RemoteHttpHeader(name = "x-api-key", value = credential.secret))
+                add(RemoteHttpHeader(name = ANTHROPIC_VERSION_HEADER, value = ANTHROPIC_VERSION))
+            } else {
+                add(RemoteHttpHeader(name = "Authorization", value = "Bearer ${credential.secret}"))
+            }
+            add(RemoteHttpHeader(name = "Content-Type", value = "application/json"))
+            add(RemoteHttpHeader(name = "Accept", value = "text/event-stream"))
+            add(RemoteHttpHeader(name = "User-Agent", value = CLIENT_USER_AGENT))
+            add(RemoteHttpHeader(name = SESSION_HEADER, value = sessionId))
+        }
 
     companion object {
         /**
@@ -245,6 +286,12 @@ class OpenCodeGoLanguageModel(
 
         /** The documented stable per-conversation session header. */
         const val SESSION_HEADER: String = "x-opencode-session"
+
+        /** The Anthropic API-version header the Messages family requires. */
+        const val ANTHROPIC_VERSION_HEADER: String = "anthropic-version"
+
+        /** The Anthropic API version Go's Messages family was measured to accept. */
+        const val ANTHROPIC_VERSION: String = "2023-06-01"
 
         /** A stable id for one adapter instance when the caller does not supply one. */
         fun defaultSessionId(): String = "voicechat-${UUID.randomUUID()}"

@@ -5,7 +5,7 @@ import com.voicechat.agent.domain.Transcript
 import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.domain.VoiceAgentError
 
-/** Progress sink for one STT-only voice session. */
+/** Progress sink for one voice session. */
 interface VoiceSessionListener {
     /** The session-level state changed. */
     fun onSessionState(state: VoiceSessionState) = Unit
@@ -34,13 +34,25 @@ interface VoiceSessionListener {
         transcript: Transcript,
     ) = Unit
 
+    /** The assistant text generated so far, for the live dialog. */
+    fun onLiveAssistantText(text: String) = Unit
+
+    /**
+     * An assistant reply ended: spoken text (possibly a prefix, after a barge-in),
+     * or silence when the turn failed before anything was heard.
+     */
+    fun onAssistantReplySpoken(
+        generatedText: String,
+        deliveredText: String,
+    ) = Unit
+
     /** The persisted transcript history changed. */
     fun onConversationChanged(conversation: Conversation) = Unit
 
     /** A logical turn ended without usable speech. */
     fun onNoSpeech() = Unit
 
-    /** A typed capture, recognition, or persistence error surfaced. */
+    /** A typed capture, recognition, persistence, or provider error surfaced. */
     fun onError(error: VoiceAgentError) = Unit
 
     /** Records nothing. */

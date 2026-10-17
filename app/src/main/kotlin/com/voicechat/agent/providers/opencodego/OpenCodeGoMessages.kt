@@ -6,6 +6,7 @@ import com.voicechat.agent.contracts.LlmRole
 import com.voicechat.agent.contracts.LlmUsage
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.ModelId
+import com.voicechat.agent.domain.ReasoningLevel
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.remote.JsonNode
 import com.voicechat.agent.remote.RemoteJson
@@ -51,6 +52,38 @@ object OpenCodeGoMessages {
                 "stream" to RemoteJson.bool(true),
             )
         if (system.isNotEmpty()) fields["system"] = RemoteJson.str(system)
+        // Anthropic Messages exposes adaptive thinking plus an effort hint; a
+        // non-adaptive `thinking.type=enabled` is refused by this gateway, and
+        // only a measured model is sent the fields (R-0135). `none` omits them
+        // here: with no thinking block the model answers without extra thinking.
+        val level = request.reasoning
+        val support = OpenCodeGoReasoning.support(request.model.modelId)
+        if (level != null && support != null) {
+            when (support.style) {
+                OpenCodeGoReasoningStyle.MESSAGES_ADAPTIVE_EFFORT -> {
+                    if (support.sendsFieldFor(level)) {
+                        fields["thinking"] = RemoteJson.obj("type" to RemoteJson.str("adaptive"))
+                        fields["output_config"] =
+                            RemoteJson.obj("effort" to RemoteJson.str(OpenCodeGoReasoning.effortWire(level)))
+                    }
+                }
+
+                // A thinking-only model whose one verified control is the off
+                // value: the field is sent only to disable, never with an effort.
+                OpenCodeGoReasoningStyle.MESSAGES_THINKING_DISABLED -> {
+                    if (support.sendsFieldFor(level)) {
+                        fields["thinking"] = RemoteJson.obj("type" to RemoteJson.str("disabled"))
+                    }
+                }
+
+                OpenCodeGoReasoningStyle.NONE,
+                OpenCodeGoReasoningStyle.RESPONSES_EFFORT,
+                OpenCodeGoReasoningStyle.CHAT_REASONING_EFFORT,
+                -> {
+                    Unit
+                }
+            }
+        }
         return RemoteJson.stringify(RemoteJson.obj(fields))
     }
 

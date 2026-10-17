@@ -68,6 +68,13 @@ object VoiceSessionAssembly {
          */
         selectionProvider: suspend () -> VoiceRuntimeSelection = { VoiceRuntimeSelection(locale = locale) },
         /**
+         * Resolves the optional assistant for one session: the LLM + TTS reply
+         * path. Called once per session with the open conversation; `null` keeps
+         * the STT-only loop. A provider that cannot build an assistant must return
+         * `null`, so the loop never claims a reply it cannot generate.
+         */
+        assistantProvider: (suspend (Conversation) -> VoiceAssistant?)? = null,
+        /**
          * Overrides the microphone capture source for one session. Production
          * leaves this `null` and capture comes from [MicrophoneAudioCapture]; the
          * debug build injects a file-backed source so the whole voice loop can be
@@ -85,6 +92,7 @@ object VoiceSessionAssembly {
                 downstream = listener,
                 turnCompletion = turnCompletion,
                 selectionProvider = selectionProvider,
+                assistantProvider = assistantProvider,
                 audioInputFactory = audioInputFactory,
             )
         }
@@ -103,6 +111,7 @@ private class PlatformVoiceSession(
     private val downstream: VoiceSessionListener,
     private val turnCompletion: SmartTurnDetectorProvider,
     private val selectionProvider: suspend () -> VoiceRuntimeSelection,
+    private val assistantProvider: (suspend (Conversation) -> VoiceAssistant?)? = null,
     private val audioInputFactory: (() -> AudioInput)? = null,
 ) : VoiceSessionController,
     VoiceSessionListener {
@@ -151,6 +160,7 @@ private class PlatformVoiceSession(
         // Smart Turn only corroborates the VAD candidate pause for engines that do
         // not provide their own endpoint hint.
         val semanticDetector = resolveSemanticDetector()
+        val assistant = resolveAssistant(conversation)
         val session =
             VoiceSessionCoordinator(
                 audioInput = audioInput,
@@ -162,6 +172,7 @@ private class PlatformVoiceSession(
                         clock = clock,
                         semanticDetector = semanticDetector,
                     ),
+                assistant = assistant,
                 listener = this,
                 diagnostics = diagnostics,
                 clock = clock,
@@ -173,6 +184,15 @@ private class PlatformVoiceSession(
             coordinator = null
             try {
                 semanticDetector?.close()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (ignored: Throwable) {
+                // Release best-effort; the session already ended.
+            }
+            try {
+                // The assistant owns its TTS engine; the shared language-model
+                // adapter is app-scoped and is never closed here.
+                assistant?.close()
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (ignored: Throwable) {
@@ -228,6 +248,27 @@ private class PlatformVoiceSession(
             null
         }
 
+    /**
+     * Resolves the optional assistant for this session.
+     *
+     * A failure is logged and the loop runs without an assistant (STT-only)
+     * rather than starting a session that claims replies it cannot produce. The
+     * dialog stays usable: transcripts are still captured and saved.
+     */
+    private suspend fun resolveAssistant(conversation: Conversation): VoiceAssistant? {
+        val provider = assistantProvider ?: return null
+        return try {
+            provider(conversation)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Throwable) {
+            AppLog.voice(LogLevel.WARN) {
+                "voice: assistant unavailable; continuing with capture only (${failure.javaClass.simpleName})"
+            }
+            null
+        }
+    }
+
     // region VoiceSessionListener passthrough (coordinator -> UI listener)
 
     override fun onSessionState(state: VoiceSessionState) {
@@ -243,6 +284,13 @@ private class PlatformVoiceSession(
     ) = downstream.onProvisionalTranscript(turnId, text)
 
     override fun onSttEndOfSpeech(turnId: TurnId) = downstream.onSttEndOfSpeech(turnId)
+
+    override fun onLiveAssistantText(text: String) = downstream.onLiveAssistantText(text)
+
+    override fun onAssistantReplySpoken(
+        generatedText: String,
+        deliveredText: String,
+    ) = downstream.onAssistantReplySpoken(generatedText, deliveredText)
 
     override fun onUtteranceCommitted(
         turnId: TurnId,

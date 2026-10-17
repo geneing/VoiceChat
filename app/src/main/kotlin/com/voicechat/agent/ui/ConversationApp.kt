@@ -103,6 +103,7 @@ import com.voicechat.agent.domain.UserTurn
 import com.voicechat.agent.providers.ProviderDisclosure
 import com.voicechat.agent.ui.theme.OrbIdle
 import com.voicechat.agent.ui.theme.OrbListening
+import com.voicechat.agent.ui.theme.OrbSpeaking
 import com.voicechat.agent.ui.theme.OrbUnavailable
 import com.voicechat.agent.ui.theme.VoiceAgentTheme
 import com.voicechat.agent.voice.VoiceSessionState
@@ -797,6 +798,7 @@ private fun VoiceStatusRow(
 private fun VoiceSessionState.voiceStatusRes(): Int =
     when (this) {
         VoiceSessionState.LISTENING -> R.string.voice_listening
+        VoiceSessionState.SPEAKING -> R.string.voice_speaking
         VoiceSessionState.FAILED -> R.string.voice_failed
         VoiceSessionState.IDLE, VoiceSessionState.STOPPED -> R.string.voice_ready
     }
@@ -882,6 +884,7 @@ private fun orbColors(state: VoiceSessionState): Pair<Color, Color> =
     when (state) {
         VoiceSessionState.IDLE, VoiceSessionState.STOPPED -> OrbIdle
         VoiceSessionState.LISTENING -> OrbListening
+        VoiceSessionState.SPEAKING -> OrbSpeaking
         VoiceSessionState.FAILED -> OrbUnavailable
     }
 

@@ -42,17 +42,33 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 /**
- * STT-only voice session: microphone capture → VAD/onset → streaming STT →
- * bounded VAD/Smart Turn endpointing → transcript persistence.
+ * The voice conversation loop: microphone capture → VAD/onset → streaming STT →
+ * bounded VAD/Smart Turn endpointing → transcript persistence → assistant reply
+ * (LLM + TTS) → capture continues.
  *
- * This coordinator deliberately has no language-model, provider, or TTS
- * dependency. A finalized transcript is saved as a user turn and sent to the
- * listener; no assistant turn is generated. TTS remains implemented elsewhere
- * but is not initialized or connected to this session.
+ * The assistant is an optional seam ([assistant]). With `null` the coordinator is
+ * the STT-only loop of M24: a finalized transcript is saved as a user turn and no
+ * assistant turn is generated. With a [VoiceAssistant] wired, the assistant owns
+ * both turns through M21 orchestration, and this loop owns the conversational
+ * sequencing the guidelines for this milestone require:
  *
- * The semantic endpoint detector is evaluated only by [VoiceTurnDetector] after
- * a VAD-confirmed pause. Speech onset stays on the fast path and never waits for
- * Smart Turn inference. The recognizer's own end-of-speech signal
+ * 1. **Capture never stops** while the assistant speaks; VAD and STT run against
+ *    the same incoming audio, so the next turn starts being recognized while the
+ *    reply is still being delivered.
+ * 2. **VAD onset interrupts immediately.** [VoiceAssistant.interrupt] is called
+ *    from the detection path at the moment speech activity starts — before any
+ *    transcript exists and before Smart Turn runs — so playback stops and the
+ *    in-flight request is cancelled without waiting for a recognition result.
+ *    Orchestration records how much audio was actually audible, and the
+ *    interrupted assistant turn is persisted with that delivered prefix.
+ * 3. **STT partials keep updating the transcript** for the new turn; the
+ *    recognizer's own end-of-speech signal stays corroborating only.
+ * 4. **Smart Turn runs after a VAD-confirmed pause**, never on every frame and
+ *    never as the barge-in detector, and the bounded silence cap remains the
+ *    fallback when STT or the detector stalls.
+ *
+ * The semantic endpoint detector is evaluated only by [VoiceTurnDetector] after a
+ * VAD-confirmed pause. The recognizer's own end-of-speech signal
  * ([SttEvent.EndOfSpeech]) is surfaced for timing but never ends a turn: the
  * bounded VAD/Smart Turn endpoint stays the authority, so an early engine signal
  * cannot truncate a still-speaking user.
@@ -62,6 +78,12 @@ class VoiceSessionCoordinator(
     private val repository: ConversationRepository,
     private val speechToText: SpeechToText,
     private val turnDetector: VoiceTurnDetector,
+    /**
+     * The assistant reply path (LLM + TTS), or `null` for the STT-only loop. A
+     * wired assistant owns persisting the user and assistant turns; with `null`
+     * this coordinator persists the transcript itself.
+     */
+    private val assistant: VoiceAssistant? = null,
     private val listener: VoiceSessionListener = VoiceSessionListener.NONE,
     private val diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
     private val clock: MonotonicClock = SystemMonotonicClock,
@@ -98,6 +120,18 @@ class VoiceSessionCoordinator(
     @Volatile
     private var finalizationJob: Job? = null
 
+    /** The in-flight assistant reply, if any; joined before the next commit. */
+    @Volatile
+    private var assistantJob: Job? = null
+
+    /** True while an assistant reply is being generated or spoken. */
+    @Volatile
+    private var assistantActive: Boolean = false
+
+    /** Monotonic time of the speech onset that interrupted the assistant, if any. */
+    @Volatile
+    private var assistantOnsetAtNanos: Long? = null
+
     @Volatile
     private var stopped = false
 
@@ -132,6 +166,12 @@ class VoiceSessionCoordinator(
                     turn.job?.cancel()
                 }
                 activeListening = null
+                // Stop any audible reply before waiting for the pending turn, so
+                // the interrupted assistant turn is persisted with exactly what the
+                // user heard.
+                if (assistantActive) {
+                    assistant?.interrupt(clock.nanoTime())
+                }
                 // The endpoint policy may emit CAPTURE_ENDED as its input closes.
                 // Allow that final STT completion its bounded window before teardown.
                 finalizationJob?.let { job ->
@@ -141,6 +181,8 @@ class VoiceSessionCoordinator(
                 }
                 finalizationJob?.cancel()
                 finalizationJob = null
+                assistantActive = false
+                assistantOnsetAtNanos = null
                 sessionScope = null
                 setState(if (stopped) VoiceSessionState.STOPPED else VoiceSessionState.IDLE)
             }
@@ -149,6 +191,12 @@ class VoiceSessionCoordinator(
 
     override fun stop() {
         stopped = true
+        // Stop playback before cancelling the turn: the assistant's interrupted
+        // turn is still persisted (M21 does that under NonCancellable) and must
+        // record only the audio that was actually delivered.
+        if (assistantActive) {
+            assistant?.interrupt(clock.nanoTime())
+        }
         detectorJob?.cancel()
         detectInput?.close()
         captureJob?.cancel()
@@ -186,6 +234,11 @@ class VoiceSessionCoordinator(
             is TurnDetectionEvent.Activity -> {
                 when (event.activity) {
                     SpeechActivity.SPEECH_STARTED, SpeechActivity.SPEECH_RESUMED -> {
+                        // Barge-in first: the assistant stops now, before any
+                        // transcript or Smart Turn decision exists. The same onset
+                        // then starts the next turn's recognition below, on the
+                        // audio that is already being captured.
+                        interruptAssistantAtOnset()
                         beginListeningIfNeeded(event.atOffsetMillis)
                     }
 
@@ -201,6 +254,36 @@ class VoiceSessionCoordinator(
 
     private fun beginListeningIfNeeded(atOffsetMillis: Long) {
         if (activeListening == null) beginListening(atOffsetMillis)
+    }
+
+    /**
+     * Stops the assistant at VAD speech onset and records the onset→stop edge.
+     *
+     * This is the barge-in fast path described in the loop's documentation: it
+     * never waits for a transcript, a recognizer result, or Smart Turn, because
+     * the user's speech is already the decision. The assistant is left to persist
+     * what it actually delivered; only the state returns to listening here, so a
+     * long reply cannot delay the next turn.
+     */
+    private fun interruptAssistantAtOnset() {
+        val active = assistant ?: return
+        if (!assistantActive) return
+        val onsetAtNanos = clock.nanoTime()
+        assistantOnsetAtNanos = onsetAtNanos
+        setState(VoiceSessionState.LISTENING)
+        AppLog.d { "voice: barge-in onset; interrupting the assistant" }
+        active.interrupt(onsetAtNanos)
+        diagnostics.record(
+            DiagnosticEvent(
+                stage = DiagnosticStage.TTS_PLAYBACK,
+                outcome = DiagnosticOutcome.PROGRESS,
+                monotonicTimeNanos = clock.nanoTime(),
+                attributes =
+                    mapOf(
+                        DiagnosticAttribute.STREAM_STATE to "barge-in-onset",
+                    ),
+            ),
+        )
     }
 
     /** Closes one recognition input and lets the detector continue collecting. */
@@ -346,13 +429,86 @@ class VoiceSessionCoordinator(
             }
 
             final != null && final.text.isNotBlank() -> {
-                commitTranscript(turn.turnId, final)
+                if (assistant == null) {
+                    commitTranscript(turn.turnId, final)
+                } else {
+                    runAssistantTurn(turn.turnId, final)
+                }
             }
 
             else -> {
                 rejectTurn()
             }
         }
+    }
+
+    /**
+     * Runs one assistant reply for a finalized transcript.
+     *
+     * The conversation snapshot is taken **before** the user turn, because the
+     * assistant persists the user and assistant turns itself through M21
+     * orchestration. That is what keeps the saved order truthful after a
+     * barge-in, and it is why this path never writes the transcript itself.
+     *
+     * A provider, TTS, or persistence failure is surfaced through
+     * [VoiceSessionListener.onError] and the loop keeps listening: a failed reply
+     * is visible and recoverable, never a dead session and never a silent
+     * fallback to another model.
+     */
+    private suspend fun runAssistantTurn(
+        turnId: TurnId,
+        transcript: Transcript,
+    ) {
+        val active = assistant ?: return
+        val base = synchronized(stateLock) { conversation } ?: return
+        val userTurn = UserTurn(id = turnId, transcript = transcript, source = UserTurnSource.VOICE)
+        assistantActive = true
+        assistantOnsetAtNanos = null
+        setState(VoiceSessionState.SPEAKING)
+        val attempt =
+            try {
+                AssistantAttempt.Replied(active.reply(VoiceAssistantRequest(conversation = base, userTurn = userTurn), listener))
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Throwable) {
+                AssistantAttempt.Threw(failure.toVoiceAgentError())
+            } finally {
+                assistantActive = false
+            }
+        when (attempt) {
+            is AssistantAttempt.Threw -> {
+                AppLog.w { "voice: assistant reply threw code=${attempt.error.code}" }
+                listener.onError(attempt.error)
+                setState(VoiceSessionState.LISTENING)
+            }
+
+            is AssistantAttempt.Replied -> {
+                val reply = attempt.reply
+                synchronized(stateLock) { conversation = reply.conversation }
+                AppLog.d {
+                    "voice: assistant reply done outcome=${reply.outcome?.let { it::class.simpleName } ?: "none"} " +
+                        "generated=${reply.generatedText.length} delivered=${reply.deliveredText.length}"
+                }
+                listener.onAssistantReplySpoken(reply.generatedText, reply.deliveredText)
+                listener.onConversationChanged(reply.conversation)
+                reply.failure?.let { error ->
+                    AppLog.w { "voice: assistant reply failed code=${error.code}" }
+                    listener.onError(error)
+                }
+                setState(VoiceSessionState.LISTENING)
+            }
+        }
+    }
+
+    /** The outcome of one assistant attempt: a reply, or a thrown runtime failure. */
+    private sealed interface AssistantAttempt {
+        data class Replied(
+            val reply: VoiceAssistantReply,
+        ) : AssistantAttempt
+
+        data class Threw(
+            val error: VoiceAgentError,
+        ) : AssistantAttempt
     }
 
     private suspend fun commitTranscript(

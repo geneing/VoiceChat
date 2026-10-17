@@ -61,9 +61,15 @@ class ProviderCapabilityRegistryTest {
         val go = registry.capabilities(KnownProviders.OPENCODE_GO)!!
         val zen = registry.capabilities(KnownProviders.OPENCODE_ZEN)!!
 
-        assertTrue(go.models.reasoningLevels.isEmpty())
         assertTrue(zen.models.reasoningLevels.isEmpty())
+        // Go's per-model reasoning control is measured but not wire-discoverable,
+        // so the provider row carries the measured union and stays marked
+        // unverified as a *discoverable* capability; streaming and usage were
+        // verified live on 2026-10-17 (docs/voice-llm-selection.md).
+        assertFalse(go.models.reasoningLevels.isEmpty())
+        assertTrue(go.models.usageReporting)
         assertTrue(go.models.unverified.contains(UnverifiedCapability.REASONING))
+        assertFalse(go.transport.unverified.contains(UnverifiedCapability.STREAMING))
         // M18 verified Zen's API-key bearer auth (2026-09-29), so AUTH is no
         // longer marked unverified; usage reporting is not promised. See
         // docs/opencode-zen-adapter.md.

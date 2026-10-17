@@ -1,0 +1,317 @@
+package com.voicechat.agent.eval.llm
+
+import com.voicechat.agent.contracts.LanguageModel
+import com.voicechat.agent.contracts.LlmMessage
+import com.voicechat.agent.contracts.LlmRequest
+import com.voicechat.agent.contracts.LlmRole
+import com.voicechat.agent.contracts.LlmStreamEvent
+import com.voicechat.agent.contracts.LlmUsage
+import com.voicechat.agent.domain.ModelId
+import com.voicechat.agent.domain.ProviderId
+import com.voicechat.agent.domain.ProviderModelSelection
+import com.voicechat.agent.domain.ReasoningLevel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.collect
+import kotlin.math.roundToInt
+
+/**
+ * One model configuration to measure: the id, its recommended thinking parameter,
+ * and a human label for the record.
+ */
+data class VoiceLlmCase(
+    val modelId: String,
+    val reasoning: ReasoningLevel?,
+    val label: String,
+)
+
+/** The request text and system prompt measured across every case. */
+data class VoiceLlmPrompt(
+    val systemPrompt: String,
+    val userText: String,
+)
+
+/**
+ * What one measured attempt produced.
+ *
+ * Every duration is wall-clock from just before the adapter call, so it includes
+ * the local request build, the network, and the provider's queue. [firstTextMillis]
+ * is time to the first **assistant text** delta; a provider's reasoning channel is
+ * excluded from it by the M12 contract (R-0066), which is exactly the delay a
+ * spoken turn waits through.
+ */
+data class VoiceLlmRun(
+    val ttftMillis: Long?,
+    val firstSentenceMillis: Long?,
+    val totalMillis: Long,
+    val characters: Int,
+    val deltaCount: Int,
+    val completed: Boolean,
+    val reportedModel: ModelId?,
+    val usage: LlmUsage?,
+    val failure: String?,
+    val answer: String,
+)
+
+/**
+ * Every attempt for one [case], with the medians the voice decision is made on.
+ *
+ * A single provider call is not a latency measurement — the same model and the
+ * same parameters moved by more than 7x between runs on 2026-10-17 — so the
+ * harness repeats and reports the median with the spread, never one number.
+ */
+class VoiceLlmCaseResult(
+    val case: VoiceLlmCase,
+    val runs: List<VoiceLlmRun>,
+) {
+    /** Median time to first assistant text over the completed attempts, or `null`. */
+    val medianTtftMillis: Long? get() = runs.mapNotNull { it.ttftMillis }.median()
+    val medianFirstSentenceMillis: Long? get() = runs.mapNotNull { it.firstSentenceMillis }.median()
+    val medianTotalMillis: Long get() = runs.map { it.totalMillis }.median() ?: 0L
+
+    /** The answers actually received, one per attempt, in order. */
+    val answers: List<String> get() = runs.map { it.answer }
+
+    /** True when every attempt completed. */
+    val allCompleted: Boolean get() = runs.all { it.completed }
+
+    /** The distinct failure descriptions, for the record. */
+    val failures: List<String> get() = runs.mapNotNull { it.failure }.distinct()
+
+    private fun List<Long>.median(): Long? =
+        if (isEmpty()) {
+            null
+        } else {
+            val sorted = sorted()
+            if (sorted.size % 2 == 1) {
+                sorted[sorted.size / 2]
+            } else {
+                (sorted[sorted.size / 2 - 1] + sorted[sorted.size / 2]) / 2
+            }
+        }
+}
+
+/** The measured set, rendered as the markdown record the harness writes. */
+class VoiceLlmHarnessReport(
+    val providerId: ProviderId,
+    val prompt: VoiceLlmPrompt,
+    val results: List<VoiceLlmCaseResult>,
+    val recordedAt: String,
+) {
+    /** The summary table: medians per case, with the number of attempts. */
+    fun summaryMarkdown(): String {
+        val header =
+            "| Model | Thinking | Attempts | TTFT median (s) | First sentence median (s) | " +
+                "Full response median (s) | Characters | Result |"
+        val rule = "| --- | --- | --- | --- | --- | --- | --- | --- |"
+        val rows =
+            results.map { result ->
+                val outcome =
+                    if (result.allCompleted) {
+                        "completed"
+                    } else {
+                        "FAILED (${result.failures.joinToString(separator = "; ")})"
+                    }
+                val characters = result.runs.firstOrNull()?.characters ?: 0
+                "| `${result.case.modelId}` | ${result.case.label} | ${result.runs.size} | " +
+                    "${result.medianTtftMillis.seconds()} | ${result.medianFirstSentenceMillis.seconds()} | " +
+                    "${result.medianTotalMillis.seconds()} | $characters | $outcome |"
+            }
+        return (listOf(header, rule) + rows).joinToString(separator = "\n")
+    }
+
+    /** The whole record: method, table, verbatim answers, and the prompt used. */
+    fun toMarkdown(): String {
+        val attempts = results.maxOfOrNull { it.runs.size } ?: 0
+        return buildString {
+            appendLine("# Voice LLM Harness Run — $recordedAt")
+            appendLine()
+            appendLine("Generated by `com.voicechat.agent.eval.llm.VoiceLlmHarnessTest`, which drives the")
+            appendLine("real `${providerId.value}` adapter through the M12 `LanguageModel` contract. It is")
+            appendLine("**not** a device result: no Pixel, microphone, or TTS participates, so the numbers")
+            appendLine("are indicative and not a p50/p95 claim (R-0253). Each case ran $attempts time(s); the")
+            appendLine("table shows the median, because one call is not a measurement — the same model and")
+            appendLine("parameters moved by more than 7x between single runs on 2026-10-17.")
+            appendLine()
+            appendLine("## Request")
+            appendLine()
+            appendLine("- User text, verbatim: ${prompt.userText}")
+            appendLine("- System prompt: the recommended voice prompt (`docs/voice-llm-selection.md`), reproduced below.")
+            appendLine("- TTFT is the time to the first assistant text delta. The adapter excludes a provider's")
+            appendLine("  reasoning channel from assistant text (R-0066), so TTFT is what a spoken turn waits for.")
+            appendLine("  First sentence is when the TTS chunker has something speakable.")
+            appendLine()
+            appendLine("## Summary")
+            appendLine()
+            appendLine(summaryMarkdown())
+            appendLine()
+            appendLine("## Attempts and answers")
+            appendLine()
+            results.forEach { result ->
+                appendLine("### `${result.case.modelId}` — ${result.case.label}")
+                appendLine()
+                result.runs.forEachIndexed { index, run ->
+                    appendLine(
+                        "- Attempt ${index + 1}: TTFT ${run.ttftMillis.seconds()} s, first sentence " +
+                            "${run.firstSentenceMillis.seconds()} s, full ${run.totalMillis.seconds()} s, " +
+                            "${run.characters} chars, ${run.deltaCount} deltas, completed=${run.completed}" +
+                            (run.failure?.let { ", failure=$it" } ?: ""),
+                    )
+                }
+                result.runs
+                    .firstOrNull()
+                    ?.reportedModel
+                    ?.let { appendLine("- Served model: `${it.value}`") }
+                result.runs.firstOrNull()?.usage?.let { usage ->
+                    appendLine(
+                        "- Usage (first attempt): prompt=${usage.promptTokens} " +
+                            "completion=${usage.completionTokens} total=${usage.totalTokens} " +
+                            "details=${usage.details}",
+                    )
+                }
+                appendLine()
+                appendLine("```text")
+                appendLine(result.answers.firstOrNull()?.ifBlank { "(no assistant text)" } ?: "(no attempt recorded)")
+                appendLine("```")
+                appendLine()
+            }
+            appendLine("## Voice system prompt used for every case")
+            appendLine()
+            appendLine("```text")
+            appendLine(prompt.systemPrompt)
+            appendLine("```")
+        }
+    }
+
+    private fun Long?.seconds(): String = this?.let { "%.2f".format(it / 1000.0) } ?: "-"
+}
+
+/**
+ * The LLM-only harness: runs the same request through N model configurations,
+ * [repeats] times each, and measures what a voice loop would see (Kotlin/JVM, real
+ * provider, no device).
+ *
+ * It is deliberately independent of the voice loop so the model choice can be
+ * re-measured without a microphone, a recognizer, or a speaker; the coordinator
+ * tests cover the loop itself.
+ */
+class VoiceLlmHarness(
+    private val providerId: ProviderId,
+    private val languageModel: LanguageModel,
+    private val now: () -> String,
+) {
+    /** Runs every [cases] entry [repeats] times against [prompt] and returns the record. */
+    suspend fun run(
+        cases: List<VoiceLlmCase>,
+        prompt: VoiceLlmPrompt,
+        repeats: Int = DEFAULT_REPEATS,
+    ): VoiceLlmHarnessReport {
+        require(repeats >= 1) { "repeats must be at least 1" }
+        val results =
+            cases.map { case ->
+                VoiceLlmCaseResult(case = case, runs = (1..repeats).map { runAttempt(case, prompt) })
+            }
+        return VoiceLlmHarnessReport(
+            providerId = providerId,
+            prompt = prompt,
+            results = results,
+            recordedAt = now(),
+        )
+    }
+
+    private suspend fun runAttempt(
+        case: VoiceLlmCase,
+        prompt: VoiceLlmPrompt,
+    ): VoiceLlmRun {
+        val request =
+            LlmRequest(
+                model = ProviderModelSelection(providerId = providerId, modelId = ModelId(case.modelId)),
+                messages =
+                    listOf(
+                        LlmMessage(LlmRole.SYSTEM, prompt.systemPrompt),
+                        LlmMessage(LlmRole.USER, prompt.userText),
+                    ),
+                reasoning = case.reasoning,
+            )
+        val text = StringBuilder()
+        var firstTextAt: Long? = null
+        var firstSentenceAt: Long? = null
+        var deltas = 0
+        var completed = false
+        var reportedModel: ModelId? = null
+        var usage: LlmUsage? = null
+        var failure: String? = null
+        val startedAt = System.nanoTime()
+        try {
+            languageModel.stream(request).collect { event ->
+                val elapsed = elapsedMillis(startedAt)
+                when (event) {
+                    is LlmStreamEvent.Delta -> {
+                        deltas++
+                        if (firstTextAt == null) firstTextAt = elapsed
+                        text.append(event.text)
+                        if (firstSentenceAt == null && completeSentence(text)) firstSentenceAt = elapsed
+                    }
+
+                    is LlmStreamEvent.Completed -> {
+                        completed = true
+                        usage = event.usage
+                        reportedModel = event.model
+                    }
+
+                    is LlmStreamEvent.Failed -> {
+                        failure = "${event.error.code} (${event.reason})"
+                    }
+
+                    is LlmStreamEvent.Cancelled -> {
+                        failure = "cancelled"
+                    }
+                }
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Throwable) {
+            // A thrown adapter/runtime error is still a measured outcome, not a
+            // reason to lose the other cases.
+            return VoiceLlmRun(
+                ttftMillis = firstTextAt,
+                firstSentenceMillis = firstSentenceAt,
+                totalMillis = elapsedMillis(startedAt),
+                characters = text.length,
+                deltaCount = deltas,
+                completed = false,
+                reportedModel = null,
+                usage = null,
+                failure = "threw ${failure.javaClass.simpleName}",
+                answer = text.toString().trim(),
+            )
+        }
+        return VoiceLlmRun(
+            ttftMillis = firstTextAt,
+            firstSentenceMillis = firstSentenceAt,
+            totalMillis = elapsedMillis(startedAt),
+            characters = text.length,
+            deltaCount = deltas,
+            completed = completed,
+            reportedModel = reportedModel,
+            usage = usage,
+            failure = failure,
+            answer = text.toString().trim(),
+        )
+    }
+
+    /** True once enough text has arrived for a sentence to be speakable. */
+    private fun completeSentence(buffered: StringBuilder): Boolean =
+        buffered.length >= MIN_SPEAKABLE_CHARACTERS && buffered.any { it in SENTENCE_ENDINGS }
+
+    private fun elapsedMillis(startedAtNanos: Long): Long = ((System.nanoTime() - startedAtNanos) / 1_000_000.0).roundToInt().toLong()
+
+    companion object {
+        /** Attempts per case when the caller does not say otherwise. */
+        const val DEFAULT_REPEATS: Int = 3
+
+        /** Below this, a "." is more likely a decimal point or an abbreviation. */
+        private const val MIN_SPEAKABLE_CHARACTERS: Int = 12
+
+        private val SENTENCE_ENDINGS = setOf('.', '!', '?', '\n')
+    }
+}

@@ -6,6 +6,7 @@ import com.voicechat.agent.contracts.LlmRole
 import com.voicechat.agent.contracts.LlmUsage
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.ModelId
+import com.voicechat.agent.domain.ReasoningLevel
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.remote.JsonNode
 import com.voicechat.agent.remote.RemoteJson
@@ -35,6 +36,19 @@ object OpenCodeGoChatCompletions {
                 "messages" to messages,
                 "stream" to RemoteJson.bool(true),
             )
+        // Chat Completions expresses effort as a top-level `reasoning_effort`, and
+        // only a model measured to accept the field is sent one (R-0135). For a
+        // model whose default reasons, `none` is sent explicitly: omitting the
+        // field means "provider default", not "off".
+        val level = request.reasoning
+        val support = OpenCodeGoReasoning.support(request.model.modelId)
+        if (
+            level != null &&
+            support?.style == OpenCodeGoReasoningStyle.CHAT_REASONING_EFFORT &&
+            support.sendsFieldFor(level)
+        ) {
+            fields["reasoning_effort"] = RemoteJson.str(OpenCodeGoReasoning.effortWire(level))
+        }
         return RemoteJson.stringify(RemoteJson.obj(fields))
     }
 

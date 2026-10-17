@@ -21,7 +21,9 @@ import com.voicechat.agent.log.LogLevel
 import com.voicechat.agent.log.RecordingLogSink
 import com.voicechat.agent.providers.CredentialValidationPolicy
 import com.voicechat.agent.providers.CredentialValidationResult
+import com.voicechat.agent.providers.DocumentedModelCatalog
 import com.voicechat.agent.providers.KnownProviders
+import com.voicechat.agent.providers.LlmCapabilityReconciler
 import com.voicechat.agent.providers.ProviderCapabilityRegistry
 import com.voicechat.agent.providers.UnverifiedCapability
 import com.voicechat.agent.remote.FakeHttpStreamingEngine
@@ -37,6 +39,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicBoolean
@@ -127,13 +131,13 @@ class OpenCodeGoLanguageModelTest {
         }
 
     @Test
-    fun eachFamilyGoesToItsDocumentedEndpointWithBearerAuthAndClientHeaders() =
+    fun eachFamilyGoesToItsDocumentedEndpointWithItsOwnAuthAndClientHeaders() =
         runTest {
             val cases =
                 listOf(
                     Triple("glm-5.3-flash", "chat_normal.sse", "https://opencode.ai/zen/go/v1/chat/completions"),
                     Triple("gpt-5.6-luna", "responses_normal.sse", "https://opencode.ai/zen/go/v1/responses"),
-                    Triple("qwen3.8-flash", "messages_normal.sse", "https://opencode.ai/zen/go/v1/messages"),
+                    Triple("claude-haiku-5-5", "messages_normal.sse", "https://opencode.ai/zen/go/v1/messages"),
                 )
             cases.forEach { (model, fixture, expectedUrl) ->
                 val engine = sseEngine(OpenCodeGoFixtures.text(fixture))
@@ -142,7 +146,21 @@ class OpenCodeGoLanguageModelTest {
                 val sent = engine.requests.single()
                 assertEquals(expectedUrl, sent.url)
                 assertEquals("POST", sent.method)
-                assertEquals("Bearer $secret", sent.headers.first { it.name == "Authorization" }.value)
+                if (model == "claude-haiku-5-5") {
+                    // Anthropic-shaped auth: the gateway rejects a Bearer token on
+                    // this family with HTTP 401 "Go requires a credential".
+                    assertEquals(secret, sent.headers.first { it.name == "x-api-key" }.value)
+                    assertEquals(
+                        OpenCodeGoLanguageModel.ANTHROPIC_VERSION,
+                        sent.headers.first { it.name == OpenCodeGoLanguageModel.ANTHROPIC_VERSION_HEADER }.value,
+                    )
+                    assertTrue(
+                        "the Messages family must not send a bearer token",
+                        sent.headers.none { it.name == "Authorization" },
+                    )
+                } else {
+                    assertEquals("Bearer $secret", sent.headers.first { it.name == "Authorization" }.value)
+                }
                 assertEquals("application/json", sent.headers.first { it.name == "Content-Type" }.value)
                 assertEquals("text/event-stream", sent.headers.first { it.name == "Accept" }.value)
                 assertEquals(
@@ -252,13 +270,24 @@ class OpenCodeGoLanguageModelTest {
         }
 
     @Test
-    fun aReasoningLevelTheAdapterDoesNotSupportIsRefusedBeforeAnyRequest() =
+    fun aReasoningLevelTheModelWasNotMeasuredToTakeIsRefusedBeforeAnyRequest() =
         runTest {
-            val engine = sseEngine(OpenCodeGoFixtures.text("chat_normal.sse"))
-            val result = adapter(engine, credentialStore()).consume(request(reasoning = ReasoningLevel.HIGH))
+            // Both cases are refused by the per-model table, not by the provider
+            // union: minimax-m3 rejects every reasoning field with HTTP 400, and
+            // glm-5.3-flash accepts `low`/`high` but was never measured at `xhigh`.
+            val cases =
+                listOf(
+                    "minimax-m3" to ReasoningLevel.HIGH,
+                    "glm-5.3-flash" to ReasoningLevel.XHIGH,
+                    "longcat-2.0" to ReasoningLevel.LOW,
+                )
+            cases.forEach { (model, level) ->
+                val engine = sseEngine(OpenCodeGoFixtures.text("chat_normal.sse"))
+                val result = adapter(engine, credentialStore()).consume(request(model = model, reasoning = level))
 
-            assertEquals(ErrorCode.LLM_INVALID_REQUEST, result.error?.code)
-            assertTrue(engine.requests.isEmpty())
+                assertEquals("$model/$level", ErrorCode.LLM_INVALID_REQUEST, result.error?.code)
+                assertTrue("$model must not be sent a level it was not measured to take", engine.requests.isEmpty())
+            }
         }
 
     @Test
@@ -294,7 +323,7 @@ class OpenCodeGoLanguageModelTest {
     // --- capability, privacy, and the public model list ----------------------
 
     @Test
-    fun theAdapterDeclaresOnlyTheVerifiedCapabilities() =
+    fun theAdapterDeclaresTheMeasuredProviderCapabilities() =
         runTest {
             val model =
                 OpenCodeGoLanguageModel(
@@ -304,8 +333,151 @@ class OpenCodeGoLanguageModelTest {
                 )
 
             assertTrue(model.capabilities.streaming)
-            assertFalse("Go does not promise usage reporting", model.capabilities.usageReporting)
-            assertTrue("Go documents no reasoning control", model.capabilities.reasoningLevels.isEmpty())
+            // Measured live on all three families on 2026-10-16/17.
+            assertTrue("Go reports usage on every family", model.capabilities.usageReporting)
+            // The provider row is the union across measured models; the per-model
+            // set is what a request is actually checked against.
+            assertEquals(
+                setOf(
+                    ReasoningLevel.NONE,
+                    ReasoningLevel.LOW,
+                    ReasoningLevel.MEDIUM,
+                    ReasoningLevel.HIGH,
+                    ReasoningLevel.XHIGH,
+                    ReasoningLevel.MAX,
+                ),
+                model.capabilities.reasoningLevels,
+            )
+            assertTrue(OpenCodeGoReasoning.supports(ModelId("gpt-6-luna"), ReasoningLevel.HIGH))
+            assertFalse(OpenCodeGoReasoning.supports(ModelId("minimax-m3"), ReasoningLevel.HIGH))
+        }
+
+    @Test
+    fun aMeasuredModelSendsItsFamilysReasoningFieldAndAnUnmeasuredOneSendsNone() =
+        runTest {
+            // Chat Completions: a top-level reasoning_effort, including the
+            // explicit `none` that stops this model's reasoning.
+            run {
+                val engine = sseEngine(OpenCodeGoFixtures.text("chat_normal.sse"))
+                adapter(engine, credentialStore())
+                    .consume(request(model = "glm-5.3-flash", reasoning = ReasoningLevel.LOW))
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
+                assertTrue("expected reasoning_effort in $body", body.contains("\"reasoning_effort\":\"low\""))
+            }
+            run {
+                val engine = sseEngine(OpenCodeGoFixtures.text("chat_normal.sse"))
+                adapter(engine, credentialStore())
+                    .consume(request(model = "glm-5.3-flash", reasoning = ReasoningLevel.NONE))
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
+                assertTrue(
+                    "glm-5.3-flash now rejects every off form, so the field is omitted: $body",
+                    !body.contains("\"reasoning_effort\""),
+                )
+            }
+            run {
+                val engine = sseEngine(OpenCodeGoFixtures.text("chat_normal.sse"))
+                adapter(engine, credentialStore())
+                    .consume(request(model = "deepseek-v4.1-flash", reasoning = ReasoningLevel.NONE))
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
+                assertTrue("`none` must be sent, not omitted: $body", body.contains("\"reasoning_effort\":\"none\""))
+            }
+            // Responses: reasoning.effort, and `none` is explicit for the model
+            // whose provider default reasons.
+            run {
+                val engine = sseEngine(OpenCodeGoFixtures.text("responses_normal.sse"))
+                adapter(engine, credentialStore())
+                    .consume(request(model = "gpt-6-luna", reasoning = ReasoningLevel.NONE))
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
+                assertTrue("omitting the field leaves the reasoning default: $body", body.contains("\"reasoning\":{\"effort\":\"none\"}"))
+            }
+            run {
+                val engine = sseEngine(OpenCodeGoFixtures.text("responses_normal.sse"))
+                adapter(engine, credentialStore())
+                    .consume(request(model = "gpt-6-luna", reasoning = ReasoningLevel.LOW))
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
+                assertTrue("expected reasoning.effort in $body", body.contains("\"reasoning\":{\"effort\":\"low\"}"))
+            }
+            // A model that rejects `none` omits the field instead.
+            run {
+                val engine = sseEngine(OpenCodeGoFixtures.text("responses_normal.sse"))
+                adapter(engine, credentialStore())
+                    .consume(request(model = "grok-4.7", reasoning = ReasoningLevel.NONE))
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
+                assertTrue("grok-4.7 rejects `none`: $body", !body.contains("\"reasoning\""))
+            }
+            // Messages: adaptive thinking plus an effort hint.
+            run {
+                val engine = sseEngine(OpenCodeGoFixtures.text("messages_normal.sse"))
+                adapter(engine, credentialStore())
+                    .consume(request(model = "claude-haiku-5-5", reasoning = ReasoningLevel.LOW))
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
+                assertTrue("expected adaptive thinking in $body", body.contains("\"thinking\":{\"type\":\"adaptive\"}"))
+                assertTrue("expected the effort hint in $body", body.contains("\"output_config\":{\"effort\":\"low\"}"))
+            }
+            run {
+                val engine = sseEngine(OpenCodeGoFixtures.text("messages_normal.sse"))
+                adapter(engine, credentialStore())
+                    .consume(request(model = "claude-haiku-5-5", reasoning = ReasoningLevel.NONE))
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
+                assertTrue("no thinking block expected in $body", !body.contains("\"thinking\""))
+            }
+            // A thinking-only Messages model sends only its verified off value.
+            run {
+                val engine = sseEngine(OpenCodeGoFixtures.text("messages_normal.sse"))
+                adapter(engine, credentialStore())
+                    .consume(request(model = "qwen3.8-flash", reasoning = ReasoningLevel.NONE))
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
+                assertTrue("expected the explicit off in $body", body.contains("\"thinking\":{\"type\":\"disabled\"}"))
+            }
+            // A model with no verified control is sent no field at all.
+            run {
+                val engine = sseEngine(OpenCodeGoFixtures.text("messages_normal.sse"))
+                adapter(engine, credentialStore())
+                    .consume(request(model = "minimax-m3", reasoning = ReasoningLevel.NONE))
+                val body =
+                    engine.requests
+                        .single()
+                        .body
+                        .orEmpty()
+                assertTrue("no reasoning field expected in $body", !body.contains("\"reasoning\""))
+                assertTrue("no thinking field expected in $body", !body.contains("\"thinking\""))
+            }
         }
 
     @Test
@@ -318,16 +490,69 @@ class OpenCodeGoLanguageModelTest {
     }
 
     @Test
-    fun theRegistryGoRowClaimsNoReasoningAndMarksWhatIsUnverified() {
+    fun theRegistryGoRowCarriesTheMeasuredUnionAndTheCatalogNarrowsIt() {
         val go = ProviderCapabilityRegistry.verifiedDefaults().capabilities(KnownProviders.OPENCODE_GO)!!
 
-        assertTrue(go.models.reasoningLevels.isEmpty())
-        assertFalse(go.models.usageReporting)
+        assertEquals(
+            setOf(
+                ReasoningLevel.NONE,
+                ReasoningLevel.LOW,
+                ReasoningLevel.MEDIUM,
+                ReasoningLevel.HIGH,
+                ReasoningLevel.XHIGH,
+                ReasoningLevel.MAX,
+            ),
+            go.models.reasoningLevels,
+        )
+        assertTrue(go.models.usageReporting)
+        // Still marked unverified as a *discoverable* capability: Go's /models is
+        // identity-only, so which field a model takes is only known from the
+        // dated table (R-0130, R-0135).
         assertTrue(go.models.unverified.contains(UnverifiedCapability.REASONING))
-        assertTrue(go.models.unverified.contains(UnverifiedCapability.USAGE))
         // M17 verified API-key auth, so it is no longer marked unverified.
         assertFalse(go.models.unverified.contains(UnverifiedCapability.AUTH))
-        assertTrue(go.transport.unverified.contains(UnverifiedCapability.STREAMING))
+        // Streamed for real on all three families on 2026-10-17.
+        assertFalse(go.transport.unverified.contains(UnverifiedCapability.STREAMING))
+
+        // The per-model catalog is the narrower truth and intersects with the row.
+        val catalog = OpenCodeGoModelCatalog()
+        val haiku = catalog.modelCapabilities(KnownProviders.OPENCODE_GO, ModelId("claude-haiku-5-5"))!!
+        assertEquals(setOf(ReasoningLevel.LOW, ReasoningLevel.HIGH), haiku.reasoningLevels)
+        val effective = LlmCapabilityReconciler.effective(go, haiku)
+        assertEquals(setOf(ReasoningLevel.LOW, ReasoningLevel.HIGH), effective.reasoningLevels)
+        assertTrue(effective.usageReporting)
+        assertEquals(
+            emptySet<ReasoningLevel>(),
+            catalog.modelCapabilities(KnownProviders.OPENCODE_GO, ModelId("minimax-m3"))?.reasoningLevels,
+        )
+        assertNull(catalog.modelCapabilities(KnownProviders.OPENCODE_GO, ModelId("longcat-2.0")))
+    }
+
+    @Test
+    fun everyMeasuredVoiceModelIsPlacedAndSelectable() {
+        val catalog = OpenCodeGoModelCatalog()
+        val voiceModels =
+            listOf(
+                "claude-haiku-5-5" to OpenCodeGoFamily.MESSAGES,
+                "gpt-6-luna" to OpenCodeGoFamily.RESPONSES,
+                "gpt-5.6-luna" to OpenCodeGoFamily.RESPONSES,
+                "minimax-m3" to OpenCodeGoFamily.MESSAGES,
+                "glm-5.3-flash" to OpenCodeGoFamily.CHAT_COMPLETIONS,
+            )
+        voiceModels.forEach { (id, family) ->
+            assertEquals(id, family, OpenCodeGoModels.familyFor(ModelId(id)))
+            assertNotNull(
+                "$id must be offered by the picker's documented catalog",
+                catalog.modelCapabilities(KnownProviders.OPENCODE_GO, ModelId(id)),
+            )
+        }
+        // The documented catalog the M22 picker reads is the family map itself.
+        val offered = DocumentedModelCatalog.availableModels().map { it.model.id }
+        voiceModels.forEach { (id, _) ->
+            assertTrue("$id must be selectable", offered.contains(ModelId(id)))
+        }
+        assertTrue("space-bunny-free is not served", !offered.contains(ModelId("space-bunny-free")))
+        assertTrue("space-bunny is served", offered.contains(ModelId("space-bunny")))
     }
 
     @Test

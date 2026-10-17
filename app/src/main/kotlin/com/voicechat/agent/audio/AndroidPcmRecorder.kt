@@ -152,6 +152,9 @@ private class AudioRecordEngine(
 ) : PcmRecorderEngine {
     private var released = false
 
+    override val audioSessionId: Int
+        get() = record.audioSessionId
+
     override fun start() {
         try {
             record.startRecording()

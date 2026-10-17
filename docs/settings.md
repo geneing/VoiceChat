@@ -150,7 +150,27 @@ true until the runtime reports once. Validation does not drop a stored selection
 against an unread snapshot, so a cold start cannot clear a valid choice before
 the STT/TTS/model status has been read.
 
-## Authentication and credentials
+## Per-model reasoning for OpenCode Go (dev/LLM)
+
+Reasoning is a **per-model** fact on OpenCode Go, not a provider-level one: the
+public `/models` surface is identity-only, and the gateway accepts and honours a
+different reasoning field (or none) depending on the model
+(`docs/voice-llm-selection.md`). Two layers are therefore combined:
+
+- the provider row in `ProviderCapabilityRegistry` carries the **union** of the
+  levels any measured Go model accepts, and
+- `OpenCodeGoModelCatalog` (`ModelCapabilityCatalog`) carries the narrower set for
+  one model, which the M22 picker intersects through `LlmCapabilityReconciler`.
+
+So selecting `minimax-m3` offers no reasoning level (it rejects every reasoning
+field), `claude-haiku-5-5` offers low/high (adaptive thinking with an effort
+hint), and `gpt-6-luna` offers low through max (a Responses effort). A level the
+selected model was not measured to take is neither shown nor accepted: the adapter
+refuses it before any request is sent. The table is dated and must be re-measured
+with `scripts/run-llm-harness.ps1` when it matters (R-0252); a model that is not in
+the table offers `none` only.
+
+
 
 The auth methods shown come from the registry (`ProviderCapabilityRegistry`):
 
