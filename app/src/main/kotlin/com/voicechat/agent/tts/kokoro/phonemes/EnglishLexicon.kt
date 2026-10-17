@@ -2,6 +2,7 @@ package com.voicechat.agent.tts.kokoro.phonemes
 
 import java.io.File
 import java.io.InputStream
+import java.io.PushbackInputStream
 import java.util.zip.GZIPInputStream
 
 /** The context Misaki carries while resolving tokens from right to left. */
@@ -642,8 +643,25 @@ internal class EnglishLexicon(
 
     private fun Int?.orZero(): Int = this ?: 0
 
+    /** Wraps [input] in a gzip reader only when its first two bytes are the gzip magic. */
+    private fun decompressed(input: InputStream): InputStream {
+        val pushback = PushbackInputStream(input, GZIP_MAGIC.size)
+        val head = ByteArray(GZIP_MAGIC.size)
+        val read = pushback.read(head)
+        if (read > 0) pushback.unread(head, 0, read)
+        return if (read == GZIP_MAGIC.size && head.contentEquals(GZIP_MAGIC)) GZIPInputStream(pushback) else pushback
+    }
+
+    /**
+     * Reads one Misaki lexicon.
+     *
+     * The committed asset is gzipped, but the Android packager stores a `.gz`
+     * asset decompressed, so the same file arrives as plain JSON on a device. The
+     * gzip magic decides which it is, so both a JVM test reading the committed
+     * file and the packaged APK parse correctly.
+     */
     private fun load(input: InputStream): Map<String, Lexeme> =
-        GZIPInputStream(input).bufferedReader(Charsets.UTF_8).use { reader ->
+        decompressed(input).bufferedReader(Charsets.UTF_8).use { reader ->
             PhonemeJson.parse(reader.readText()).asObject().mapValues { (_, value) ->
                 when (value) {
                     is PhonemeJsonValue.StringValue -> {
@@ -674,6 +692,8 @@ internal class EnglishLexicon(
         }
 
     companion object {
+        /** The two bytes every gzip stream starts with. */
+        private val GZIP_MAGIC = byteArrayOf(0x1F, 0x8B.toByte())
         private const val PRIMARY_STRESS = 'ˈ'
         private const val SECONDARY_STRESS = 'ˌ'
         private val STRESSES = setOf(PRIMARY_STRESS, SECONDARY_STRESS)

@@ -181,7 +181,12 @@ compound parts) and inline-IPA overrides `(word)[phonemes]`.
 
 The vocabulary and the gzipped lexicon are app assets
 (`scripts/fetch-kokoro-phoneme-data.sh`), so phonemization is on-device and
-offline.
+offline. Note the packager: a `.gz` asset is decompressed and stored under the
+name **without** the suffix, so the APK holds `assets/kokoro/us_gold.json` and
+`AssetManager` has no gzip handling of its own. The loader therefore resolves the
+real entry and detects the gzip magic itself; `KokoroPhonemeAssetsTest` pins both
+the committed and the packaged form, because the committed file is gzipped and
+only a device would otherwise have caught the difference.
 
 **Measured parity.** `scripts/kokoro-phoneme-parity.sh` regenerates the Python
 fixtures and asserts the port against them. On 2026-10-17 the Kotlin port matched
