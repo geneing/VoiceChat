@@ -56,6 +56,7 @@ genuinely unknown, write "unknown" rather than guessing.
 - [Local model runtimes (M20)](#local-model-runtimes-m20) — R-0210-R-0219
 - [Release hardening follow-ups (M26)](#release-hardening-follow-ups-m26) - R-0220-R-0239
 - [Voice-loop LLM measurement (M25 input)](#voice-loop-llm-measurement-m25-input) - R-0248-R-0255
+- [TTS configuration and harness (dev/TTS)](#tts-configuration-and-harness-devtts) - R-0256-R-0258
 
 ## Speech: on-device STT, TTS, VAD, and turn completion
 
@@ -402,3 +403,15 @@ behaviour is implemented in the M17 adapter.
 | R-0253 | resolved (dev/LLM, Pixel 10) | llm/latency | The LLM latency figures were host-side only, over one network path, with no device involved, so no device claim existed for the LLM stage. | docs/voice-llm-results.md, docs/voice-llm-selection.md | dev/LLM | Resolved for the model call: `VoiceLlmHarnessInstrumentedTest` ran the same case list on Pixel 10 (Android 17/API 37, build `CP3A.261005.005`, three attempts per model, Wi-Fi, USB-powered 80%, 29.0 °C) and every configuration completed, with medians 1.11-2.08 s to the first token and 1.78-3.10 s to a full answer — roughly 0.25-0.55 s later than the host. Narrowed, not closed: this measures the model call only, so the voice-loop row stays R-0255, and it is one device, one network, and one moment (no p50/p95). |
 | R-0254 | open | audio/echo | The assistant is audible on the same device that captures, so its own speech can trigger VAD. `AcousticEchoCanceler` is now attached per capture session and its state is reported (`ENABLED`/`NO_SESSION`/`UNAVAILABLE`/`FAILED`), but whether it actually cancels the assistant on Pixel 10 speaker, wired, and Bluetooth routes is unverified, and no barge-in-vs-echo discrimination has been measured. | docs/audio-capture.md, docs/voice-loop.md, audio/EchoCancellation.kt | M25 device matrix | Run the loop on Pixel 10 on each supported route with the reply playing: confirm the reported canceller state, count false onsets caused by the assistant, and decide whether the VAD needs a playback-aware guard (never a long fixed grace period). |
 | R-0255 | open | voice/loop | The voice loop now drives the LLM and TTS with VAD barge-in, but the whole turn (speech end → first audible audio → interruption → persisted delivered prefix) has not been run on hardware; only the JVM sequencing tests and the host-side LLM harness exist. | docs/voice-loop.md, docs/voice-llm-selection.md, Tests.md | M25/M26 | Run the wired loop on Pixel 10 with a real provider, microphone, and speaker: record onset→stop, onset→capture-resumed, time-to-first-audio, and that the persisted assistant turn matches what was heard. |
+
+## TTS configuration and harness (dev/TTS)
+
+Added with the speech-engine/voice configuration and the TTS stage of the M25
+harness. The host half is deterministic and runs in `:app:testDebugUnitTest`; the
+device half is compiled only.
+
+| ID | Status | Area | Item and open question | Source | Resolves in | Evidence to close |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-0256 | open | speech | The TTS-stage harness (`VoiceTtsHarnessInstrumentedTest`) has not been run, so no `tts_first_audible`/`tts_completion` device number exists for the platform engine or the selected voice. Only the host fake run (aggregation and failure handling) and the compile-only instrumented build exist. | docs/tts.md, docs/evaluation.md, scripts/run-tts-harness-device.ps1 | M25 | A Pixel 10 run via `scripts/run-tts-harness-device.ps1` recording device/build/route/locale/engine/voice and the median `tts_first_audible` and `tts_completion`, kept distinct from the host rows. |
+| R-0257 | open | speech | Speech-engine selection is validated against `TextToSpeech.getEngines()`, but the platform does not expose which engine a live `TextToSpeech` instance actually bound to, so a device/engine that ignores the constructor package cannot be detected from the API. | docs/tts.md, tts/AndroidTtsEngine.kt | M25/M26 | A Pixel 10 run with a second TTS engine installed showing the selected engine is the one used, and that a removed engine yields the typed `SelectedEngineUnavailable`/`TTS_NO_ON_DEVICE_VOICE` rather than a silent default. |
+| R-0258 | open | speech | "Most natural voice" is `Voice.getQuality()`, the only naturalness signal `android.speech.tts` exposes; the rank is coarse (the platform's own supertonic voices share the same ranks) and the choice is not calibrated against perceived naturalness on Pixel 10. | docs/tts.md, tts/TtsVoice.kt | M25 | A device run comparing the selected voice's audible naturalness across the embedded voices, or a newer platform naturalness/feature signal to rank on. |

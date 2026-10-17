@@ -26,10 +26,11 @@ Implemented:
   stored selection the registry/runtime no longer supports.
 - The settings Compose surface and its ViewModel, including credential
   replace/remove through the M13 `CredentialStore`.
-- A **dropdown-per-section** surface: the recognizer model, provider, model,
-  reasoning level, and TTS voice are single-choice dropdowns, not radio lists.
-  Sub-sections that are not applicable (no Authentication choice; no Reasoning
-  section when the provider offers none) are absent rather than empty.
+- A **dropdown-per-section** surface: the recognizer model, TTS speech engine,
+  voice, provider, model, and reasoning level are single-choice dropdowns, not
+  radio lists. Sub-sections that are not applicable (no Authentication choice; no
+  Reasoning section when the provider offers none; no engine dropdown when only
+  one TTS engine is installed) are absent rather than empty.
 - The credential box is a single **API key** entry that disappears once a value
   is stored, replaced by a "Stored for <provider>." line and a Remove action.
 - A started, user-approved **STT model download** with a determinate progress bar
@@ -131,7 +132,9 @@ Two rules are mechanical, not stylistic:
    Network-required TTS voices are excluded entirely, and so is any voice outside
    the app's supported locales (`OnDeviceVoiceSelector.SUPPORTED_LANGUAGE_TAGS`:
    `en-US`, `en-GB`, `en-AU`, `es-US`, `es-ES`) — the app only offers a voice it
-   can also recognize speech for.
+   can also recognize speech for. TTS engines are exactly what
+   `TextToSpeech.getEngines()` reported, so an engine the device does not have is
+   never offered.
 2. **A known-but-unavailable entry is shown disabled with a reason.** An
    unprovisioned STT mode, a downloadable/unavailable model, and a Smart Turn
    model that is not installed are rendered with `OptionState.Unavailable` and a

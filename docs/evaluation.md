@@ -50,6 +50,7 @@ itself.
 | `LatencySummary`, `LatencyReport` | Nearest-rank p50/p90/p95/max per metric, plus a markdown table. `LatencyReport.fromBargeIns` builds the barge-in metrics straight from the M24 `BargeInTiming` records. |
 | `SpeechQualityScorer`, `SpeechQualityResult`, `SpeechErrorCategory` | Normalized reference-vs-hypothesis WER/CER and best-effort error buckets. |
 | `LabeledEndpointCase`, `EndpointSweep`, `EndpointAccuracy` | Runs the real `BoundedTurnEndpointPolicy` over labeled timelines for each candidate `VadConfig` and classifies accurate / false-commit / false-hold / miss. |
+| `eval.tts.VoiceTtsHarness`, `VoiceTtsHarnessReport` | Drives the M11 `TextToSpeech` contract over fixed texts and reports `tts_first_audible` / `tts_completion` per voice/engine. |
 
 Percentiles use the **nearest-rank** method, so a reported value is always an
 observed sample; no interpolation invents a duration that never occurred. An
@@ -69,6 +70,27 @@ Synthetic fixtures are **not intelligible speech** and keep their base labels, s
 they can exercise the endpoint/latency plumbing but can never produce a
 recognition-quality number. Only the permissioned human corpus can
 (`docs/audio-replay-harness.md`, R-0035, R-0036).
+
+### The TTS stage harness
+
+The TTS step is measured by `eval.tts.VoiceTtsHarness`, which drives the M02
+`TextToSpeech` contract over the fixed assistant-shaped texts in
+`VoiceTtsHarnessCases.TTS_TEXTS`. Per attempt it records the monotonic time from
+the `speak()` call to the first audible `Started` event (`tts_first_audible`) and
+to full `Delivered` (`tts_completion`), and aggregates them with the same
+nearest-rank `LatencyReport`. An attempt that fails or is interrupted is a failed
+outcome with no latency sample, so an unmeasured stage is absent rather than zero.
+
+- Host, deterministic: `VoiceTtsHarnessTest` runs it with a clock-advancing fake
+  and is part of `:app:testDebugUnitTest` (no device, no audio). It proves the
+  aggregation, the failure path, and the record format — not a real engine.
+- Device, opt-in: `VoiceTtsHarnessInstrumentedTest` (`-e ttsHarnessRunId`) speaks
+  through the real platform engine and the selected embedded voice and writes
+  `summary.md`/`record.md` to app-private cache;
+  `scripts/run-tts-harness-device.ps1` stages, runs, and copies them back. It is
+  **not run** yet (no Pixel 10 attached), so the device table below stays empty.
+  A device with no embedded voice is skipped, never measured against a network
+  voice.
 
 ## Endpoint sweep
 
@@ -108,9 +130,12 @@ row out rather than guessing a value.
 
 ### Latency (Pixel 10)
 
+The `tts_first_audible` / `tts_completion` metrics (the TTS harness) belong in
+this table once a device run exists.
+
 | metric | n | p50 ms | p90 ms | p95 ms | max ms |
 | --- | --- | --- | --- | --- | --- |
-| *(no run recorded — R-0043, R-0047)* | | | | | |
+| *(no run recorded — R-0043, R-0047, R-0256)* | | | | | |
 
 ### Endpoint sweep (Pixel 10)
 
