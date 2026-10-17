@@ -113,6 +113,30 @@ Because a capture session can span turns, capture events carry no trace/turn ID
 unless one is supplied at construction; a future orchestrator can pass the
 active turn's IDs.
 
+## Echo cancellation
+
+The assistant is audible on the same device that is listening, so its own speech
+can reach the microphone and look like user speech. Each capture session attaches
+Android's `AcousticEchoCanceler` to that session's `AudioRecord` right after the
+recorder starts (`PlatformEchoCanceller` in `audio/EchoCancellation.kt`) and
+releases it in the session's `finally` block.
+
+- A created `AcousticEchoCanceler` is **disabled**; the canceller is only in the
+  session after `setEnabled(true)`. The attach explicitly enables it and reads the
+  result back, so a created-but-not-enabled canceller is no longer misreported.
+- The outcome is one of `ENABLED` / `NO_SESSION` / `UNAVAILABLE` / `FAILED`,
+  emitted as `PROGRESS` with `STREAM_STATE=echo-canceller-<state>` and logged. It
+  is never assumed: a device without a canceller reports that instead of pretending
+  the microphone is echo-free.
+- The default `EchoCanceller.NONE` attaches nothing, so the JVM capture tests and
+  the replay path are unaffected.
+
+Whether the canceller actually removes the assistant's audio on a given device,
+route, and volume is still a device question (R-0254): the platform can report
+`ENABLED` and still not cancel. Verified on the Pixel 10 on 2026-10-17:
+`PlatformEchoCanceller` reports `ENABLED` for a real capture session
+(`audio.EchoCancellationInstrumentedTest`).
+
 ## Tests
 
 JVM and Robolectric tests cover:
@@ -131,7 +155,14 @@ JVM and Robolectric tests cover:
   degrading gracefully (`AndroidAudioRouteMonitorTest`);
 - frame compatibility: replay and capture frames fed through the same consumer,
   including the real `ReplaySpeechToText` adapter
-  (`CaptureReplayFrameCompatibilityTest`).
+  (`CaptureReplayFrameCompatibilityTest`);
+- echo-cancellation wiring: the platform answer decides the state and a session
+  attaches/releases the canceller once (`EchoCancellationTest`).
+
+On device, `audio.EchoCancellationInstrumentedTest` attaches the real
+`PlatformEchoCanceller` to a real `AudioRecord` session and asserts it reports
+`ENABLED` (skipped with `Assume` when the platform has no canceller). It passed on
+the Pixel 10 on 2026-10-17.
 
 ## Manual Pixel 10 checks (no automation)
 
