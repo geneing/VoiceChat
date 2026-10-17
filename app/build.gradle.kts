@@ -156,6 +156,9 @@ dependencies {
     // Bounded event-stream contracts in the domain/contracts packages.
     implementation(libs.kotlinx.coroutines.core)
 
+    // OpenNLP Penn Treebank tags drive Misaki's English pronunciation variants (M28).
+    implementation(libs.opennlp.tools)
+
     // Shared remote LLM transport (M14): streaming HTTP + JSON. These types stay
     // inside `com.voicechat.agent.remote` and provider adapters; the app-facing
     // LanguageModel/LlmRequest contract never imports them (LlmContractPurityTest,

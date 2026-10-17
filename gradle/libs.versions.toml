@@ -85,6 +85,9 @@ okhttp = "5.1.0"
 # requires kotlin-stdlib 2.3.0, below the pinned 2.4.20 toolchain.
 kotlinxSerialization = "1.10.0"
 
+# English G2P part-of-speech tagging (M28 phonemizer); stable release verified in Maven metadata.
+opennlp = "2.5.12"
+
 # Testing.
 junit = "4.13.2"
 # Robolectric runs the Room repository/schema tests on the JVM so they need no
@@ -136,6 +139,7 @@ kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-t
 # `remote` package and provider adapters, never by the contracts/domain seam.
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+opennlp-tools = { module = "org.apache.opennlp:opennlp-tools", version.ref = "opennlp" }
 junit = { module = "junit:junit", version.ref = "junit" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 # Instrumented (on-device) test foundation: runner/rules/JUnit extension. Compose

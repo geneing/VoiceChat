@@ -194,6 +194,37 @@ Retained platform fallback/unavailable behavior (M11, not the active path):
 - Voice/engine availability is device- and user-configurable; never claim a
   specific voice exists without listing `getVoices()` at runtime.
 
+### Kokoro English phonemizer (M28)
+
+**Decision: use OpenNLP Penn POS tags with Misaki's US English gold/silver
+lexicons, plus the README's documented letter-rule fallback and inline IPA
+overrides.** This avoids a Python/spaCy runtime and keeps phonemization offline.
+The pinned `org.apache.opennlp:opennlp-tools:2.5.12` is the latest stable release
+in Maven Central metadata checked 2026-10-17 (3.0.0-M6 is a milestone); it is
+Apache-2.0. The offline English Penn perceptron model is bundled at
+`app/src/main/assets/kokoro/en-pos-perceptron.bin` (3,975,786 bytes,
+SHA-256 `0b49b7d9bdb9f888aed85e9f41fbcfd6cab607805ba9cd2370e1e5af4e540db8`),
+from OpenNLP's 1.5 model page under Apache-2.0. The app includes only the US
+Misaki dictionaries supplied for this voice; GB dictionaries and voice support
+remain out of scope. Three VBP corrections from the linked Kokoro Kotlin
+README (`read`, `reread`, `wound`) are applied after dictionary loading.
+
+The JVM fixture suite currently matches Misaki 0.9.4 on all 203 frozen corpus
+sentences. That is fixture parity, not a general English accuracy or device
+latency claim; the rule fallback and the 2010-vintage POS model remain
+best-effort on out-of-vocabulary and unusual prose. Cardinal and currency
+expansion currently uses signed-64-bit arithmetic; larger numeric values are
+outside the validated subset.
+
+Sources checked 2026-10-17:
+
+- Kokoro Kotlin phonemizer design —
+  https://github.com/alexsobolev/kokoro-tts-kotlin/blob/main/README.md
+- Apache OpenNLP Maven metadata —
+  https://repo.maven.apache.org/maven2/org/apache/opennlp/opennlp-tools/maven-metadata.xml
+- OpenNLP 1.5 models (model and Apache license header) —
+  https://opennlp.sourceforge.net/models-1.5/
+
 ### 2.3 Voice activity / turn detection
 
 **Deferred to M09 with an explicit constraint.** No VAD model is allow-listed at
