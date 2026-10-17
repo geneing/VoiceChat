@@ -57,6 +57,7 @@ genuinely unknown, write "unknown" rather than guessing.
 - [Release hardening follow-ups (M26)](#release-hardening-follow-ups-m26) - R-0220-R-0239
 - [Voice-loop LLM measurement (M25 input)](#voice-loop-llm-measurement-m25-input) - R-0248-R-0255
 - [TTS configuration and harness (dev/TTS)](#tts-configuration-and-harness-devtts) - R-0256-R-0258
+- [Voice-loop opening-audio pre-roll (dev)](#voice-loop-opening-audio-pre-roll-dev) - R-0259
 
 ## Speech: on-device STT, TTS, VAD, and turn completion
 
@@ -415,3 +416,15 @@ device half is compiled only.
 | R-0256 | resolved (dev/TTS, Pixel 10) | speech | The TTS-stage harness (`VoiceTtsHarnessInstrumentedTest`) had not been run, so no `tts_first_audible`/`tts_completion` device number existed for the platform engine or the configured voice. | docs/tts.md, docs/evaluation.md, scripts/run-tts-harness-device.ps1 | dev/TTS | Resolved: `.\\scripts\\run-tts-harness-device.ps1 -Repeats 3` ran on 2026-10-17 on Pixel 10 (`frankel`, Android 17/API 37, build `CP3A.261005.005`, debug; engine `com.google.android.tts`, voice `en-us-x-tpf-local` quality 400, locale `en-US`, built-in speaker). All 9 attempts delivered; `tts_first_audible` p50 23 ms (first `speak()` after init 305 ms, later attempts 15-26 ms), `tts_completion` p50 4958 ms for 51-94 characters. One device, one voice, one moment; route/echo and audible naturalness stay R-0254/R-0258. |
 | R-0257 | open | speech | Speech-engine selection is validated against `TextToSpeech.getEngines()`, but the platform does not expose which engine a live `TextToSpeech` instance actually bound to, so a device/engine that ignores the constructor package cannot be detected from the API. The 2026-10-17 device run used the default engine (`com.google.android.tts`); only one engine was installed, so a non-default selection is still unexercised. | docs/tts.md, tts/AndroidTtsEngine.kt | M25/M26 | A Pixel 10 run with a second TTS engine installed showing the selected engine is the one used, and that a removed engine yields the typed `SelectedEngineUnavailable`/`TTS_NO_ON_DEVICE_VOICE` rather than a silent default. |
 | R-0258 | open | speech | "Most natural voice" is `Voice.getQuality()`, the only naturalness signal `android.speech.tts` exposes; the rank is coarse (the platform's own supertonic voices share the same ranks) and the choice is not calibrated against perceived naturalness on Pixel 10. The 2026-10-17 run selected `en-us-x-tpf-local` (quality 400, latency 200) for `en-US`, which is the highest-quality embedded voice reported, but the audible result was not judged. | docs/tts.md, tts/TtsVoice.kt | M25 | A device run comparing the selected voice's audible naturalness across the embedded voices, or a newer platform naturalness/feature signal to rank on. |
+
+## Voice-loop opening-audio pre-roll (dev)
+
+Added after a device report that the first two to three spoken words were missing
+from the transcript. The cause was structural: a recognition turn started at VAD
+onset, and the capture frames before that decision were sent only to the VAD, so
+the recognizer never saw the opening word(s). The coordinator now keeps a rolling
+pre-roll and seeds each new turn with it.
+
+| ID | Status | Area | Item and open question | Source | Resolves in | Evidence to close |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-0259 | open | speech | The pre-roll is a fixed 50 frames (≈1.0 s) and is not calibrated on device. It is cleared when a turn ends, but on a **barge-in** the pre-roll can still contain up to a second of the assistant's own (echo-cancelled) audio, which the recognizer may transcribe as spurious words; and whether 1.0 s recovers the whole clipped prefix depends on how far the opening syllable sits below the 0.02 RMS onset threshold. | docs/voice-loop.md, docs/android-speech-recognition.md, voice/CapturePreRoll.kt | M25 | A Pixel 10 run recording the words recovered by the pre-roll and whether any assistant words leak into a barge-in transcript, then set the pre-roll length (or an onset-threshold change) from that measurement. |

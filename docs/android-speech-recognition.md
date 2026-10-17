@@ -48,7 +48,13 @@ same 16 kHz mono 16-bit PCM frames the VAD already sees:
 
 This gives one microphone owner and one code path for live capture and replay.
 It is also why the app can replay a recorded file with no host conversion and no
-speaker. **Confirmed on Pixel 10 (M27):** the on-device recognizer reads the piped
+speaker.
+
+**Opening audio.** A recognition session starts at VAD speech onset, which is a
+few frames after speech actually begins, so the recognizer would otherwise begin
+mid-sentence. The coordinator keeps a rolling pre-roll of recent capture frames
+(`CapturePreRoll`, 50 frames ≈ 1.0 s) and feeds it into the turn before the live
+audio, so the session sees the opening word(s) too (`docs/voice-loop.md`). **Confirmed on Pixel 10 (M27):** the on-device recognizer reads the piped
 PCM and returns partials and a final transcript for a staged clip. **Limitation:**
 `EXTRA_AUDIO_SOURCE` is API 33+, and per the platform docs a recognizer may ignore
 it ("no effect") and open the microphone instead; on API 31-32 the extra does not

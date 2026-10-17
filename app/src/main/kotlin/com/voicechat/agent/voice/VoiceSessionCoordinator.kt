@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The voice conversation loop: microphone capture → VAD/onset → streaming STT →
@@ -90,8 +91,18 @@ class VoiceSessionCoordinator(
     private val turnIdFactory: () -> TurnId = { TurnId("voice-${UUID.randomUUID()}") },
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val wallClock: () -> Long = System::currentTimeMillis,
+    /**
+     * Frames of capture kept as a pre-roll and handed to a new turn before the
+     * live audio. VAD onset fires a few frames after speech starts, so without
+     * this the opening word(s) never reach the recognizer. 50 frames ≈ 1.0 s at
+     * the 20 ms capture frame.
+     */
+    private val preRollFrames: Int = DEFAULT_PRE_ROLL_FRAMES,
 ) : VoiceSessionController {
     private val _state = MutableStateFlow(VoiceSessionState.IDLE)
+
+    /** Recent capture frames, seeded into each new turn before its live audio. */
+    private val preRoll = CapturePreRoll(preRollFrames)
 
     /** Observable session state, for the dialog. */
     override val state: StateFlow<VoiceSessionState> = _state.asStateFlow()
@@ -209,13 +220,32 @@ class VoiceSessionCoordinator(
         try {
             audioInput.frames().collect { frame ->
                 input.send(frame)
-                activeListening?.let { turn ->
+                val turn = activeListening
+                if (turn != null) {
+                    // A turn that just started gets the audio captured before its
+                    // onset, so the recognizer does not lose the opening words. The
+                    // pre-roll is flushed once, before this frame, keeping the order.
+                    if (turn.preRollPending.compareAndSet(true, false)) {
+                        val preRollFrames = preRoll.snapshot()
+                        if (preRollFrames.isNotEmpty()) {
+                            AppLog.d { "voice: seeding turn with ${preRollFrames.size} pre-roll frame(s)" }
+                            for (buffered in preRollFrames) {
+                                try {
+                                    turn.input.send(buffered)
+                                } catch (ignored: ClosedSendChannelException) {
+                                    break
+                                }
+                            }
+                        }
+                    }
                     try {
                         turn.input.send(frame)
                     } catch (ignored: ClosedSendChannelException) {
                         // The endpoint arrived while this frame was in flight.
                     }
                 }
+                // Recorded after the flush so the current frame is not part of it.
+                preRoll.record(frame)
             }
         } finally {
             input.close()
@@ -295,6 +325,8 @@ class VoiceSessionCoordinator(
         }
         turn.vadEndpointOffsetMillis = (event.atOffsetMillis - turn.startedAtOffsetMillis).coerceAtLeast(0L)
         activeListening = null
+        // Do not let the next turn inherit this utterance's tail as its pre-roll.
+        preRoll.clear()
         turn.input.close()
         val scope = sessionScope ?: return
         val previous = synchronized(stateLock) { finalizationJob }
@@ -559,6 +591,8 @@ class VoiceSessionCoordinator(
         val input: Channel<AudioFrame>,
         val startedAtOffsetMillis: Long,
     ) {
+        /** True until the capture pump has seeded this turn with the pre-roll. */
+        val preRollPending = AtomicBoolean(true)
         var job: Job? = null
         var provisional: Transcript? = null
         var final: Transcript? = null
@@ -572,6 +606,13 @@ class VoiceSessionCoordinator(
 
         /** Frames queued for the recognizer. */
         const val STT_BUFFER = 128
+
+        /**
+         * Capture frames kept as a pre-roll (≈1.0 s at the 20 ms frame), so a turn
+         * that starts at VAD onset still receives the audio captured just before
+         * it and does not clip the user's first word(s).
+         */
+        const val DEFAULT_PRE_ROLL_FRAMES = 50
 
         /** Maximum wait after endpoint for the recognizer's final result. */
         const val STT_COMPLETION_TIMEOUT_MILLIS = 5_000L

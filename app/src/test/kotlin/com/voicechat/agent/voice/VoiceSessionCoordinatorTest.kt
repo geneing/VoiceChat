@@ -6,6 +6,8 @@ import com.voicechat.agent.contracts.SpeechActivity
 import com.voicechat.agent.contracts.SpeechToText
 import com.voicechat.agent.contracts.SttEvent
 import com.voicechat.agent.diagnostics.MonotonicClock
+import com.voicechat.agent.domain.AudioFormat
+import com.voicechat.agent.domain.AudioFrame
 import com.voicechat.agent.domain.Conversation
 import com.voicechat.agent.domain.ConversationId
 import com.voicechat.agent.domain.ErrorCode
@@ -14,6 +16,7 @@ import com.voicechat.agent.domain.UserTurn
 import com.voicechat.agent.fake.FakeAudioInput
 import com.voicechat.agent.fake.InMemoryConversationRepository
 import com.voicechat.agent.fake.LateInterimSpeechToText
+import com.voicechat.agent.fake.ManualAudioInput
 import com.voicechat.agent.fake.ManualSpeechToText
 import com.voicechat.agent.fake.ManualVoiceTurnDetector
 import com.voicechat.agent.fake.RecordingVoiceSessionListener
@@ -197,6 +200,52 @@ class VoiceSessionCoordinatorTest {
             session.cancelAndJoin()
             assertTrue(speechToText.cancelled.isCompleted)
         }
+
+    @Test
+    fun aTurnIsSeededWithTheAudioCapturedBeforeOnset() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val repository = InMemoryConversationRepository()
+            val detector = ManualVoiceTurnDetector()
+            val speechToText = ManualSpeechToText()
+            val audio = ManualAudioInput()
+            val listener = RecordingVoiceSessionListener()
+            val coordinator =
+                VoiceSessionCoordinator(
+                    audioInput = audio,
+                    repository = repository,
+                    speechToText = speechToText,
+                    turnDetector = detector,
+                    listener = listener,
+                    dispatcher = dispatcher,
+                    clock = MonotonicClock { 10L },
+                    turnIdFactory = SequentialTurnIds()::next,
+                    wallClock = { 2L },
+                )
+
+            val session = launch(dispatcher) { coordinator.run(conversation) }
+            // Speech has started, but the VAD has not declared onset yet: these
+            // frames are the opening word(s) that used to be dropped.
+            repeat(3) { audio.emit(frame(it.toLong())) }
+            runCurrent()
+            assertEquals("no turn exists before the onset decision", 0, speechToText.observedFrameCount)
+
+            detector.speech(SpeechActivity.SPEECH_STARTED)
+            runCurrent()
+            // The next captured frame flushes the pre-roll, then continues live.
+            audio.emit(frame(3L))
+            runCurrent()
+
+            assertEquals(
+                "the recognizer must receive the pre-onset frames plus the live frame",
+                4,
+                speechToText.observedFrameCount,
+            )
+            session.cancelAndJoin()
+        }
+
+    private fun frame(index: Long): AudioFrame =
+        AudioFrame(format = AudioFormat.MONO_16_KHZ, samples = ShortArray(4), capturedAtNanos = index)
 
     private class SequentialTurnIds {
         private var count = 0
