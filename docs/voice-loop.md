@@ -61,6 +61,18 @@ or `FAILED` as a capture diagnostic instead of assuming the mic is echo-free.
 Whether it actually cancels the assistant on a given route (speaker, wired, or
 Bluetooth) is a device measurement (R-0254).
 
+**Pre-roll (opening-word clipping).** A recognition turn starts when the VAD
+declares speech onset, which is a few frames *after* speech actually begins — and
+an opening syllable quieter than the onset threshold can delay the decision by
+several words. So the coordinator keeps a small rolling buffer of the most recent
+capture frames (`CapturePreRoll`, 50 frames ≈ 1.0 s) and, when a turn starts,
+feeds those frames to the recognizer before the live audio continues. Without it
+the recognizer only ever saw audio from the onset onward and the transcript began
+mid-sentence. The buffer is cleared when a turn ends, so the next turn cannot
+inherit the previous utterance's tail; on a barge-in the pre-roll can still
+contain up to a second of the assistant's (echo-cancelled) audio, which is a
+device measurement (R-0259).
+
 ## Ownership and boundaries
 
 - `VoiceSessionAssembly` resolves the configured on-device STT engine, builds
