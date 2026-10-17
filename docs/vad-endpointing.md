@@ -224,91 +224,57 @@ for the M09 checklist.
   memory are unmeasured (R-0063).
 - The exact semantic window/contract for Smart Turn is confirmed in M10 (R-0064).
 
-## Parakeet-EOU corroboration
+## Semantic corroboration and the platform end-of-speech signal
 
-The Parakeet-EOU streaming engine (`docs/parakeet-eou-streaming.md`) produces a
-**second finalization signal** in addition to the bounded VAD/silence cap: the
-model's internal end-of-utterance token (`<EOU>`). This section records how that
-signal plugs into the M09 path **without changing the policy**.
-
-### Two signals, one decision (unchanged)
+The bounded VAD/silence cap is the **primary** end-of-turn decision. A second,
+optional signal can corroborate it at a candidate pause; neither signal replaces
+the policy.
 
 1. **VAD / bounded silence cap (external, primary).** `BoundedTurnEndpointPolicy`
    emits `CANDIDATE_PAUSE` and, if the turn is not resumed, finalizes it once
    when `maxSilenceMillis` elapses (`SILENCE_CAP`). This remains the guarantee
    that a trailing turn terminates.
-2. **Parakeet `<EOU>` (model-internal, corroborator).** The streaming decoder
-   commits a segment on a *debounced* `<EOU>` (1280 ms of sustained `<EOU>` with
-   no new tokens). When the Parakeet engine is selected, `ParakeetEouSpeechToText`
-   publishes each confirmed EOU through `EndOfUtteranceSignal`, and
-   `EouTurnCompletionDetector` reads it at a candidate pause.
+2. **Smart Turn v3.2 (semantic corroborator).** At a candidate pause the optional
+   `TurnCompletionDetector` returns `COMPLETE` / `INCOMPLETE` / `UNAVAILABLE`,
+   which map onto `SEMANTIC_COMPLETE` / `SEMANTIC_INCOMPLETE` / the bounded cap.
+   It is evaluated only at a candidate pause — never per frame, never on the
+   onset path — so barge-in stays low-latency.
+3. **Platform `SpeechRecognizer.onEndOfSpeech` (engine-internal corroborator).**
+   The platform engine emits its own end-of-speech signal. The adapter surfaces it
+   as `SttEvent.EndOfSpeech` and records its timing, but it is **never** the
+   authority for ending a turn: the bounded VAD endpoint closes the turn and the
+   adapter's input, after which the recognizer is stopped and its final result is
+   awaited (bounded). An early engine signal therefore cannot truncate a
+   still-speaking user, and a silence cap still commits a finished turn
+   (`docs/android-speech-recognition.md`).
 
-### Why EOU is only a corroborator
-
-Host measurement on the ten local pseudo-labeled clips (recorded in
-`docs/parakeet-eou-streaming.md`) shows the EOU head, even with its 1280 ms
-debounce, committed only **1 of 10** clips — while streaming decode still beat
-naive full-utterance decode (mean WER 0.331 vs 0.846, host RTF ~0.10-0.14). EOU
-is therefore never the sole endpoint:
-
-- a confirmed EOU within `eouWindowMillis` of the pause may end the turn early as
-  `SEMANTIC_COMPLETE`;
-- an old (or absent) EOU holds the turn (`SEMANTIC_INCOMPLETE`), and the bounded
-  silence cap still ends it as `SILENCE_CAP`.
-
-This is the same contract Smart Turn v3.2 uses: `TurnCompletion.COMPLETE`,
-`INCOMPLETE`, and `UNAVAILABLE` map onto the policy's `SEMANTIC_COMPLETE`,
-`SEMANTIC_INCOMPLETE`, and `VAD_ONLY`/cap behavior. **No new `EndpointReason` was
-added** — the EOU case reuses `SEMANTIC_COMPLETE`.
-
-### Debounce
-
-The decoder already debounces `<EOU>` (a mid-word head fires on disfluencies, so
-a *sustained* run is required before a segment commits). The adapter adds no
-second classifier and no second decode: `EouTurnCompletionDetector` **reads the
-already-published signal**, so EOU adds no inference to the endpoint decision.
-The detector's own `eouWindowMillis` (default 2000 ms) bounds how recent a
-confirmation must be to count as "the pause completes this thought"; it is
-provisional until device measurement (R-0240).
-
-### Barge-in is untouched
-
-`BoundedTurnEndpointPolicy` still emits `SPEECH_STARTED`, `CANDIDATE_PAUSE`, and
-`SPEECH_RESUMED` unconditionally, and calls the semantic detector **only** at a
-candidate pause — never per frame, never on the onset path. Passing
-`EouTurnCompletionDetector` as the optional `semanticDetector` therefore leaves
-barge-in latency byte-for-byte identical to the VAD-only case; a JVM test asserts
-the activity sequence is unchanged with and without the EOU detector.
+All three reuse the existing endpoint contract; no new `EndpointReason` is added.
 
 ### Wiring
 
-`ParakeetEouSpeechToText` implements the STT contract and also exposes
-`endOfUtterance: EndOfUtteranceSignal`. The voice assembly selects the detector
-with `ParakeetEouTurnDetectorFactory.forEngine(stt)` and passes it to the existing
-seam — the only change:
+The voice assembly passes the optional Smart Turn detector to the existing seam:
 
 ```
-val stt = ParakeetEouSpeechToText(decoderFactory = …)
-val semantic = ParakeetEouTurnDetectorFactory.forEngine(stt)
-PolicyVoiceTurnDetector.forRoute(semanticDetector = semantic)
+PolicyVoiceTurnDetector.forRoute(semanticDetector = smartTurnDetector)
 ```
+
+The engine-internal `onEndOfSpeech` travels inside the STT adapter and is
+surfaced through `VoiceSessionListener.onSttEndOfSpeech` for observation only.
 
 ### Failure and absence
 
-- No signal (Smart Turn selected, or a VAD-only session) → the detector reports
+- No semantic signal (Smart Turn disabled/absent) → the detector reports
   `UNAVAILABLE` and the bounded cap alone ends the turn.
-- A signal with no recent confirmation → `INCOMPLETE` (hold).
+- A signal with no recent confirmation → `INCOMPLETE` (hold), and the cap still
+  ends the turn.
 - The detector is evaluated once per candidate pause and is console-safe: it
   never logs transcripts, token ids, or audio.
 
 ### Tests
 
-`EouTurnCompletionDetectorTest`, `ParakeetEouSpeechToTextTest`, and
-`ParakeetEouPolicyIntegrationTest` cover: EOU within/outside the window, no
-signal, pre-subscription (replayed) confirmations not counting as fresh, once
-per call and never per frame; partial vs final mapping and monotonic revisions;
-captured samples reaching the decoder unchanged; typed decoder-failure mapping;
-cancellation stopping emission; a recent EOU ending once as `SEMANTIC_COMPLETE`;
-a missing EOU holding and the cap still ending the turn; and the onset/barge-in
-sequence being unaffected. `ParakeetSourcePurityTest` guards the pure seam.
+`SmartTurnCompletionDetectorTest`, `SmartTurnEndpointIntegrationTest`, and
+`VoiceSessionCoordinatorTest` cover: the semantic detector returning
+complete/incomplete/unavailable at a candidate pause, the bounded cap still
+ending a held turn, and `SttEvent.EndOfSpeech` being surfaced without committing
+the turn. `VadSourcePurityTest` guards the pure seam.
 

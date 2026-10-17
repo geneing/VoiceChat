@@ -1234,70 +1234,45 @@ What the JVM suite proves (details in the linked document):
 device-testing policy it is compiled only, and it is a structural smoke check
 with inline fakes, not a voice-quality or timing measurement.
 
-### Parakeet-EOU full path, file-driven (run on Pixel 10, 2026-10-03)
+### Platform SpeechRecognizer STT (M27; device run not recorded yet)
 
-The complete `capture → VAD/onset → Parakeet-EOU STT → provider LLM → on-device
-TTS` path was run on a physical Pixel 10 with the UI in the foreground and the
-talk control tapped. Audio came from a staged 16 kHz mono PCM16 WAV through the
-debug-only `DebugFileAudioInput` (selected when `files/debug-audio/input.wav`
-exists; release ignores it), so no live speech was needed. Observed in logcat:
+The STT engine is the platform `android.speech.SpeechRecognizer`, preferred
+on-device (`createOnDeviceSpeechRecognizer` / `EXTRA_PREFER_OFFLINE`), with the
+recognizer's `EXTRA_AUDIO_SOURCE` pipe fed from the captured PCM frames. It
+replaced the app-managed Parakeet-EOU ONNX engine, which was removed; see
+[docs/android-speech-recognition.md](./docs/android-speech-recognition.md).
 
-```
-vad: SPEECH_STARTED reason=ONSET_RMS at=40ms
-vad: turn held reason=SEMANTIC_INCOMPLETE at=13588ms   # EOU corroborator, mid-turn
-vad: turn endpointed reason=SILENCE_CAP at=15588ms
-stt: parakeet session end outcome=COMPLETED frames=777 chunks=25 dropped=0 chars=193
-orchestration: turn start source=VOICE provider=opencode-go model=longcat-2.5-preview-free
-llm: request provider=opencode-go model=… streaming=true
-tts: synthesis start chars=… voice=en-us-x-tpf-local
-```
+The debug-only `DebugFileAudioInput` (selected when `files/debug-audio/input.wav`
+or `input.m4a` exists; release ignores it) replays a recording through the real
+`capture → VAD/onset → platform STT` path with the UI in the foreground, so no
+live speech is needed. No Pixel 10 run has been recorded for this engine yet
+(R-0243, R-0244); recognition accuracy, partial latency, and end-of-speech timing
+are unmeasured.
 
-The dialog showed the user bubble (recognized transcript), the streaming
-assistant bubble, and the `Speaking…` state. This proves the wiring and
-truthfulness of the path, **not** recognition accuracy; accuracy and per-chunk
-decode timing remain unmeasured (R-0240/R-0241).
-
-```powershell
-# Installs the debug APK, stages the WAV (and an optional developer credential),
-# taps the talk control, and writes a logcat capture plus screenshots.
-.\scripts\run-parakeet-eou-voice-loop.ps1 `
-  -InputPath "test_data/eng-000058-000ee09a.wav" -ListenSeconds 45
-```
-
-The decoder-only streaming replay (`ParakeetEouReplayInstrumentedTest`, steps 1-2
-above) is unchanged and is driven by `scripts/run-parakeet-eou-replay.ps1`; see
-[docs/parakeet-eou-streaming.md](./docs/parakeet-eou-streaming.md).
-
-### STT pipeline stage timing harness (opt-in; run on Pixel 10, 2026-10-15)
+### STT pipeline stage timing harness (opt-in; Pixel 10 run pending)
 
 `SttPipelineHarnessInstrumentedTest` (`app/src/androidTest/.../voice/`) replays a
 recorded clip (WAV or M4A, decoded on the device) as real-time paced 20 ms frames
 through the **real** `VoiceSessionCoordinator`, the M09 VAD/onset policy, the
-Parakeet-EOU streaming adapter, and — when enabled — the M10 Smart Turn
+platform `SpeechRecognizer` adapter, and — when enabled — the M10 Smart Turn
 corroborator. It logs every VAD, Smart Turn, and STT stage to logcat under the
 `SttHarness` tag and writes two content-free reports to app-private cache:
-`summary.csv` (per-clip timing: capture-start/onset to first transcript, input-end
-and VAD-endpoint to final, EOU-minus-VAD offset) and `stages.csv` (the full
-timestamped stage timeline). The CSVs hold only character counts; with
+`summary.csv` (per-clip timing: capture-start/onset to first partial, VAD-endpoint
+and end-of-speech to final, input-end to final, partial count) and `stages.csv`
+(the full timestamped stage timeline). The CSVs hold only character counts; with
 `-e sttHarnessLogTranscripts true` (the driver's default) the partial revisions
 and the final text are additionally logged to logcat.
 
 It is opt-in: without `-e sttHarnessRunId <id>` it is skipped, so ordinary
-`connectedDebugAndroidTest` runs never replay personal audio, and it needs the
-pinned Parakeet-EOU model staged.
-
-First run (Pixel 10 `57220DLCR002R6`, `test_data/Walking .m4a`, one run each):
-VAD-only reported `outcome=FINAL`, 1 endpoint (`SILENCE_CAP`), first transcript
-1,718 ms after onset, VAD-endpoint → final 3 ms, `EOU - VAD` -300 ms, 103 chars;
-with `-SmartTurn` the policy reported 5 `SEMANTIC_COMPLETE` endpoints (probabilities
-0.69-0.99) and a 7-character final turn. One clip, not gold-labeled; the
-fragmentation is tracked as R-0242. Reports: `build/stt-harness/<runId>/`.
+`connectedDebugAndroidTest` runs never replay personal audio. It also skips on a
+device that exposes no on-device recognizer.
 
 ```powershell
-# Replays test_data/Walking .m4a through the real capture -> VAD -> Parakeet-EOU
-# STT -> bounded endpoint path, with the pinned model and stage timing reports.
+# Replays test_data/Walking .m4a and test_data/eng-000001-000081dd.wav through the
+# real capture -> VAD -> platform STT -> bounded endpoint path with timing reports.
 .\scripts\run-stt-pipeline-harness.ps1
-# Add -SmartTurn to include the Smart Turn corroborator when its model is staged.
+# Pass -InputPath <clips> to choose clips; -SmartTurn to include the Smart Turn
+# corroborator when its model is staged.
 ```
 
 ### Pixel 10 checks (marked NOT run)
