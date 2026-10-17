@@ -175,6 +175,7 @@ class AndroidSpeechRecognizerSpeechToText(
                 var partialCount = 0
                 var firstPartialNanos: Long? = null
                 var endOfSpeechNanos: Long? = null
+                var segmentCount = 0
                 var finalCharacterCount = 0
                 var outcome = DiagnosticOutcome.CANCELLED
                 var errorCode: String? = null
@@ -253,6 +254,7 @@ class AndroidSpeechRecognizerSpeechToText(
                                     partialCount++
                                     if (firstPartialNanos == null) firstPartialNanos = clock.nanoTime()
                                 },
+                                onSegment = { segmentCount++ },
                                 recordEndOfSpeech = {
                                     if (endOfSpeechNanos == null) endOfSpeechNanos = clock.nanoTime()
                                 },
@@ -358,7 +360,7 @@ class AndroidSpeechRecognizerSpeechToText(
                         errorCode,
                     )
                     AppLog.i {
-                        "asr: session end outcome=$outcome frames=$frameCount partials=$partialCount chars=$finalCharacterCount"
+                        "asr: session end outcome=$outcome frames=$frameCount partials=$partialCount segments=$segmentCount chars=$finalCharacterCount"
                     }
                     activeRecognizer.getAndSet(null)?.let { recognizer ->
                         withContext(NonCancellable) {
@@ -525,12 +527,18 @@ private sealed interface RecognitionEvent {
  * is forwarded at most once and never stops the recognizer from the callback:
  * the stop is driven by the input-end path, and a re-entrant stop made the
  * on-device recognizer answer `ERROR_CLIENT`.
+ *
+ * Segmented-session mode (`RecognizerIntent.EXTRA_SEGMENTED_SESSION`) delivers
+ * each finalized chunk through `onSegmentResults` and ends the whole session with
+ * `onEndOfSegmentedSession`; both are handled here. A recognizer that ignores the
+ * extra simply never calls them and keeps using the partial/`onResults` path.
  */
 private class PlatformRecognitionBridge(
     private val responses: Channel<SttEngineResponse>,
     private val terminated: CompletableDeferred<Unit>,
     private val onRecognitionEvent: (RecognitionEvent) -> Unit,
     private val onPartial: () -> Unit,
+    private val onSegment: () -> Unit,
     private val recordEndOfSpeech: () -> Unit,
 ) : RecognitionListener {
     private val endOfSpeechForwarded = AtomicBoolean(false)
@@ -561,6 +569,26 @@ private class PlatformRecognitionBridge(
         if (endOfSpeechForwarded.compareAndSet(false, true)) {
             responses.trySend(SttEngineResponse.EndOfSpeech)
         }
+    }
+
+    /** A finalized chunk of a segmented session; text is under `RESULTS_RECOGNITION`. */
+    override fun onSegmentResults(segmentResults: Bundle) {
+        val text = segmentResults.firstResult()
+        if (text.isNotBlank()) {
+            onSegment()
+            AppLog.i { "asr: onSegmentResults chars=${text.length}" }
+            AppLog.v { "asr: onSegmentResults text=$text" }
+            responses.trySend(SttEngineResponse.Final(text))
+        } else {
+            AppLog.i { "asr: onSegmentResults empty" }
+        }
+    }
+
+    /** The segmented session ended; this is its terminal callback. */
+    override fun onEndOfSegmentedSession() {
+        AppLog.i { "asr: onEndOfSegmentedSession" }
+        responses.close()
+        terminated.complete(Unit)
     }
 
     override fun onError(error: Int) {

@@ -53,6 +53,12 @@ internal object AndroidSpeechSttMapping {
             putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, CHANNEL_COUNT)
             putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, ENCODING)
             putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, SAMPLE_RATE_HZ)
+            // Segmented session mode: a String extra whose value is the extra that
+            // carries the audio (EXTRA_AUDIO_SOURCE), never a boolean. The service
+            // then delivers finalized chunks via onSegmentResults and terminates via
+            // onEndOfSegmentedSession. A service may ignore this extra, in which case
+            // the partial/onResults path is unchanged.
+            putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE)
         }
 
     /**

@@ -172,6 +172,51 @@ class AndroidSpeechRecognizerSpeechToTextTest {
             job.cancel()
         }
 
+    @Test
+    fun segmentedSessionJoinsSegmentsIntoTheFinalTranscript() =
+        runTest {
+            Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+            val provider = FakeRecognizerProvider()
+            val adapter = adapter(provider)
+            val events = mutableListOf<SttEvent>()
+            val job = launch { adapter.transcribe(MutableSharedFlow<AudioFrame>()).collect { events += it } }
+            runCurrent()
+            val recognizer = provider.recognizers.single()
+
+            // Segmented mode: each onSegmentResults is a finalized chunk and
+            // onEndOfSegmentedSession terminates the session.
+            recognizer.segment("the first part")
+            recognizer.segment("the second part")
+            recognizer.endOfSegmentedSession()
+            runCurrent()
+
+            val final = events.last() as SttEvent.Result
+            assertTrue(final.transcript.isFinal)
+            assertEquals("the first part the second part", final.transcript.text)
+            job.cancel()
+        }
+
+    @Test
+    fun segmentedSessionIgnoresEmptySegments() =
+        runTest {
+            Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+            val provider = FakeRecognizerProvider()
+            val adapter = adapter(provider)
+            val events = mutableListOf<SttEvent>()
+            val job = launch { adapter.transcribe(MutableSharedFlow<AudioFrame>()).collect { events += it } }
+            runCurrent()
+            val recognizer = provider.recognizers.single()
+
+            recognizer.segment("only part")
+            recognizer.segment("")
+            recognizer.endOfSegmentedSession()
+            runCurrent()
+
+            val final = events.last() as SttEvent.Result
+            assertEquals("only part", final.transcript.text)
+            job.cancel()
+        }
+
     private fun adapter(
         provider: RecognizerProvider,
         diagnostics: com.voicechat.agent.contracts.DiagnosticsSink = com.voicechat.agent.contracts.NoOpDiagnosticsSink,
@@ -228,6 +273,10 @@ class AndroidSpeechRecognizerSpeechToTextTest {
         fun error(code: Int) = requireListener().onError(code)
 
         fun endOfSpeech() = requireListener().onEndOfSpeech()
+
+        fun segment(text: String) = requireListener().onSegmentResults(bundle(text))
+
+        fun endOfSegmentedSession() = requireListener().onEndOfSegmentedSession()
 
         private fun requireListener(): RecognitionListener = checkNotNull(listener) { "no listener set" }
 

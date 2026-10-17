@@ -61,28 +61,42 @@ The recognizer's `onEndOfSpeech` is surfaced as `SttEvent.EndOfSpeech` and timed
 (`END_OF_SPEECH_MILLIS`), but it is **not** a turn boundary. Measured on Pixel 10
 (M27), the on-device recognizer emits `onEndOfSpeech` well before the utterance
 ends (14.3 s before the final on one 22.7 s clip) and keeps streaming partials;
-`onResults` arrives only when the custom audio closes. So the bounded M09
+the terminal result arrives only when the custom audio closes. So the bounded M09
 VAD/Smart Turn endpoint closes the turn and its input, the adapter closes the
-pipe, and `onResults` follows (measured 150-350 ms later). The adapter never
-calls `stopListening()` while the recognizer reads the pipe and never stops from
-inside the `onEndOfSpeech` callback — both produced `ERROR_CLIENT` on the device.
+pipe, and the terminal callback follows (measured 150-350 ms later): with
+segmented mode that is `onEndOfSegmentedSession`, otherwise `onResults`. The
+adapter never calls `stopListening()` while the recognizer reads the pipe and
+never stops from inside the `onEndOfSpeech` callback — both produced
+`ERROR_CLIENT` on the device.
 This is the "use the API's end-of-speech but let VAD/turn detection make it
 robust" behavior: VAD decides the turn, and the engine signal is corroborating
 metadata.
 
-### Recognition text
+### Recognition text and segmented session mode
 
-On Pixel 10 the on-device recognizer returns an **empty** `onResults` (12/12
-sessions, `chars=0`): all recognized text arrives through `onPartialResults`. The
-adapter's `SttResultAssembler` therefore commits its last partial as the final
-transcript. The engine's partial text can reset or re-emit after its own
-`onEndOfSpeech`, so for a long single VAD turn the committed text is sometimes
-only the engine's last internal segment (`eng-000004` committed "No no no no"
-where ML Kit returned the fuller sentence; `Walking .m4a` committed "Latest news
-please"). Concatenating the per-segment partials was tried and duplicates or
-truncates depending on the clip, so it is not done; R-0247 tracks a robust
-strategy. Keep VAD turns short for now and treat the committed text as the
-engine's last hypothesis, not a gold transcript.
+The adapter requests **segmented session mode**:
+`RecognizerIntent.EXTRA_SEGMENTED_SESSION` is set to the String
+`RecognizerIntent.EXTRA_AUDIO_SOURCE` (never a boolean), with the PFD under
+`EXTRA_AUDIO_SOURCE` as usual. Confirmed on Pixel 10 / API 37: the on-device
+recognizer honors it. Each finalized chunk arrives in
+`onSegmentResults(Bundle)` (text under `SpeechRecognizer.RESULTS_RECOGNITION`),
+the session terminates with `onEndOfSegmentedSession()`, and `onResults` is not
+called at all (0 across the corpus). The adapter maps each non-empty segment to a
+final segment, so `SttResultAssembler` joins them into the turn's transcript.
+
+Measured over the 12-clip corpus (two batches, one paced run each): 13 sessions,
+13 `onEndOfSegmentedSession`, 0 `onResults`, 21 non-empty segments, every session
+`FINAL`. It fixes both failure modes seen without it — no truncation
+(`eng-000004` 11 → 57 chars, `eng-000031` 44 → 174, `Walking .m4a` 18 → 101) and
+no duplication (`eng-000016` stayed 158, not 317). The segment text matches the
+clip content, so the recognizer read the piped PCM rather than falling back to the
+microphone.
+
+Before segmented mode, `onResults` was empty and the committed text was the last
+partial, which reset or re-emitted around the engine's own `onEndOfSpeech`
+(R-0247). A recognizer that ignores the extra keeps that partial/`onResults`
+behavior, where the committed text is its last hypothesis and not a gold
+transcript.
 
 Partial hypotheses become interim `SttEvent.Result`s through `SttResultAssembler`
 (monotonic revisions, stale interims dropped by the coordinator); the final
