@@ -3,12 +3,14 @@ package com.voicechat.agent.remote
 import com.voicechat.agent.domain.ErrorCode
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
+import com.voicechat.agent.log.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
+import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -71,14 +73,20 @@ class OkHttpStreamingEngine(
 ) : HttpStreamingEngine {
     override fun execute(request: RemoteHttpRequest): Flow<HttpStreamEvent> =
         channelFlow {
-            val call = client.newCall(request.toOkHttp())
+            var call: Call? = null
             var cancelledByClose = false
             invokeOnClose {
                 cancelledByClose = true
-                call.cancel()
+                call?.cancel()
             }
             try {
-                call.execute().use { response ->
+                // Building the request (URL and header validation) is inside the
+                // try: an invalid URL or header value must become a typed
+                // LLM_REQUEST_FAILED, not an unmapped throw that surfaces as an
+                // opaque failure (a header value can be the credential).
+                val newCall = client.newCall(request.toOkHttp())
+                call = newCall
+                newCall.execute().use { response ->
                     send(HttpStreamEvent.Head(status = response.code, headers = response.headers.toMultimap()))
                     val source = response.body.source()
                     val buffer = ByteArray(READ_BUFFER_BYTES)
@@ -90,15 +98,18 @@ class OkHttpStreamingEngine(
                     }
                 }
             } catch (cancellation: CancellationException) {
-                call.cancel()
+                call?.cancel()
                 throw cancellation
             } catch (throwable: Throwable) {
-                call.cancel()
+                call?.cancel()
                 // A cancelled collection aborts the blocking read with an IOException;
                 // report that as cancellation, not as a network failure.
                 if (cancelledByClose || !isActive) {
                     throw CancellationException("the transport call was cancelled", throwable)
                 }
+                // Only the class is logged: a request-build exception's message can
+                // carry the URL or a header value (the credential).
+                AppLog.w { "transport: request threw ${throwable.javaClass.name}" }
                 throw OkHttpFailureMapper.map(throwable)
             }
         }.flowOn(Dispatchers.IO)

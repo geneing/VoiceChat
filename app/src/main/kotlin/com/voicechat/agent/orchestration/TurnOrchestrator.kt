@@ -172,6 +172,13 @@ class TurnOrchestrator(
             } catch (failure: Throwable) {
                 // An unexpected adapter/runtime throw is still a typed failure, never
                 // a silent success and never a reason to lose the persisted turn.
+                // Only the class and top frame are logged: a provider exception's
+                // message can carry a URL, prompt, or credential value.
+                val top = failure.stackTrace.firstOrNull()
+                AppLog.e {
+                    "orchestration: provider call threw ${failure.javaClass.name} " +
+                        "at ${top?.className ?: "?"}.${top?.methodName ?: "?"}"
+                }
                 withContext(NonCancellable) {
                     stopSpeech()
                     machine.reduce(
