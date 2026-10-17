@@ -14,6 +14,13 @@ has no Pixel inference measurements yet. No performance budget is fixed.
 Smart Turn stays opt-in and default-off until the endpoint/device rows meet the
 acceptance criteria stated here (`docs/smart-turn.md`, R-0190, R-0192).
 
+The LLM stage of the loop is measured separately and host-side only: see
+[voice-llm-selection.md](./voice-llm-selection.md) for the chosen OpenCode Go
+model and thinking parameter and [voice-llm-results.md](./voice-llm-results.md)
+for the per-model run. Those rows are single runs from a Windows host with no
+device, microphone, or TTS, so they are input to the model choice below and not
+latency results for this document's tables (R-0253).
+
 ## What is measured
 
 Per `docs/voice-quality-and-latency.md` and the M25 handoff:
