@@ -57,9 +57,14 @@ supported one (`docs/android-speech-recognition.md`).
 speech can reach the microphone and look like user speech. Android's
 `AcousticEchoCanceler` is optional and session-scoped: the capture path attaches it
 to the `AudioRecord` session, and reports `ENABLED`, `NO_SESSION`, `UNAVAILABLE`,
-or `FAILED` as a capture diagnostic instead of assuming the mic is echo-free.
-Whether it actually cancels the assistant on a given route (speaker, wired, or
-Bluetooth) is a device measurement (R-0254).
+or `FAILED` as a capture diagnostic instead of assuming the mic is echo-free. A
+Pixel 10 probe measured the residual at mean `0.005` / p95 `0.010` / peak `~0.02`
+with AEC enabled, so AEC alone does not keep the assistant out of the VAD. The
+loop therefore raises the onset bar while the assistant is audible
+(`VadConfig.playbackOnsetRmsThreshold`, a state and not a fixed grace period), so
+the residual cannot start a turn while the user's own voice still can. Whether
+the canceller actually removes the assistant on a given route (speaker, wired, or
+Bluetooth) is a device measurement (R-0254, R-0260).
 
 **Pre-roll (opening-word clipping).** A recognition turn starts when the VAD
 declares speech onset, which is a few frames *after* speech actually begins — and

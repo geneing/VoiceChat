@@ -26,6 +26,16 @@ import kotlinx.coroutines.flow.Flow
 fun interface VoiceTurnDetector {
     /** Observes [audio] and emits activity, holds, and endpoints. */
     fun detect(audio: Flow<AudioFrame>): Flow<TurnDetectionEvent>
+
+    /**
+     * Reports whether assistant playback is currently audible.
+     *
+     * Onset raises its bar while it is true, so the assistant's own residual audio
+     * through the microphone cannot start a turn, and drops back the moment it ends
+     * — a state, not a fixed grace period. The default is a no-op, so a detector
+     * that does not model playback (a test script) is unaffected.
+     */
+    fun setPlaybackActive(active: Boolean) = Unit
 }
 
 /**
@@ -35,10 +45,21 @@ fun interface VoiceTurnDetector {
  * the bounded turn-completion decision, so the coordinator gets both from one
  * event stream and never runs a semantic model on the onset path.
  */
-class PolicyVoiceTurnDetector(
+class PolicyVoiceTurnDetector private constructor(
     private val policy: BoundedTurnEndpointPolicy,
+    private val playback: PlaybackFlag,
 ) : VoiceTurnDetector {
     override fun detect(audio: Flow<AudioFrame>): Flow<TurnDetectionEvent> = policy.observe(audio)
+
+    override fun setPlaybackActive(active: Boolean) {
+        playback.active = active
+    }
+
+    /** Mutable playback state the policy's onset reads on the detection coroutine. */
+    private class PlaybackFlag {
+        @Volatile
+        var active: Boolean = false
+    }
 
     /** Convenience factory for the app boundary. */
     companion object {
@@ -55,14 +76,17 @@ class PolicyVoiceTurnDetector(
             diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
             clock: MonotonicClock = SystemMonotonicClock,
             semanticDetector: com.voicechat.agent.contracts.TurnCompletionDetector? = null,
-        ): PolicyVoiceTurnDetector =
-            PolicyVoiceTurnDetector(
+        ): PolicyVoiceTurnDetector {
+            val playback = PlaybackFlag()
+            val policy =
                 com.voicechat.agent.audio.CaptureTurnDetection.endpointPolicy(
                     route = route,
                     semanticDetector = semanticDetector,
                     diagnostics = diagnostics,
                     clock = clock,
-                ),
-            )
+                    playbackActive = { playback.active },
+                )
+            return PolicyVoiceTurnDetector(policy, playback)
+        }
     }
 }

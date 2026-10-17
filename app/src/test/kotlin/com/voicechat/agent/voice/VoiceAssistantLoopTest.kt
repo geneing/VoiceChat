@@ -178,6 +178,30 @@ class VoiceAssistantLoopTest {
             session.join()
         }
 
+    @Test
+    fun theLoopRaisesTheOnsetBarWhileTheReplyIsAudible() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val repository = InMemoryConversationRepository()
+            val detector = ManualVoiceTurnDetector()
+            val listener = RecordingVoiceSessionListener()
+            val assistant = RecordingVoiceAssistant(answer = "Lisbon is the capital.")
+            val coordinator = coordinatorFor(repository, detector, listener, assistant, dispatcher)
+
+            val session = launch(dispatcher) { coordinator.run(conversation) }
+            detector.speech(SpeechActivity.SPEECH_STARTED)
+            runCurrent()
+            detector.endpoint(EndpointReason.SEMANTIC_COMPLETE)
+            advanceUntilIdle()
+
+            // Raised while the reply is audible, lowered when it ends, so the
+            // assistant's own residual audio cannot start a turn.
+            assertEquals(listOf(true, false), detector.playbackStates)
+
+            detector.finish()
+            session.join()
+        }
+
     private fun coordinatorFor(
         repository: InMemoryConversationRepository,
         detector: VoiceTurnDetector,

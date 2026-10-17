@@ -42,6 +42,9 @@ class ManualVoiceTurnDetector : VoiceTurnDetector {
     var observedFrameCount: Int = 0
         private set
 
+    /** Playback-active changes the loop reported, in order. */
+    val playbackStates: MutableList<Boolean> = mutableListOf()
+
     override fun detect(audio: Flow<AudioFrame>): Flow<TurnDetectionEvent> =
         flow {
             coroutineScope {
@@ -49,6 +52,10 @@ class ManualVoiceTurnDetector : VoiceTurnDetector {
                 for (event in events) emit(event)
             }
         }
+
+    override fun setPlaybackActive(active: Boolean) {
+        playbackStates += active
+    }
 
     /** Emits one detection event; suspends only until it is queued. */
     suspend fun send(event: TurnDetectionEvent) {

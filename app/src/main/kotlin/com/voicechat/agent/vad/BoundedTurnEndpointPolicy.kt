@@ -111,6 +111,8 @@ sealed interface TurnDetectionEvent {
 class BoundedTurnEndpointPolicy(
     private val config: VadConfig = VadConfig.default(),
     private val semanticDetector: TurnCompletionDetector? = null,
+    /** Whether assistant playback is audible; raises the onset bar while true. */
+    private val playbackActive: () -> Boolean = { false },
     sink: DiagnosticsSink = NoOpDiagnosticsSink,
     clock: MonotonicClock = SystemMonotonicClock,
     route: AudioRouteType? = null,
@@ -128,7 +130,7 @@ class BoundedTurnEndpointPolicy(
      */
     fun observe(audio: Flow<AudioFrame>): Flow<TurnDetectionEvent> =
         flow {
-            val machine = VadStateMachine(config)
+            val machine = VadStateMachine(config, playbackActive)
             val window = RecentAudioWindow(config.semanticWindowMillis)
             var speechStarted = false
             var endpointedThisTurn = false
