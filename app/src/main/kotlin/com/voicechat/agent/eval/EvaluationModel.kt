@@ -80,6 +80,12 @@ enum class LatencyMetric(
 
     /** True logical turn end → VAD/endpoint decision (endpoint delay). */
     ENDPOINT_DELAY("endpoint_delay"),
+
+    /** TTS speak() call → first audible audio (the TTS stage time-to-first-audio). */
+    TTS_FIRST_AUDIBLE("tts_first_audible"),
+
+    /** TTS speak() call → utterance finished playing in full. */
+    TTS_COMPLETION("tts_completion"),
 }
 
 /** One measured duration for one metric. */
