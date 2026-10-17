@@ -79,7 +79,9 @@ object OpenCodeGoMessages {
                 OpenCodeGoReasoningStyle.NONE,
                 OpenCodeGoReasoningStyle.RESPONSES_EFFORT,
                 OpenCodeGoReasoningStyle.CHAT_REASONING_EFFORT,
-                -> Unit
+                -> {
+                    Unit
+                }
             }
         }
         return RemoteJson.stringify(RemoteJson.obj(fields))
