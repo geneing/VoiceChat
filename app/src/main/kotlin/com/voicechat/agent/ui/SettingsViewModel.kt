@@ -93,7 +93,6 @@ class SettingsViewModel(
     private val authFlow: ProviderAuthFlow = UnimplementedProviderAuthFlow,
     private val sttDownloader: SttModelDownloader = NoOpSttModelDownloader,
     private val smartTurnInstaller: SmartTurnModelInstaller = UnavailableSmartTurnModelInstaller,
-    private val parakeetEouInstaller: ParakeetEouModelInstaller = UnavailableParakeetEouModelInstaller,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     scope: CoroutineScope? = null,
 ) : ViewModel(),
@@ -115,7 +114,6 @@ class SettingsViewModel(
     private var sttDownloadJob: Job? = null
     private var smartTurnInstalling: Boolean = false
     private var smartTurnInstallJob: Job? = null
-    private var parakeetEouInstallJob: Job? = null
     private var closed: Boolean = false
 
     private val startupJob: Job =
@@ -144,12 +142,6 @@ class SettingsViewModel(
             capabilities.sttAvailability.firstOrNull { it.engine.mode == mode }
                 ?: return
         if (availability !is SttAvailability.DownloadRequired) return
-        // Parakeet-EOU is app-managed (five pinned files), not the system-managed
-        // ML Kit download; the two must not share a code path.
-        if (mode == SttMode.PARAKEET_EOU) {
-            onDownloadParakeetEouModel()
-            return
-        }
         if (sttDownloadJob?.isActive == true) return
         val engine = availability.engine
         sttDownload = SttDownloadProgress(bytesDownloaded = 0L, bytesToDownload = 0L)
@@ -280,54 +272,6 @@ class SettingsViewModel(
                     AppLog.w(failure) { "settings: smart turn install failed" }
                     smartTurnInstalling = false
                     notice = SettingsNotice.Failure(ErrorCode.MODEL_DOWNLOAD_FAILED, "The Smart Turn model could not be installed.")
-                    rebuild()
-                }
-            }
-    }
-
-    /**
-     * Installs the app-managed Parakeet-EOU model set (five pinned files) on the
-     * user's explicit action, mirroring the Smart Turn install. Progress is the
-     * pinned total from the installer's `Started` status; the flow has no
-     * per-byte counter, so [SttDownloadProgress] reports the total and the
-     * indeterminate bar renders until it settles.
-     */
-    private fun onDownloadParakeetEouModel() {
-        if (parakeetEouInstallJob?.isActive == true) return
-        if (sttDownloadJob?.isActive == true) return
-        sttDownload = SttDownloadProgress(bytesDownloaded = 0L, bytesToDownload = 0L)
-        rebuild()
-        parakeetEouInstallJob =
-            coroutineScope().launch(dispatcher) {
-                try {
-                    parakeetEouInstaller.install().collect { status ->
-                        when (status) {
-                            is ParakeetEouInstallStatus.Started -> {
-                                sttDownload =
-                                    SttDownloadProgress(
-                                        bytesDownloaded = 0L,
-                                        bytesToDownload = status.totalBytes,
-                                    )
-                            }
-
-                            ParakeetEouInstallStatus.Completed -> {
-                                sttDownload = null
-                                capabilities = readCapabilities()
-                            }
-
-                            is ParakeetEouInstallStatus.Failed -> {
-                                sttDownload = null
-                                notice = SettingsNotice.Failure(ErrorCode.MODEL_DOWNLOAD_FAILED, status.message)
-                            }
-                        }
-                        rebuild()
-                    }
-                } catch (cancellation: CancellationException) {
-                    throw cancellation
-                } catch (failure: Throwable) {
-                    AppLog.w(failure) { "settings: parakeet-eou install failed" }
-                    sttDownload = null
-                    notice = SettingsNotice.Failure(ErrorCode.MODEL_DOWNLOAD_FAILED, "The Parakeet-EOU model could not be installed.")
                     rebuild()
                 }
             }
@@ -637,7 +581,6 @@ class SettingsViewModel(
         startupJob.cancel()
         sttDownloadJob?.cancel()
         smartTurnInstallJob?.cancel()
-        parakeetEouInstallJob?.cancel()
     }
 
     override fun onCleared() {
@@ -688,7 +631,6 @@ fun settingsViewModelFactory(
     authFlow: ProviderAuthFlow = UnimplementedProviderAuthFlow,
     sttDownloader: SttModelDownloader = MlKitSttModelDownloader,
     smartTurnInstaller: SmartTurnModelInstaller = UnavailableSmartTurnModelInstaller,
-    parakeetEouInstaller: ParakeetEouModelInstaller = UnavailableParakeetEouModelInstaller,
 ): ViewModelProvider.Factory =
     viewModelFactory {
         initializer {
@@ -701,7 +643,6 @@ fun settingsViewModelFactory(
                 authFlow = authFlow,
                 sttDownloader = sttDownloader,
                 smartTurnInstaller = smartTurnInstaller,
-                parakeetEouInstaller = parakeetEouInstaller,
             )
         }
     }

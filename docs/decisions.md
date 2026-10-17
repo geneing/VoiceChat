@@ -82,25 +82,42 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 
 ### 2.1 Speech-to-text (STT)
 
-**Decision: ML Kit GenAI Speech Recognition is the initial and only STT engine.**
-Advanced mode is preferred where available; Basic mode is the fallback on the
-same API. No TFLite/LiteRT or ONNX STT model is allow-listed.
+**Decision: the Android platform `android.speech.SpeechRecognizer` API is the
+default STT engine, used on device. ML Kit GenAI Speech Recognition remains an
+alternative engine on the same app boundary.** The platform recognizer is
+preferred: it is created with `createOnDeviceSpeechRecognizer` when the device
+exposes an on-device recognizer (`isOnDeviceRecognitionAvailable`), otherwise
+started with `EXTRA_PREFER_OFFLINE`, and the app never selects a network
+recognizer on the user's behalf. No TFLite/LiteRT or ONNX STT model is
+allow-listed. (This supersedes the earlier single-engine ML Kit decision and the
+app-managed Parakeet-EOU ONNX engine, which was removed; see
+`docs/android-speech-recognition.md`.)
 
-Verified contract (`developers.google.com/ml-kit/genai/speech-recognition/android`,
-accessed 2026-09-28):
+Verified contract (`developer.android.com/reference/android/speech/SpeechRecognizer`,
+`…/RecognizerIntent`, accessed 2026-10-16):
 
-- Artifact `com.google.mlkit:genai-speech-recognition:1.0.0-alpha1`; **alpha**,
-  no SLA or deprecation policy, backward-incompatible changes possible.
-- Library requires Android API 26+; **Basic** mode requires API 31+; **Advanced**
-  requires Pixel 10 / Pixel 11 specifically.
-- API: `speechRecognizerOptions { locale; preferredMode }` →
-  `SpeechRecognition.getClient(options)`; `checkStatus()`/`checkFeatureStatus()`
-  returns `FeatureStatus` states (`AVAILABLE`, `DOWNLOADABLE`, `DOWNLOADING`,
-  `UNAVAILABLE`, …); model download via `download` with progress; recognition via
-  `speechRecognizerRequest { audioSource = AudioSource.fromMic() }` and
-  `startRecognition(request)`, which returns a streaming Kotlin `Flow` of partial
-  then final results; `stopRecognition()`/`close()` release resources.
-- Custom audio (`AudioSource.fromPfd`) must be raw headerless 16-bit PCM, mono,
+- `SpeechRecognizer.createOnDeviceSpeechRecognizer(context)` and
+  `createSpeechRecognizer(context)` (API 31+); `isOnDeviceRecognitionAvailable()`
+  and `isRecognitionAvailable()`; the recognizer must be created, started, and
+  stopped on the main thread.
+- `RecognitionListener` callbacks: `onReadyForSpeech`, `onBeginningOfSpeech`,
+  `onRmsChanged`, `onBufferReceived`, `onEndOfSpeech`, `onPartialResults`,
+  `onResults`, `onError`, `onEvent`.
+- `RecognizerIntent.ACTION_RECOGNIZE_SPEECH` with `EXTRA_PARTIAL_RESULTS`,
+  `EXTRA_PREFER_OFFLINE`, and — API 33+ — `EXTRA_AUDIO_SOURCE` (a
+  `ParcelFileDescriptor`) plus `EXTRA_AUDIO_SOURCE_{CHANNEL_COUNT,ENCODING,SAMPLING_RATE}`,
+  which lets the recognizer read the captured PCM instead of opening the
+  microphone.
+- ML Kit GenAI Speech Recognition (alternative engine): artifact
+  `com.google.mlkit:genai-speech-recognition:1.0.0-alpha1`; **alpha**, no SLA or
+  deprecation policy, backward-incompatible changes possible. Library requires
+  Android API 26+; **Basic** mode requires API 31+; **Advanced** requires Pixel 10
+  / Pixel 11 specifically. API: `speechRecognizerOptions { locale; preferredMode }`
+  → `SpeechRecognition.getClient(options)`; `checkStatus()`/`checkFeatureStatus()`
+  returns `FeatureStatus` states; model download via `download` with progress;
+  recognition via `speechRecognizerRequest { audioSource = AudioSource.fromPfd() }`
+  and `startRecognition(request)`, returning a streaming Kotlin `Flow` of partial
+  then final results. Custom audio must be raw headerless 16-bit PCM, mono,
   16 kHz, delivered at real time.
 - **Not supported on devices with an unlocked bootloader.** Common AICore binding
   and preparation failures must be surfaced via `checkStatus()`, not shown as a
@@ -110,21 +127,20 @@ accessed 2026-09-28):
 
 Fallback/unavailable behavior (required by `AGENTS.md`):
 
-- If `checkStatus()` is `UNAVAILABLE`/fails, show an explicit unavailable reason
-  and keep the manual text composer usable; do not substitute a cloud STT.
-- If the Advanced model is downloadable, offer the download with progress and
-  cancellation; if the user declines, fall back to Basic on the same API rather
-  than to a different provider.
+- The platform recognizer is reported ready **only** when the device exposes an
+  on-device recognizer; a device with only a network recognizer is reported
+  unavailable with a typed reason, never silently routed to a server.
+- For the ML Kit alternative engine, if `checkStatus()` is `UNAVAILABLE`/fails,
+  show an explicit unavailable reason and keep the manual text composer usable;
+  do not substitute a cloud STT. If the Advanced model is downloadable, offer the
+  download with progress and cancellation; if the user declines, fall back to
+  Basic on the same API rather than to a different provider.
 
 Considered and **not adopted initially**:
 
-- Platform `SpeechRecognizer.createOnDeviceSpeechRecognizer` (API 31+). The
-  platform recognizes that the default recognizer may stream to remote servers,
-  and `isOnDeviceRecognitionAvailable()` must be checked. ML Kit GenAI exposes
-  the traditional on-device model through one API and adds the Advanced mode, so
-  the project keeps a single STT engine. Recorded as a documented alternative,
-  not a second engine.
-- TFLite/LiteRT or ONNX STT models — see §3; none verified.
+- TFLite/LiteRT or ONNX STT models — see §3; none verified. (The app-managed
+  Parakeet-EOU ONNX engine was implemented and later removed in favour of the
+  platform API; see `docs/android-speech-recognition.md`.)
 
 ### 2.2 Text-to-speech (TTS)
 
@@ -320,7 +336,8 @@ provider's official docs read at the access date.
 | ML Kit GenAI / AICore TTS | Unsupported | No such API exists in the GenAI API list. |
 | QR pairing for any provider | Unsupported (not documented) | No provider documents a QR flow at the access date; `AGENTS.md` forbids inventing one. |
 | OAuth/device authorization beyond OpenRouter PKCE | Unsupported (not documented) | Only OpenRouter documents a browser PKCE flow in its official docs. |
-| Platform `SpeechRecognizer` as a second STT engine | Not adopted | Keeps a single on-device STT engine; the wrapper API can stream to remote servers unless the on-device factory is forced. |
+| Platform `SpeechRecognizer` as the default STT engine | Adopted | On-device (`createOnDeviceSpeechRecognizer`/`EXTRA_PREFER_OFFLINE`); availability gated on `isOnDeviceRecognitionAvailable`, no network recognizer chosen. Replaces the removed Parakeet-EOU ONNX engine (`docs/android-speech-recognition.md`). |
+| App-managed Parakeet-EOU ONNX STT engine | Removed | Superseded by the platform API; no app-managed STT model is needed. |
 | Bundling models in the APK | Unsupported as a default | `AGENTS.md` and model-lifecycle rules; Smart Turn is app-private download only. |
 | Silent provider/model fallback | Unsupported | `AGENTS.md`; fallback must be explicit and visible. |
 | Network-required TTS voices | Unsupported | Would break the on-device TTS requirement. |

@@ -13,7 +13,8 @@ The app is scaffolded and its core domain types and replaceable contracts exist
 (M02), with deterministic audio-replay fixtures (M03), privacy-safe turn
 tracing (M04), durable Room-backed conversation persistence with a bounded
 context builder (M05), a Compose conversation UI with a manual text path (M06),
-microphone capture (M07), on-device ML Kit GenAI speech-to-text (M08),
+microphone capture (M07), on-device Android `SpeechRecognizer` speech-to-text
+(M08, `docs/android-speech-recognition.md`) with ML Kit GenAI as an alternative,
 measured-audio VAD/onset and bounded endpointing (M09), on-device platform TTS
 (M11), a provider-independent LLM streaming contract with a deterministic fake
 (M12), Keystore-backed credential storage with a provider capability registry
@@ -189,7 +190,7 @@ app/                        the only application module
     remote/                 shared remote HTTP/JSON/SSE transport (M14)
     replay/                 deterministic PCM replay + fixtures (M03)
     settings/               settings model + DataStore persistence (M22)
-    stt/                    ML Kit GenAI speech-to-text adapter (M08)
+    stt/                    Android SpeechRecognizer + ML Kit GenAI STT adapters (M08)
     tts/                    on-device platform TTS adapter (M11)
     turn/                   Smart Turn v3.2 ONNX detector + model lifecycle (M10)
     ui/                     Compose conversation + settings UI (M06/M22)

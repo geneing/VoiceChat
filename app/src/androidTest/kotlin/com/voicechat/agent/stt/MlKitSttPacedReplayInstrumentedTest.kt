@@ -170,6 +170,10 @@ class MlKitSttPacedReplayInstrumentedTest {
                                     errorCode = event.error.detail ?: event.error.code.name
                                     outcome = "FAILED"
                                 }
+
+                                SttEvent.EndOfSpeech -> {
+                                    Unit
+                                }
                             }
                         }
                         true

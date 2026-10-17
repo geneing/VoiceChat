@@ -17,36 +17,37 @@ import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.log.AppLog
 import com.voicechat.agent.log.LogLevel
+import com.voicechat.agent.stt.AndroidSpeechRecognizerSpeechToText
+import com.voicechat.agent.stt.AndroidSpeechSttStatus
 import com.voicechat.agent.stt.MlKitSpeechToText
 import com.voicechat.agent.stt.MlKitSttStatus
-import com.voicechat.agent.stt.ParakeetEouSttCatalog
 import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttEngineFamily
 import com.voicechat.agent.stt.SttEngines
-import com.voicechat.agent.stt.parakeet.ParakeetEouModelStore
 import com.voicechat.agent.turn.NoSmartTurnDetectorProvider
 import com.voicechat.agent.turn.SmartTurnDetectorProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.File
 import java.util.Locale
 
 /**
  * App-boundary factory for the production M24 voice session.
  *
  * This is deliberately the *only* file in the `voice` package that touches
- * platform types (`Context`, `MlKitSpeechToText`, `MicrophoneAudioCapture`); the
- * coordinator and its seams stay `android.*`-free and JVM-testable
- * (`VoiceSourcePurityTest`). TTS is not created or connected here.
+ * platform types (`Context`, `AndroidSpeechRecognizerSpeechToText`,
+ * `MlKitSpeechToText`, `MicrophoneAudioCapture`); the coordinator and its seams
+ * stay `android.*`-free and JVM-testable (`VoiceSourcePurityTest`). TTS is not
+ * created or connected here.
  *
- * It builds M07 capture and M08 STT behind the M02 contracts, plus the M09
- * bounded endpoint policy and optional M10 Smart Turn detector. The voice path
- * does not resolve an LLM provider or initialize TTS. STT availability is read
- * from the runtime (`MlKitSttStatus.check`), so a device with no provisioned
- * model reports a typed `STT_UNAVAILABLE` instead of a fabricated session.
+ * It builds M07 capture and the selected STT adapter behind the M02 contracts,
+ * plus the M09 bounded endpoint policy and optional M10 Smart Turn detector. The
+ * voice path does not resolve an LLM provider or initialize TTS. STT availability
+ * is read from the runtime (`AndroidSpeechSttStatus.check`, `MlKitSttStatus.check`),
+ * so a device with no on-device recognizer reports a typed `STT_UNAVAILABLE`
+ * instead of a fabricated session.
  *
  * Device testing is deferred: this path is compiled and wired but has not been
  * run on hardware (see `Tests.md`).
@@ -61,12 +62,6 @@ object VoiceSessionAssembly {
         locale: Locale = Locale.getDefault(),
         turnCompletion: SmartTurnDetectorProvider = NoSmartTurnDetectorProvider,
         /**
-         * Builds the Parakeet-EOU adapter pair when that engine is selected
-         * (stream 4 seam). Defaults to honest-unavailable until stream 3 wires
-         * the ONNX adapter.
-         */
-        parakeetSessionFactory: ParakeetEouSessionFactory = UnavailableParakeetEouSessionFactory,
-        /**
          * Resolves the persisted STT mode and locale for one session (R-0181).
          * Called once per session on the caller's coroutine; a selection that is
          * unavailable is reported, never substituted.
@@ -76,7 +71,7 @@ object VoiceSessionAssembly {
          * Overrides the microphone capture source for one session. Production
          * leaves this `null` and capture comes from [MicrophoneAudioCapture]; the
          * debug build injects a file-backed source so the whole voice loop can be
-         * exercised from a staged WAV without a live microphone. It is never a
+         * exercised from a staged file without a live microphone. It is never a
          * silent substitution: a supplied factory is used exactly as given.
          */
         audioInputFactory: (() -> AudioInput)? = null,
@@ -89,8 +84,6 @@ object VoiceSessionAssembly {
                 clock = clock,
                 downstream = listener,
                 turnCompletion = turnCompletion,
-                parakeetModelStore = ParakeetEouModelStore(File(context.applicationContext.filesDir, ParakeetEouModelStore.DIRECTORY_NAME)),
-                parakeetSessionFactory = parakeetSessionFactory,
                 selectionProvider = selectionProvider,
                 audioInputFactory = audioInputFactory,
             )
@@ -109,8 +102,6 @@ private class PlatformVoiceSession(
     private val clock: MonotonicClock,
     private val downstream: VoiceSessionListener,
     private val turnCompletion: SmartTurnDetectorProvider,
-    private val parakeetModelStore: ParakeetEouModelStore,
-    private val parakeetSessionFactory: ParakeetEouSessionFactory,
     private val selectionProvider: suspend () -> VoiceRuntimeSelection,
     private val audioInputFactory: (() -> AudioInput)? = null,
 ) : VoiceSessionController,
@@ -137,54 +128,29 @@ private class PlatformVoiceSession(
         AppLog.voice(LogLevel.INFO) {
             "voice: session start sttMode=${engine.mode} family=${engine.family} engineId=${engine.engineId.value}"
         }
-        // The engine family decides the adapter: ML Kit's system-managed modes, or
-        // the app-managed Parakeet-EOU ONNX streaming recognizer. A selection the
-        // app cannot honor is reported here, never faked.
-        val parakeetSession: ParakeetEouSession?
-        val speechToText: SpeechToText
-        if (engine.family == SttEngineFamily.PARAKEET_EOU) {
-            val built =
-                try {
-                    parakeetModelStore.state()
-                } catch (cancellation: CancellationException) {
-                    throw cancellation
-                } catch (failure: Throwable) {
-                    reportSttUnavailable(
-                        VoiceAgentError(ErrorCode.MODEL_UNAVAILABLE, "the Parakeet-EOU model could not be verified"),
+        // The engine family decides the adapter: the platform SpeechRecognizer or
+        // ML Kit GenAI. A selection the app cannot honor is reported, never faked.
+        val speechToText: SpeechToText =
+            when (engine.family) {
+                SttEngineFamily.ANDROID_SPEECH -> {
+                    AndroidSpeechRecognizerSpeechToText(
+                        context = context,
+                        engine = engine,
+                        diagnostics = diagnostics,
+                        clock = clock,
                     )
-                    return
                 }
-            if (built !is com.voicechat.agent.stt.parakeet.ParakeetEouModelState.Installed) {
-                AppLog.voice(LogLevel.WARN) { "voice: parakeet model not installed state=${built::class.simpleName}" }
-                reportSttUnavailable(
-                    VoiceAgentError(ErrorCode.MODEL_UNAVAILABLE, "the Parakeet-EOU model is not installed"),
-                )
-                return
+
+                SttEngineFamily.ML_KIT_GENAI -> {
+                    MlKitSpeechToText(engine = engine, diagnostics = diagnostics, clock = clock)
+                }
             }
-            parakeetSession =
-                try {
-                    parakeetSessionFactory.create(engine, built.directory)
-                } catch (cancellation: CancellationException) {
-                    throw cancellation
-                } catch (failure: Throwable) {
-                    AppLog.voice(LogLevel.ERROR, failure) { "voice: parakeet adapter failed to load" }
-                    reportSttUnavailable(
-                        VoiceAgentError(ErrorCode.MODEL_UNAVAILABLE, "the Parakeet-EOU model failed to load"),
-                    )
-                    return
-                }
-            speechToText = parakeetSession.speechToText
-        } else {
-            parakeetSession = null
-            speechToText = MlKitSpeechToText(engine = engine, diagnostics = diagnostics, clock = clock)
-        }
         val audioInput =
             audioInputFactory?.invoke()
                 ?: MicrophoneAudioCapture.create(context = context, diagnostics = diagnostics, clock = clock)
-        // Keep the Parakeet EOU signal and VAD endpoint independent so their
-        // audio offsets can be compared. Other STT engines may use optional Smart
-        // Turn corroboration at the VAD candidate pause.
-        val semanticDetector = if (parakeetSession == null) resolveSemanticDetector() else null
+        // Smart Turn only corroborates the VAD candidate pause for engines that do
+        // not provide their own endpoint hint.
+        val semanticDetector = resolveSemanticDetector()
         val session =
             VoiceSessionCoordinator(
                 audioInput = audioInput,
@@ -196,7 +162,6 @@ private class PlatformVoiceSession(
                         clock = clock,
                         semanticDetector = semanticDetector,
                     ),
-                endOfUtterance = parakeetSession?.endOfUtterance,
                 listener = this,
                 diagnostics = diagnostics,
                 clock = clock,
@@ -214,21 +179,12 @@ private class PlatformVoiceSession(
                 // Release best-effort; the session already ended.
             }
             try {
-                // The session owns its STT adapter and runtime; close it once here.
-                parakeetSession?.close()
+                // The session owns its STT adapter; close it once here.
+                speechToText.close()
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (ignored: Throwable) {
                 // Release best-effort; the session already ended.
-            }
-            if (parakeetSession == null) {
-                try {
-                    speechToText.close()
-                } catch (cancellation: CancellationException) {
-                    throw cancellation
-                } catch (ignored: Throwable) {
-                    // Release best-effort; the session already ended.
-                }
             }
             try {
                 audioInput.close()
@@ -246,13 +202,13 @@ private class PlatformVoiceSession(
 
     /**
      * The runtime availability for every catalog mode, both families, with the
-     * default engine (Parakeet-EOU) first. Only the ML Kit modes go through
-     * [MlKitSttStatus.check]; Parakeet-EOU is app-managed and comes from its
-     * verified model store.
+     * platform recognizer first. The platform engine is checked through
+     * [AndroidSpeechSttStatus] and the ML Kit modes through [MlKitSttStatus].
      */
     private suspend fun availableStt(locale: Locale): List<SttAvailability> =
-        listOf(ParakeetEouSttCatalog.availability(parakeetModelStore.state(), locale)) +
-            SttEngines.mlKitCatalog(locale).map { MlKitSttStatus.check(it) }
+        listOf(
+            AndroidSpeechSttStatus.check(context, SttEngine(com.voicechat.agent.stt.SttMode.ANDROID_SPEECH, locale)),
+        ) + SttEngines.mlKitCatalog(locale).map { MlKitSttStatus.check(it) }
 
     private fun reportSttUnavailable(error: VoiceAgentError) {
         _state.value = VoiceSessionState.FAILED
@@ -286,10 +242,7 @@ private class PlatformVoiceSession(
         text: String,
     ) = downstream.onProvisionalTranscript(turnId, text)
 
-    override fun onParakeetEndpointTiming(
-        turnId: TurnId,
-        timing: ParakeetEndpointTiming,
-    ) = downstream.onParakeetEndpointTiming(turnId, timing)
+    override fun onSttEndOfSpeech(turnId: TurnId) = downstream.onSttEndOfSpeech(turnId)
 
     override fun onUtteranceCommitted(
         turnId: TurnId,

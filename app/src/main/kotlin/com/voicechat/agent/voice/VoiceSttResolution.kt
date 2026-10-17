@@ -32,8 +32,9 @@ sealed interface VoiceSttSelection {
  * Pure resolution from runtime availability to a [VoiceSttSelection] (stream 4).
  *
  * It is the JVM-testable seam the voice assembly and `AppContainer` share: the
- * app boundary reads availability from the real engines (ML Kit `checkStatus()`
- * plus the Parakeet-EOU model store), and this object makes the one decision.
+ * app boundary reads availability from the real engines (the platform
+ * `SpeechRecognizer` plus ML Kit `checkStatus()`), and this object makes the one
+ * decision.
  *
  * - a persisted [SttMode] that is ready resolves to that engine;
  * - a persisted mode that is installable but missing is [Unavailable] with
@@ -86,7 +87,7 @@ object VoiceSttResolution {
 
     private fun familyLabel(family: SttEngineFamily?): String =
         when (family) {
-            SttEngineFamily.PARAKEET_EOU -> "Parakeet-EOU"
+            SttEngineFamily.ANDROID_SPEECH -> "Android Speech Recognizer"
             SttEngineFamily.ML_KIT_GENAI -> "ML Kit GenAI"
             null -> "on-device STT"
         }

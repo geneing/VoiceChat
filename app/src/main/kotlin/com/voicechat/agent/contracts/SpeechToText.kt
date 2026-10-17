@@ -20,6 +20,17 @@ sealed interface SttEvent {
         val transcript: Transcript,
     ) : SttEvent
 
+    /**
+     * The recognizer's own end-of-speech detector fired.
+     *
+     * The platform `SpeechRecognizer` emits this when it believes the speaker
+     * stopped. It is a **corroborating** signal only: the bounded VAD/Smart Turn
+     * endpoint remains the authority for ending a logical turn, so an early or
+     * late engine signal can neither truncate a still-speaking user nor keep a
+     * finished turn open. Consumers record it for timing and diagnostics.
+     */
+    data object EndOfSpeech : SttEvent
+
     /** Recognition failed; no further results are expected. */
     data class Failed(
         val error: VoiceAgentError,

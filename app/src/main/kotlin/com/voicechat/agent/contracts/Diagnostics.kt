@@ -147,21 +147,23 @@ enum class DiagnosticAttribute {
     MODEL_INTEGRITY,
 
     /*
-     * Parakeet-EOU streaming decode attributes (stream 3). They carry measured
-     * timings and counts only — never a transcript, a token id, or a sample.
+     * Platform SpeechRecognizer attributes (M27). They carry counts, stable
+     * mode/status codes, and measured millisecond timings — never a transcript
+     * fragment, a sample, or an audio chunk. Partial text is logged separately
+     * through the developer log, not through a diagnostic attribute.
      */
 
-    /** Number of audio chunks decoded in the session. */
-    DECODE_CHUNK_COUNT,
+    /** How recognition was requested: `on_device` or `prefer_offline`. */
+    RECOGNIZER_MODE,
 
-    /** Measured mean decode time per chunk, in milliseconds, for the session. */
-    DECODE_CHUNK_MILLIS,
+    /** Number of interim hypotheses the recognizer delivered for the session. */
+    PARTIAL_COUNT,
 
-    /** Measured worst-case decode time for one chunk, in milliseconds. */
-    DECODE_MAX_CHUNK_MILLIS,
+    /** Latency from the recognizer becoming ready to its first interim result. */
+    FIRST_PARTIAL_MILLIS,
 
-    /** Number of confirmed model `<EOU>` observations in the session. */
-    EOU_CONFIRMED_COUNT,
+    /** Latency from this turn's input start to the recognizer's own end-of-speech. */
+    END_OF_SPEECH_MILLIS,
 }
 
 /**

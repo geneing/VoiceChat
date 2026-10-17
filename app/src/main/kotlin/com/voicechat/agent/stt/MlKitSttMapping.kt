@@ -28,10 +28,10 @@ internal fun SttEngine.toRecognizerOptions(): SpeechRecognizerOptions {
                     SpeechRecognizerOptions.Mode.MODE_ADVANCED
                 }
 
-                // Parakeet-EOU is a different engine family; it never reaches the
-                // ML Kit adapter. Fail loudly rather than pick an ML Kit mode.
-                SttMode.PARAKEET_EOU -> {
-                    error("SttMode.PARAKEET_EOU is not an ML Kit GenAI mode; use ParakeetEouSpeechToText")
+                // The platform recognizer is a different engine family; it never
+                // reaches the ML Kit adapter. Fail loudly rather than pick a mode.
+                SttMode.ANDROID_SPEECH -> {
+                    error("SttMode.ANDROID_SPEECH is not an ML Kit GenAI mode; use AndroidSpeechRecognizerSpeechToText")
                 }
             }
     }

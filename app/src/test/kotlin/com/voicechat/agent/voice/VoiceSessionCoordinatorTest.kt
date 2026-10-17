@@ -145,7 +145,9 @@ class VoiceSessionCoordinatorTest {
             detector.endpoint(EndpointReason.SILENCE_CAP)
             advanceUntilIdle()
 
-            assertEquals(listOf("newer"), listener.provisional.map { it.second })
+            // The stale revision ("stale") is dropped; the later interim and the
+            // committed text echoed to the provisional bubble remain.
+            assertEquals(listOf("newer", "final"), listener.provisional.map { it.second })
             assertEquals("final", (repository.load(conversation.id)!!.turns.single() as UserTurn).transcript.text)
             session.cancelAndJoin()
         }
@@ -201,4 +203,35 @@ class VoiceSessionCoordinatorTest {
 
         fun next(): TurnId = TurnId("voice-${++count}")
     }
+
+    @Test
+    fun recognizerEndOfSpeechIsSurfacedButDoesNotCommitTheTurn() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val repository = InMemoryConversationRepository()
+            val detector = ManualVoiceTurnDetector()
+            val speechToText = ManualSpeechToText()
+            val listener = RecordingVoiceSessionListener()
+            val coordinator = coordinatorFor(repository, detector, speechToText, listener, dispatcher = dispatcher)
+
+            val session = launch(dispatcher) { coordinator.run(conversation) }
+            detector.speech(SpeechActivity.SPEECH_STARTED)
+            runCurrent()
+            speechToText.interim("hello", revision = 1)
+            speechToText.send(SttEvent.EndOfSpeech)
+            runCurrent()
+
+            // The engine's own signal is observed, but nothing is committed: the
+            // bounded VAD/Smart Turn endpoint is still the authority.
+            assertEquals(1, listener.endOfSpeechCount)
+            assertNull(repository.load(conversation.id))
+            assertEquals(0, listener.committed.size)
+
+            speechToText.final("hello", revision = 2)
+            detector.endpoint(EndpointReason.SILENCE_CAP)
+            advanceUntilIdle()
+
+            assertEquals("hello", (repository.load(conversation.id)!!.turns.single() as UserTurn).transcript.text)
+            session.cancelAndJoin()
+        }
 }

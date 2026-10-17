@@ -152,6 +152,10 @@ class MoonshineSttPacedReplayInstrumentedTest {
                                     errorCode = event.error.code.name
                                     outcome = "FAILED"
                                 }
+
+                                SttEvent.EndOfSpeech -> {
+                                    Unit
+                                }
                             }
                         }
                         true

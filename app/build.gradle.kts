@@ -79,8 +79,8 @@ android {
 // supplied as an explicit jniLibs source because Moonshine's debug AAR bundles a
 // colliding `libonnxruntime.so` that cannot be resolved by dependency order (see
 // the packaging block above). Absent from clean checkouts; a clean build then
-// simply has no ONNX runtime and the Smart Turn / Parakeet engines report
-// unavailable rather than shipping a broken library.
+// simply has no ONNX runtime and the Smart Turn engine reports unavailable
+// rather than shipping a broken library.
 val onnxRuntimeLibsDir = rootProject.file("models/onnxruntime-android/jniLibs")
 if (onnxRuntimeLibsDir.isDirectory) {
     android.sourceSets
@@ -88,17 +88,6 @@ if (onnxRuntimeLibsDir.isDirectory) {
         .jniLibs
         .directories
         .add(onnxRuntimeLibsDir.absolutePath)
-}
-
-// The Parakeet candidate is intentionally opt-in and local-only. Its source set
-// and runtime are enabled only after the pinned sherpa-onnx AAR has been fetched
-// into the gitignored models/ directory.
-val sherpaOnnxParakeetAar = rootProject.file("models/sherpa-onnx-1.13.8.aar")
-if (sherpaOnnxParakeetAar.isFile) {
-    android.sourceSets
-        .getByName("androidTest")
-        .kotlin.directories
-        .add("src/parakeetAndroidTest/kotlin")
 }
 
 // The LiteRT Tensor G5 NPU dispatch library is a vendor runtime spike, opt-in
@@ -164,9 +153,10 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
 
-    // On-device speech-to-text (M08). ML Kit GenAI Speech Recognition is the only
-    // STT engine (docs/decisions.md §2.1); it is gated at runtime by
-    // checkStatus()/checkFeatureStatus() and kept behind the SpeechToText contract.
+    // On-device speech-to-text (M08/M27). The platform `SpeechRecognizer` is the
+    // default engine and ML Kit GenAI Speech Recognition the alternative
+    // (docs/decisions.md §2.1, docs/android-speech-recognition.md); each is gated
+    // at runtime and kept behind the SpeechToText contract.
     implementation(libs.mlkit.genai.speech.recognition)
 
     // Optional Smart Turn v3.2 semantic end-of-turn model (M10). ONNX Runtime is
@@ -180,18 +170,6 @@ dependencies {
     // dependency are debug-only until the Pixel benchmark and quality review.
     // Its bundled libonnxruntime is excluded above in favour of the pinned one.
     debugImplementation(libs.moonshine.voice)
-    if (sherpaOnnxParakeetAar.isFile) {
-        // Device-evaluation-only AAR (48 MB); absent from clean checkouts and
-        // release builds. The Parakeet model itself stays outside all APKs.
-        debugImplementation(
-            fileTree(
-                mapOf(
-                    "dir" to sherpaOnnxParakeetAar.parentFile,
-                    "include" to listOf(sherpaOnnxParakeetAar.name),
-                ),
-            ),
-        )
-    }
 
     // On-device LLM runtimes (M20). AICore/Gemini Nano discovery uses the ML Kit
     // GenAI Prompt API; the LiteRT-LM artifact backs the optional, allow-listed

@@ -73,15 +73,10 @@ class MicLoopbackCaptureInstrumentedTest {
                 val outFile = File(context.cacheDir, "mic-loopback-$runId.wav")
                 writeWav(outFile, captured)
                 val stats = rmsAndPeak(captured)
-                val decoded =
-                    withTimeoutOrNull(5_000L) {
-                        withContext(Dispatchers.IO) { decodeWithParakeet(context, captured) }
-                    }
                 Log.i(
                     TAG,
                     "MIC_LOOPBACK file=${outFile.absolutePath} frames=${captured.size} " +
-                        "seconds=${captured.size / SAMPLE_RATE_HZ} rms=${stats.rms} peak=${stats.peak} " +
-                        "decodedChars=${decoded?.length ?: -1} decoded=${decoded.orEmpty()}",
+                        "seconds=${captured.size / SAMPLE_RATE_HZ} rms=${stats.rms} peak=${stats.peak}",
                 )
                 assertTrue("capture produced no samples", captured.isNotEmpty())
             }
@@ -126,38 +121,6 @@ class MicLoopbackCaptureInstrumentedTest {
         } finally {
             runCatching { track.stop() }
             track.release()
-        }
-    }
-
-    private fun decodeWithParakeet(
-        context: android.content.Context,
-        samples: ShortArray,
-    ): String {
-        val modelDir = File(context.filesDir, "parakeet-eou")
-        if (!modelDir.isDirectory) return ""
-        val config =
-            com.voicechat.agent.stt.parakeet.ParakeetEouConfig
-                .pinned()
-        val vocab =
-            com.voicechat.agent.stt.parakeet.ParakeetVocabulary
-                .fromJson(File(modelDir, "vocab.json").readText())
-        val runtime =
-            com.voicechat.agent.stt.parakeet.OnnxParakeetEouRuntime
-                .load(modelDir, config)
-        try {
-            val decoder =
-                com.voicechat.agent.stt.parakeet
-                    .ParakeetStreamingDecoder(vocab, config, runtime)
-            val waveform = FloatArray(samples.size) { samples[it] / 32_768f }
-            var offset = 0
-            while (offset < waveform.size) {
-                val end = minOf(offset + config.shiftSamples, waveform.size)
-                decoder.accept(waveform.copyOfRange(offset, end))
-                offset = end
-            }
-            return decoder.finalize().text
-        } finally {
-            runtime.close()
         }
     }
 

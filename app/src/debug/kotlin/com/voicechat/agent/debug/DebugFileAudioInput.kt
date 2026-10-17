@@ -16,23 +16,23 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Debug-only [AudioInput] that replays a staged 16 kHz mono PCM16 WAV into the
- * real voice loop instead of the microphone.
+ * Debug-only [AudioInput] that replays a staged audio file into the real voice
+ * loop instead of the microphone.
  *
- * It exists so the whole `capture → VAD/onset → Parakeet-EOU STT → LLM → TTS`
- * pipeline can be exercised on device from a recorded WAV with the UI running and
- * the talk control tapped, without speaking into the device (see
- * `docs/parakeet-eou-streaming.md`). It is compiled into the **debug** source set
- * only.
+ * It exists so the whole `capture → VAD/onset → platform SpeechRecognizer STT`
+ * pipeline can be exercised on device from a recording (`test_data/Walking.m4a`,
+ * `test_data/eng-*.wav`, …) with the UI running and the talk control tapped,
+ * without speaking into the device (see `docs/android-speech-recognition.md`). It
+ * accepts either a 16 kHz mono PCM16 WAV or an M4A/MP4 file, which is decoded to
+ * the same format. It is compiled into the **debug** source set only.
  *
  * **Fidelity to live capture.** Frames are 320 samples (20 ms) at 16 kHz, exactly
  * like [com.voicechat.agent.audio.MicrophoneAudioInput], and are emitted in real
  * time so the bounded chunk queue never drops audio. After the file's speech ends
  * the input keeps emitting silence indefinitely, so — like a live microphone —
  * capture never ends on its own; the mounted voice session only stops when the
- * user stops it. That silence is what lets the VAD silence cap (and the model's
- * `<EOU>`) commit the turn in the ordinary way instead of through the
- * capture-ended path.
+ * user stops it. That silence is what lets the VAD silence cap commit the turn in
+ * the ordinary way instead of through the capture-ended path.
  *
  * It never reads a microphone and never requests the permission.
  */
@@ -48,7 +48,7 @@ internal class DebugFileAudioInput(
 
     override fun frames(): Flow<AudioFrame> =
         flow {
-            val samples = DebugPcmWav.readMono16k(file)
+            val samples = decode(file)
             AppLog.i {
                 "debug-audio: replaying ${file.name} samples=${samples.size} " +
                     "durationMs=${samples.size * 1000L / sampleRateHz}"
@@ -86,6 +86,14 @@ internal class DebugFileAudioInput(
         closed = true
     }
 
+    /** Decodes a staged WAV (16 kHz mono PCM16) or M4A/MP4 to 16 kHz mono PCM16. */
+    private fun decode(file: File): ShortArray =
+        when (file.extension.lowercase()) {
+            "wav" -> DebugPcmWav.readMono16k(file)
+            "m4a", "mp4" -> DebugM4aDecoder.decode(file)
+            else -> error("unsupported debug audio container: ${file.extension}")
+        }
+
     private companion object {
         const val DEFAULT_FRAME_SIZE_SAMPLES = 320
         const val DEFAULT_SAMPLE_RATE_HZ = 16_000
@@ -94,23 +102,27 @@ internal class DebugFileAudioInput(
     }
 }
 
-/** Builds the debug audio source when a WAV has been staged, else `null` (mic). */
+/** Builds the debug audio source when a staged file is present, else `null` (mic). */
 internal object DebugFileAudioInputFactory {
     /** App-private subdirectory the staging helper writes into. */
     const val DIRECTORY_NAME: String = "debug-audio"
 
-    /** Fixed staged file name. */
+    /** Preferred staged file name (16 kHz mono PCM16 WAV). */
     const val FILE_NAME: String = "input.wav"
 
+    /** Alternative staged file name (M4A/MP4, decoded to 16 kHz mono PCM16). */
+    const val M4A_FILE_NAME: String = "input.m4a"
+
     /**
-     * @return a factory for a staged-WAV source, or `null` when nothing is staged
-     *   so production microphone capture is left untouched.
+     * @return a factory for a staged-file source, or `null` when nothing is
+     *   staged so production microphone capture is left untouched. `input.wav`
+     *   is preferred, then `input.m4a`.
      */
     fun factoryIfPresent(context: Context): (() -> AudioInput)? {
-        val file = File(File(context.filesDir, DIRECTORY_NAME), FILE_NAME)
-        if (!file.isFile) return null
+        val directory = File(context.filesDir, DIRECTORY_NAME)
+        val file = listOf(FILE_NAME, M4A_FILE_NAME).map { File(directory, it) }.firstOrNull { it.isFile } ?: return null
         AppLog.voice(LogLevel.INFO) {
-            "debug-audio: staged WAV found (${file.length()} bytes); using it as the voice input source"
+            "debug-audio: staged file found ${file.name} (${file.length()} bytes); using it as the voice input source"
         }
         return { DebugFileAudioInput(file) }
     }

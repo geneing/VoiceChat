@@ -271,6 +271,10 @@ class RecordingVoiceSessionListener : VoiceSessionListener {
     var noSpeechCount: Int = 0
         private set
 
+    /** Number of recognizer end-of-speech signals observed. */
+    var endOfSpeechCount: Int = 0
+        private set
+
     override fun onSessionState(state: VoiceSessionState) {
         sessionStates += state
     }
@@ -284,6 +288,10 @@ class RecordingVoiceSessionListener : VoiceSessionListener {
         text: String,
     ) {
         provisional += turnId to text
+    }
+
+    override fun onSttEndOfSpeech(turnId: TurnId) {
+        endOfSpeechCount++
     }
 
     override fun onUtteranceCommitted(

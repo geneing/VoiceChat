@@ -46,6 +46,9 @@ sealed interface SttEngineResponse {
      */
     data object Stopped : SttEngineResponse
 
+    /** The recognizer's own end-of-speech detector fired; a corroborating signal. */
+    data object EndOfSpeech : SttEngineResponse
+
     /** The recognizer ended the session cleanly. */
     data object Completed : SttEngineResponse
 }
@@ -101,6 +104,7 @@ class SttResultAssembler(
             is SttEngineResponse.Partial -> onPartial(response.text)
             is SttEngineResponse.Final -> onFinalSegment(response.text, response.confidence)
             is SttEngineResponse.Failure -> onFailure(response.kind, response.detail)
+            SttEngineResponse.EndOfSpeech -> onEndOfSpeech()
             SttEngineResponse.Stopped -> onStopped()
             SttEngineResponse.Completed -> finish()
         }
@@ -154,6 +158,17 @@ class SttResultAssembler(
         if (finished) return emptyList()
         finished = true
         return listOf(SttEvent.Failed(errorFor(kind, detail)))
+    }
+
+    /**
+     * Surfaces the recognizer's own end-of-speech signal without ending the turn.
+     *
+     * The M09 VAD/Smart Turn endpoint remains the authority; this only lets
+     * consumers observe and time the engine's corroborating signal.
+     */
+    private fun onEndOfSpeech(): List<SttEvent> {
+        if (finished) return emptyList()
+        return listOf(SttEvent.EndOfSpeech)
     }
 
     /**

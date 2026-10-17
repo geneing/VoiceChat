@@ -936,10 +936,6 @@ private fun BubbleRow(bubble: Bubble) {
                         fontWeight = if (isUser) FontWeight.Medium else FontWeight.Normal,
                     )
                 }
-                bubble.endpointTiming?.let { timing ->
-                    Spacer(modifier = Modifier.height(5.dp))
-                    ParakeetEndpointTimingRow(timing)
-                }
                 bubble.status?.let { status ->
                     if (bubble.text.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(4.dp))
@@ -954,60 +950,6 @@ private fun BubbleRow(bubble: Bubble) {
         }
     }
 }
-
-@Composable
-private fun ParakeetEndpointTimingRow(timing: com.voicechat.agent.voice.ParakeetEndpointTiming) {
-    val detail =
-        when {
-            timing.eouOffsetMillis != null && timing.vadEndpointOffsetMillis != null -> {
-                stringResource(
-                    R.string.parakeet_timing_both,
-                    formatOffset(timing.eouOffsetMillis),
-                    formatOffset(timing.vadEndpointOffsetMillis),
-                    formatSignedOffset(requireNotNull(timing.eouMinusVadMillis)),
-                )
-            }
-
-            timing.eouOffsetMillis != null -> {
-                stringResource(R.string.parakeet_timing_eou_only, formatOffset(timing.eouOffsetMillis))
-            }
-
-            timing.vadEndpointOffsetMillis != null -> {
-                stringResource(R.string.parakeet_timing_vad_only, formatOffset(timing.vadEndpointOffsetMillis))
-            }
-
-            else -> {
-                return
-            }
-        }
-
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        if (timing.eouOffsetMillis != null) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.testTag("parakeet-eou-tag"),
-            ) {
-                Text(
-                    text = stringResource(R.string.parakeet_eou_tag),
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-            }
-            Spacer(modifier = Modifier.width(6.dp))
-        }
-        Text(
-            text = detail,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-private fun formatOffset(offsetMillis: Long): String = "$offsetMillis ms"
-
-private fun formatSignedOffset(offsetMillis: Long): String = if (offsetMillis > 0L) "+$offsetMillis ms" else "$offsetMillis ms"
 
 @Composable
 private fun statusColor(status: BubbleStatus): Color =
@@ -1110,7 +1052,6 @@ private data class Bubble(
     val text: String,
     val provisional: Boolean = false,
     val status: BubbleStatus? = null,
-    val endpointTiming: com.voicechat.agent.voice.ParakeetEndpointTiming? = null,
 )
 
 /**
@@ -1128,7 +1069,6 @@ private fun ConversationDialogState.toBubbles(): List<Bubble> =
                             key = turn.id.value,
                             role = BubbleRole.USER,
                             text = turn.transcript.text,
-                            endpointTiming = parakeetEndpointTimings[turn.id],
                         ),
                     )
                 }
@@ -1162,7 +1102,6 @@ private fun ConversationDialogState.toBubbles(): List<Bubble> =
                     role = BubbleRole.USER,
                     text = text,
                     provisional = true,
-                    endpointTiming = provisionalTurnId?.let(parakeetEndpointTimings::get),
                 ),
             )
         }

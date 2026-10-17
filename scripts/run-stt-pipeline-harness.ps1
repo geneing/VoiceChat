@@ -1,5 +1,7 @@
 param(
-    [string]$InputPath = "test_data/Walking .m4a",
+    # One or more WAV/M4A clips to replay (e.g. test_data/Walking.m4a
+    # test_data/eng-000001-000081dd.wav). Each is staged and measured.
+    [string[]]$InputPath = @("test_data/Walking .m4a", "test_data/eng-000001-000081dd.wav"),
     [string]$DeviceSerial,
     [switch]$SmartTurn,
     # Log each partial and the final recognized text to logcat (never to the CSV
@@ -7,19 +9,17 @@ param(
     # -LogTranscripts:$false to keep the logcat capture content-free.
     [bool]$LogTranscripts = $true,
     [string]$OutputDirectory,
-    [switch]$SkipBuild,
-    [switch]$SkipModelPush
+    [switch]$SkipBuild
 )
 
-# Drives the on-device STT pipeline harness from a recorded clip. It installs the
-# debug app + instrumentation APK, stages the pinned Parakeet-EOU model (unless
-# already present) and the clip into app-private storage, then runs
-# SttPipelineHarnessInstrumentedTest, which replays the clip through the real
-# capture -> VAD/onset -> Parakeet-EOU STT -> bounded endpointing pipeline with
-# optional Smart Turn. It copies the content-free timing summary and the per-stage
-# timeline back to the host.
+# Drives the on-device STT pipeline harness from one or more recorded clips. It
+# installs the debug app + instrumentation APK, stages the clips into app-private
+# storage, then runs SttPipelineHarnessInstrumentedTest, which replays each clip
+# through the real capture -> VAD/onset -> platform SpeechRecognizer STT ->
+# bounded endpointing pipeline with optional Smart Turn. It copies the
+# content-free timing summary and the per-stage timeline back to the host.
 #
-# The clip may be WAV or M4A; M4A is decoded on the device, so no host conversion
+# The clips may be WAV or M4A; M4A is decoded on the device, so no host conversion
 # is required. Nothing is committed; the results are local artifacts.
 #
 # Native tools (Gradle, adb) write progress to stderr; "Continue" keeps that from
@@ -28,12 +28,15 @@ param(
 $ErrorActionPreference = "Continue"
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
-$inputCandidate = if ([System.IO.Path]::IsPathRooted($InputPath)) { $InputPath } else { Join-Path $repoRoot $InputPath }
-$inputResolved = (Resolve-Path -LiteralPath $inputCandidate).Path
-$input = Get-Item -LiteralPath $inputResolved
-if ($input.Extension.ToLowerInvariant() -notin @(".wav", ".m4a")) {
-    throw "The harness input must be a .wav or .m4a file."
-}
+$inputs =
+    $InputPath | ForEach-Object {
+        $candidate = if ([System.IO.Path]::IsPathRooted($_)) { $_ } else { Join-Path $repoRoot $_ }
+        $resolved = Get-Item -LiteralPath (Resolve-Path -LiteralPath $candidate).Path
+        if ($resolved.Extension.ToLowerInvariant() -notin @(".wav", ".m4a")) {
+            throw "The harness input must be a .wav or .m4a file (got '$($resolved.Name)')."
+        }
+        $resolved
+    }
 
 $runId = [guid]::NewGuid().ToString("N")
 $appId = "com.voicechat.agent"
@@ -95,27 +98,24 @@ try {
         Write-Output "Building and installing the debug app and instrumentation APK on $DeviceSerial..."
         & $gradle :app:installDebug :app:installDebugAndroidTest "-Pandroid.injected.device.serial=$DeviceSerial"
         if ($LASTEXITCODE -ne 0) { throw "Gradle install failed with exit code $LASTEXITCODE." }
-    } elseif (-not $SkipModelPush) {
-        # The model staging helper needs the debug app installed; without a build,
-        # only the APKs from a prior install are available.
+    } else {
         Write-Output "Skipping the build; assuming the debug app is already installed."
     }
 
-    if (-not $SkipModelPush) {
-        & (Join-Path $PSScriptRoot "push-parakeet-eou.ps1") -DeviceSerial $DeviceSerial
-        if ($LASTEXITCODE -ne 0) { throw "Could not stage the pinned Parakeet-EOU model on the device." }
-    }
-
-    $extension = $input.Extension.ToLowerInvariant()
-    $stagedName = "clip_001$extension"
     Invoke-Adb shell mkdir -p $deviceTempDirectory | Out-Null
     Invoke-Adb shell run-as $appId mkdir -p $remoteRunDirectory | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Could not create the harness stage directory on the device." }
 
-    Write-Output "Staging $($input.Name) as $stagedName..."
-    Invoke-Adb push $input.FullName "$deviceTempDirectory/$stagedName" | Out-Null
-    Invoke-Adb shell run-as $appId cp "$deviceTempDirectory/$stagedName" "$remoteRunDirectory/$stagedName" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Could not copy the clip into app-private cache." }
+    $index = 0
+    foreach ($input in $inputs) {
+        $index++
+        $extension = $input.Extension.ToLowerInvariant()
+        $stagedName = "clip_{0:D3}$extension" -f $index
+        Write-Output "Staging $($input.Name) as $stagedName..."
+        Invoke-Adb push $input.FullName "$deviceTempDirectory/$stagedName" | Out-Null
+        Invoke-Adb shell run-as $appId cp "$deviceTempDirectory/$stagedName" "$remoteRunDirectory/$stagedName" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Could not copy '$($input.Name)' into app-private cache." }
+    }
 
     $instrumentationArguments = @(
         "-w",

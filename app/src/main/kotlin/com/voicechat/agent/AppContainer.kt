@@ -14,17 +14,14 @@ import com.voicechat.agent.providers.RegisteredProviderLanguageModelFactory
 import com.voicechat.agent.remote.OkHttpStreamingEngine
 import com.voicechat.agent.remote.RemoteTransport
 import com.voicechat.agent.settings.PreferencesSettingsStore
-import com.voicechat.agent.stt.parakeet.ParakeetEouModelStore
 import com.voicechat.agent.turn.OnnxSmartTurnEngine
 import com.voicechat.agent.turn.SmartTurnDetectorFactory
 import com.voicechat.agent.turn.SmartTurnEngineFactory
 import com.voicechat.agent.turn.SmartTurnModelStore
 import com.voicechat.agent.ui.AndroidSettingsCapabilityProvider
 import com.voicechat.agent.ui.ConversationDefaults
-import com.voicechat.agent.ui.DefaultParakeetEouModelInstaller
 import com.voicechat.agent.ui.DefaultSmartTurnModelInstaller
 import com.voicechat.agent.ui.settingsViewModelFactory
-import com.voicechat.agent.voice.OnnxParakeetEouSessionFactory
 import com.voicechat.agent.voice.VoiceRuntimeSelection
 import com.voicechat.agent.voice.VoiceSessionAssembly
 import kotlinx.coroutines.flow.first
@@ -54,7 +51,7 @@ class AppContainer(
      * Debug-only override for the per-session microphone source. Production passes
      * `null` (the microphone is used); the debug application injects a file-backed
      * source so the full voice loop can be exercised from a WAV. See
-     * `docs/parakeet-eou-streaming.md`.
+     * `docs/android-speech-recognition.md`.
      */
     private val voiceAudioInputFactory: (() -> AudioInput)? = null,
 ) {
@@ -95,8 +92,6 @@ class AppContainer(
             credentials = credentials,
             capabilityProvider = AndroidSettingsCapabilityProvider(appContext),
             smartTurnInstaller = DefaultSmartTurnModelInstaller(File(appContext.filesDir, SmartTurnModelStore.DIRECTORY_NAME)),
-            parakeetEouInstaller =
-                DefaultParakeetEouModelInstaller(File(appContext.filesDir, ParakeetEouModelStore.DIRECTORY_NAME)),
         )
     }
 
@@ -118,7 +113,6 @@ class AppContainer(
             repository = repository,
             diagnostics = diagnosticsSink,
             turnCompletion = smartTurnDetectorProvider,
-            parakeetSessionFactory = OnnxParakeetEouSessionFactory(diagnostics = diagnosticsSink),
             audioInputFactory = voiceAudioInputFactory,
             selectionProvider = {
                 val settings = settingsStore.observe().first()

@@ -178,6 +178,10 @@ class MlKitSpeechToText(
                                         outcome = DiagnosticOutcome.FAILED
                                         errorCode = event.error.detail ?: event.error.code.name
                                     }
+
+                                    SttEvent.EndOfSpeech -> {
+                                        Unit
+                                    }
                                 }
                                 emit(event)
                             }
@@ -329,6 +333,7 @@ private fun SttEngineResponse.logKind(): String =
         is SttEngineResponse.Partial -> "partial"
         is SttEngineResponse.Final -> "final_segment"
         is SttEngineResponse.Failure -> "failure:${kind.name}"
+        SttEngineResponse.EndOfSpeech -> "end_of_speech"
         SttEngineResponse.Stopped -> "stopped"
         SttEngineResponse.Completed -> "completed"
     }

@@ -15,6 +15,7 @@ import java.util.Locale
  * tests; they assert the rule, not the device.
  */
 class SttAvailabilityTest {
+    private val androidSpeech = SttEngine(SttMode.ANDROID_SPEECH, Locale.US)
     private val basic = SttEngine(SttMode.BASIC, Locale.US)
     private val advanced = SttEngine(SttMode.ADVANCED, Locale.US)
 
@@ -36,41 +37,47 @@ class SttAvailabilityTest {
     }
 
     @Test
-    fun theEngineIsSingleAcrossModesButModelsDiffer() {
+    fun eachFamilyHasItsOwnEngineIdAndModel() {
         assertEquals(SttEngine.ENGINE_ID, basic.engineId)
         assertEquals(SttEngine.ENGINE_ID, advanced.engineId)
+        assertEquals(SttEngine.ANDROID_SPEECH_ENGINE_ID, androidSpeech.engineId)
         assertTrue(basic.modelId != advanced.modelId)
         assertEquals("mlkit-speech-basic", basic.modelId.value)
         assertEquals("mlkit-speech-advanced", advanced.modelId.value)
+        assertEquals("android-speech-on-device", androidSpeech.modelId.value)
     }
 
     @Test
-    fun theCatalogPrefersParakeetEouThenTheMlKitModes() {
+    fun theCatalogPrefersThePlatformRecognizerThenTheMlKitModes() {
         val catalog = SttEngines.catalog(Locale.US)
 
-        assertEquals(listOf(SttMode.PARAKEET_EOU, SttMode.ADVANCED, SttMode.BASIC), catalog.map { it.mode })
+        assertEquals(listOf(SttMode.ANDROID_SPEECH, SttMode.ADVANCED, SttMode.BASIC), catalog.map { it.mode })
         assertEquals(listOf(SttMode.ADVANCED, SttMode.BASIC), SttEngines.mlKitCatalog(Locale.US).map { it.mode })
     }
 
     @Test
     fun preferredPicksTheFirstReadyEngineInCatalogOrder() {
-        val parakeet = SttEngine(SttMode.PARAKEET_EOU, Locale.US)
+        val platform = SttEngine(SttMode.ANDROID_SPEECH, Locale.US)
         val advanced = SttEngine(SttMode.ADVANCED, Locale.US)
         val basic = SttEngine(SttMode.BASIC, Locale.US)
 
-        // Parakeet-EOU is the default once its app-managed model is installed.
-        val parakeetReady =
+        // The platform recognizer is the default when the device offers one.
+        val platformReady =
             listOf(
-                SttAvailability.Ready(parakeet),
+                SttAvailability.Ready(platform),
                 SttAvailability.Ready(advanced),
                 SttAvailability.Ready(basic),
             )
-        assertEquals(SttMode.PARAKEET_EOU, SttEngines.preferred(parakeetReady)?.mode)
+        assertEquals(SttMode.ANDROID_SPEECH, SttEngines.preferred(platformReady)?.mode)
 
-        // Without it, the first ready ML Kit mode is the fallback.
+        // Without an on-device recognizer, the first ready ML Kit mode is the fallback.
         val onlyAdvancedReady =
             listOf(
-                SttAvailability.DownloadRequired(parakeet),
+                SttAvailability.Unavailable(
+                    platform,
+                    UnavailableReason.DEVICE_UNSUPPORTED,
+                    VoiceAgentError(ErrorCode.STT_UNAVAILABLE, "no on-device recognizer"),
+                ),
                 SttAvailability.Ready(advanced),
                 SttAvailability.Ready(basic),
             )
@@ -78,7 +85,11 @@ class SttAvailabilityTest {
 
         val onlyBasicReady =
             listOf(
-                SttAvailability.DownloadRequired(parakeet),
+                SttAvailability.Unavailable(
+                    platform,
+                    UnavailableReason.DEVICE_UNSUPPORTED,
+                    VoiceAgentError(ErrorCode.STT_UNAVAILABLE, "no on-device recognizer"),
+                ),
                 SttAvailability.DownloadRequired(advanced),
                 SttAvailability.Ready(basic),
             )
@@ -86,7 +97,11 @@ class SttAvailabilityTest {
 
         val nothingReady =
             listOf(
-                SttAvailability.DownloadRequired(parakeet),
+                SttAvailability.Unavailable(
+                    platform,
+                    UnavailableReason.DEVICE_UNSUPPORTED,
+                    VoiceAgentError(ErrorCode.STT_UNAVAILABLE, "no on-device recognizer"),
+                ),
                 SttAvailability.DownloadRequired(advanced),
                 SttAvailability.Unavailable(
                     basic,

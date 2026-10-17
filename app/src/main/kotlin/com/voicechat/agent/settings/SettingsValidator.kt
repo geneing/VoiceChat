@@ -121,8 +121,8 @@ object SettingsValidator {
         // --- STT ----------------------------------------------------------------
         // A ready mode is kept. So is a *downloadable* or *downloading* one: it is
         // shown with its download action, so clearing the selection would make
-        // that action unreachable (stream 4, Parakeet-EOU install flow). Only a
-        // selection the device cannot run at all is cleared and reported.
+        // that action unreachable. Only a selection the device cannot run at all
+        // is cleared and reported.
         val sttMode = result.sttMode
         if (sttMode != null && !capabilities.isUnread) {
             val availability = capabilities.sttAvailability.firstOrNull { it.engine.mode == sttMode }

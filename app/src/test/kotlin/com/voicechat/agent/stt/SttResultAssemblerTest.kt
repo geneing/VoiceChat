@@ -337,4 +337,23 @@ class SttResultAssemblerTest {
 
         assertTrue(assembler.onResponse(SttEngineResponse.Stopped).isEmpty())
     }
+
+    @Test
+    fun endOfSpeechIsSurfacedWithoutEndingTheTurn() {
+        val assembler = newAssembler()
+
+        val events = assembler.onResponse(SttEngineResponse.EndOfSpeech)
+
+        assertEquals(SttEvent.EndOfSpeech, events.single())
+        assertFalse("end of speech is corroborating, not terminal", assembler.isFinished)
+    }
+
+    @Test
+    fun endOfSpeechAfterTerminalEmitsNothing() {
+        val assembler = newAssembler()
+        assembler.onResponse(SttEngineResponse.Final("done"))
+        assembler.onResponse(SttEngineResponse.Completed)
+
+        assertTrue(assembler.onResponse(SttEngineResponse.EndOfSpeech).isEmpty())
+    }
 }

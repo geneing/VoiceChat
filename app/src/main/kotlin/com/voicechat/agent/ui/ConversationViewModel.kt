@@ -415,20 +415,6 @@ class ConversationViewModel(
         }
     }
 
-    override fun onParakeetEndpointTiming(
-        turnId: TurnId,
-        timing: com.voicechat.agent.voice.ParakeetEndpointTiming,
-    ) {
-        _uiState.update { state ->
-            state.copy(
-                dialog =
-                    state.dialog?.let { dialog ->
-                        dialog.copy(parakeetEndpointTimings = dialog.parakeetEndpointTimings + (turnId to timing))
-                    },
-            )
-        }
-    }
-
     override fun onUtteranceCommitted(
         turnId: TurnId,
         transcript: Transcript,
@@ -1076,13 +1062,6 @@ class ConversationViewModel(
             text: String,
         ) {
             if (isCurrent()) delegate.onProvisionalTranscript(turnId, text)
-        }
-
-        override fun onParakeetEndpointTiming(
-            turnId: TurnId,
-            timing: com.voicechat.agent.voice.ParakeetEndpointTiming,
-        ) {
-            if (isCurrent()) delegate.onParakeetEndpointTiming(turnId, timing)
         }
 
         override fun onUtteranceCommitted(

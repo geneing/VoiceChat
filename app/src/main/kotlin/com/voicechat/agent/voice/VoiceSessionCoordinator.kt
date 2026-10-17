@@ -23,13 +23,11 @@ import com.voicechat.agent.domain.UserTurnSource
 import com.voicechat.agent.domain.VoiceAgentError
 import com.voicechat.agent.domain.VoiceAgentException
 import com.voicechat.agent.log.AppLog
-import com.voicechat.agent.stt.parakeet.EndOfUtteranceSignal
 import com.voicechat.agent.vad.EndpointReason
 import com.voicechat.agent.vad.TurnDetectionEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -54,14 +52,16 @@ import java.util.UUID
  *
  * The semantic endpoint detector is evaluated only by [VoiceTurnDetector] after
  * a VAD-confirmed pause. Speech onset stays on the fast path and never waits for
- * Smart Turn inference.
+ * Smart Turn inference. The recognizer's own end-of-speech signal
+ * ([SttEvent.EndOfSpeech]) is surfaced for timing but never ends a turn: the
+ * bounded VAD/Smart Turn endpoint stays the authority, so an early engine signal
+ * cannot truncate a still-speaking user.
  */
 class VoiceSessionCoordinator(
     private val audioInput: AudioInput,
     private val repository: ConversationRepository,
     private val speechToText: SpeechToText,
     private val turnDetector: VoiceTurnDetector,
-    private val endOfUtterance: EndOfUtteranceSignal? = null,
     private val listener: VoiceSessionListener = VoiceSessionListener.NONE,
     private val diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
     private val clock: MonotonicClock = SystemMonotonicClock,
@@ -89,9 +89,6 @@ class VoiceSessionCoordinator(
     private var activeListening: ListeningTurn? = null
 
     @Volatile
-    private var parakeetEouOwner: ListeningTurn? = null
-
-    @Volatile
     private var detectorJob: Job? = null
 
     /**
@@ -114,30 +111,6 @@ class VoiceSessionCoordinator(
             val scope = this
             sessionScope = scope
             setState(VoiceSessionState.LISTENING)
-            val eouMonitor =
-                endOfUtterance?.let { signal ->
-                    scope.launch(dispatcher, start = CoroutineStart.UNDISPATCHED) {
-                        var lastObservation = signal.eouEvents.value
-                        signal.eouEvents.collect { observation ->
-                            if (
-                                observation.sequence > lastObservation.sequence ||
-                                observation.offsetMillis != lastObservation.offsetMillis
-                            ) {
-                                // StateFlow may conflate a reset followed immediately by
-                                // an EOU event. A sequence gap on a non-empty observation
-                                // means the current listening turn owns that EOU.
-                                if (
-                                    observation.offsetMillis != NO_EOU_OFFSET &&
-                                    observation.sequence > lastObservation.sequence + 1
-                                ) {
-                                    parakeetEouOwner = activeListening
-                                }
-                                lastObservation = observation
-                                onParakeetEouObservation(observation.offsetMillis)
-                            }
-                        }
-                    }
-                }
             val input = Channel<AudioFrame>(capacity = DETECT_BUFFER)
             detectInput = input
             captureJob = scope.launch(dispatcher) { pumpCapture(input) }
@@ -168,8 +141,6 @@ class VoiceSessionCoordinator(
                 }
                 finalizationJob?.cancel()
                 finalizationJob = null
-                eouMonitor?.cancel()
-                parakeetEouOwner = null
                 sessionScope = null
                 setState(if (stopped) VoiceSessionState.STOPPED else VoiceSessionState.IDLE)
             }
@@ -240,7 +211,6 @@ class VoiceSessionCoordinator(
             return
         }
         turn.vadEndpointOffsetMillis = (event.atOffsetMillis - turn.startedAtOffsetMillis).coerceAtLeast(0L)
-        publishEndpointTiming(turn)
         activeListening = null
         turn.input.close()
         val scope = sessionScope ?: return
@@ -303,28 +273,6 @@ class VoiceSessionCoordinator(
         AppLog.d { "voice: listening turn start" }
     }
 
-    /** Associates each utterance-scoped EOU observation with its active STT turn. */
-    private fun onParakeetEouObservation(offsetMillis: Long) {
-        if (offsetMillis == NO_EOU_OFFSET) {
-            parakeetEouOwner = activeListening
-            return
-        }
-        val turn = parakeetEouOwner ?: return
-        turn.eouOffsetMillis = offsetMillis
-        publishEndpointTiming(turn)
-    }
-
-    private fun publishEndpointTiming(turn: ListeningTurn) {
-        if (endOfUtterance == null) return
-        listener.onParakeetEndpointTiming(
-            turn.turnId,
-            ParakeetEndpointTiming(
-                eouOffsetMillis = turn.eouOffsetMillis,
-                vadEndpointOffsetMillis = turn.vadEndpointOffsetMillis,
-            ),
-        )
-    }
-
     private fun onSttEvent(
         turn: ListeningTurn,
         event: SttEvent,
@@ -361,6 +309,14 @@ class VoiceSessionCoordinator(
                 }
             }
 
+            SttEvent.EndOfSpeech -> {
+                AppLog.i { "voice: recognizer end of speech turn=${turn.turnId.value}" }
+                turn.recognizerEndOfSpeech = true
+                if (activeListening === turn) {
+                    listener.onSttEndOfSpeech(turn.turnId)
+                }
+            }
+
             is SttEvent.Failed -> {
                 AppLog.v { "voice: stt event turn=${turn.turnId.value} failed code=${event.error.code}" }
                 turn.failure = event.error
@@ -368,7 +324,7 @@ class VoiceSessionCoordinator(
         }
     }
 
-    /** Joins an EOU-committed segment to the next Parakeet segment for one VAD turn. */
+    /** Joins a committed segment to the next recognizer segment for one VAD turn. */
     private fun appendTranscriptSegment(
         prefix: String?,
         segment: String,
@@ -452,8 +408,8 @@ class VoiceSessionCoordinator(
         var provisional: Transcript? = null
         var final: Transcript? = null
         var failure: VoiceAgentError? = null
-        var eouOffsetMillis: Long? = null
         var vadEndpointOffsetMillis: Long? = null
+        var recognizerEndOfSpeech: Boolean = false
     }
 
     private companion object {
@@ -465,9 +421,6 @@ class VoiceSessionCoordinator(
 
         /** Maximum wait after endpoint for the recognizer's final result. */
         const val STT_COMPLETION_TIMEOUT_MILLIS = 5_000L
-
-        /** Sentinel emitted when Parakeet starts a new utterance input. */
-        const val NO_EOU_OFFSET = Long.MIN_VALUE
     }
 }
 

@@ -32,14 +32,6 @@ adb_run() { "$ADB_BIN" "${ADB_ARGS[@]}" "$@" </dev/null; }
 # TAB-separated. Kept as a here-doc read through a process substitution so the
 # final line is never dropped for lack of a trailing newline.
 CATALOG=$'smart-turn\tsmart-turn-v3.2-int8.onnx\tsmart-turn/smart-turn-v3.2-int8.onnx'
-CATALOG+=$'\n'"$(cat <<'EOF'
-parakeet-eou-encoder	parakeet-eou-encoder.onnx	parakeet-eou/parakeet-eou-encoder.onnx
-parakeet-eou-decoder	parakeet-eou-decoder.onnx	parakeet-eou/parakeet-eou-decoder.onnx
-parakeet-eou-joint	parakeet-eou-joint.onnx	parakeet-eou/parakeet-eou-joint.onnx
-parakeet-eou-config	config.json	parakeet-eou/config.json
-parakeet-eou-vocab	vocab.json	parakeet-eou/vocab.json
-EOF
-)"
 
 want=""
 if [[ $# -gt 0 ]]; then want="$1"; fi

@@ -33,7 +33,7 @@ class DebugVoiceChatApplication : VoiceChatApplication() {
     /**
      * Debug-only: when a WAV has been staged at
      * `files/debug-audio/input.wav`, run the voice loop from it instead of the
-     * microphone so the full `VAD → Parakeet-EOU STT → LLM → TTS` path can be
+     * microphone so the full `VAD → platform SpeechRecognizer STT` path can be
      * driven without speaking. With nothing staged this returns `null` and the
      * real microphone is used, exactly like release.
      */

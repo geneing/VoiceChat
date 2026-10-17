@@ -2,6 +2,7 @@ package com.voicechat.agent.voice
 
 import android.content.Context
 import android.os.SystemClock
+import android.speech.SpeechRecognizer
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -17,18 +18,13 @@ import com.voicechat.agent.domain.AudioFrame
 import com.voicechat.agent.domain.Conversation
 import com.voicechat.agent.domain.ConversationId
 import com.voicechat.agent.domain.ConversationSummary
+import com.voicechat.agent.domain.TurnId
 import com.voicechat.agent.log.AndroidLogging
 import com.voicechat.agent.log.LogLevel
 import com.voicechat.agent.stt.AndroidM4aReplayDecoder
-import com.voicechat.agent.stt.parakeet.OnnxParakeetEouRuntime
-import com.voicechat.agent.stt.parakeet.ParakeetDecoderSessionFactory
-import com.voicechat.agent.stt.parakeet.ParakeetDecoderSessions
-import com.voicechat.agent.stt.parakeet.ParakeetEouConfig
-import com.voicechat.agent.stt.parakeet.ParakeetEouModelStore
-import com.voicechat.agent.stt.parakeet.ParakeetEouSpeechToText
-import com.voicechat.agent.stt.parakeet.ParakeetInputGain
-import com.voicechat.agent.stt.parakeet.ParakeetStreamingDecoder
-import com.voicechat.agent.stt.parakeet.ParakeetVocabulary
+import com.voicechat.agent.stt.AndroidSpeechRecognizerSpeechToText
+import com.voicechat.agent.stt.SttEngine
+import com.voicechat.agent.stt.SttMode
 import com.voicechat.agent.turn.OnnxSmartTurnEngine
 import com.voicechat.agent.turn.SmartTurnDetectorFactory
 import com.voicechat.agent.turn.SmartTurnEngineFactory
@@ -56,35 +52,36 @@ import java.util.Locale
 
 /**
  * On-device harness that drives a staged audio file through the **real** voice
- * pipeline — capture → VAD/onset → Parakeet-EOU streaming STT → bounded
+ * pipeline — capture → VAD/onset → platform `SpeechRecognizer` STT → bounded
  * endpointing (with optional Smart Turn) — and records the timing of every stage.
  *
  * It exists to measure the latency story the product treats as a primary
  * requirement (`docs/voice-quality-and-latency.md`) from a replayed recording
  * instead of a live microphone:
  *
- * - **time to first token** — capture start (and VAD speech onset) to the first
- *   transcript revision;
- * - **end-of-speech → full detection** — the last real-audio frame, and the VAD
- *   endpoint, to the final committed transcript;
- * - the model EOU audio offset compared with the independent VAD endpoint offset;
+ * - **time to first partial** — capture start (and VAD speech onset) to the first
+ *   interim transcript revision;
+ * - **end of speech → final** — the VAD endpoint (the end-of-speech authority)
+ *   and the recognizer's own `onEndOfSpeech` to the final committed transcript;
+ * - **input end → final** — the last real-audio frame to the final transcript;
  * - per-stage VAD, Smart Turn, and STT diagnostics.
  *
  * The clip is fed as 20 ms / 320-sample frames **paced to real time**, exactly
  * like [com.voicechat.agent.audio.MicrophoneAudioCapture], followed by a bounded
  * tail of silence so the bounded silence cap commits the turn in the ordinary
- * way instead of through the capture-ended path. The recorder writes content-free
- * rows: no transcript text, only character counts and stable codes.
+ * way instead of through the capture-ended path. The recognizer reads those
+ * frames through `RecognizerIntent.EXTRA_AUDIO_SOURCE`, the same path the live
+ * app uses. The recorder writes content-free rows: no transcript text, only
+ * character counts and stable codes.
  *
  * With `-e sttHarnessLogTranscripts true` the harness additionally logs each
  * partial revision and the final committed text to logcat (`SttHarness` tag,
  * `STT_HARNESS_TRANSCRIPT`); the CSV reports stay content-free either way.
  *
- * Opt-in: skipped unless `-e sttHarnessRunId <id>` is passed and the clip is
- * staged under `cache/<STAGE_DIRECTORY>/<id>/` and the Parakeet-EOU model set is
- * installed in app-private storage. `-e sttHarnessSmartTurn true` enables the
- * Smart Turn corroborator when its model is installed; otherwise the VAD-only
- * bounded endpoint runs.
+ * Opt-in: skipped unless `-e sttHarnessRunId <id>` is passed, the clip is staged
+ * under `cache/<STAGE_DIRECTORY>/<id>/`, and the device exposes an on-device
+ * recognizer. `-e sttHarnessSmartTurn true` enables the Smart Turn corroborator
+ * when its model is installed; otherwise the VAD-only bounded endpoint runs.
  */
 @RunWith(AndroidJUnit4::class)
 class SttPipelineHarnessInstrumentedTest {
@@ -97,16 +94,17 @@ class SttPipelineHarnessInstrumentedTest {
             requireNotNull(runId)
             require(RUN_ID.matches(runId)) { "invalid harness run id" }
 
-            // Debug builds log the per-chunk decoder trace; make it explicit so the
-            // harness always emits stage lines even if the Application did not.
+            // Debug builds log the per-callback decoder trace; make it explicit so
+            // the harness always emits stage lines even if the Application did not.
             AndroidLogging.install(debug = true, minLevel = LogLevel.VERBOSE)
 
             val context = InstrumentationRegistry.getInstrumentation().targetContext
+            assumeTrue(
+                "no on-device recognizer on this device",
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(context),
+            )
             val runDir = File(File(context.cacheDir, STAGE_DIRECTORY), runId)
             assertTrue("harness stage directory is missing", runDir.isDirectory)
-
-            val modelDir = File(context.filesDir, ParakeetEouModelStore.DIRECTORY_NAME)
-            assumeTrue("stage the Parakeet-EOU model set first", File(modelDir, VOCAB_FILE).isFile)
 
             val files =
                 runDir
@@ -120,31 +118,14 @@ class SttPipelineHarnessInstrumentedTest {
             // CSV reports stay content-free either way.
             val logTranscripts = arguments.getString(ARG_LOG_TRANSCRIPTS)?.toBoolean() == true
 
-            val config = ParakeetEouConfig.pinned()
-            val vocab = ParakeetVocabulary.fromJson(File(modelDir, VOCAB_FILE).readText())
-            val runtime =
-                try {
-                    withContext(Dispatchers.IO) { OnnxParakeetEouRuntime.load(modelDir, config) }
-                } catch (failure: Throwable) {
-                    Log.e(TAG, "HARNESS model load failed: ${failure.javaClass.simpleName}")
-                    throw failure
-                }
-
             val rows =
-                try {
-                    files.map { file ->
-                        replayOne(
-                            file = file,
-                            context = context,
-                            runtime = runtime,
-                            vocab = vocab,
-                            config = config,
-                            smartTurnRequested = smartTurnRequested,
-                            logTranscripts = logTranscripts,
-                        )
-                    }
-                } finally {
-                    runtime.close()
+                files.map { file ->
+                    replayOne(
+                        file = file,
+                        context = context,
+                        smartTurnRequested = smartTurnRequested,
+                        logTranscripts = logTranscripts,
+                    )
                 }
 
             File(runDir, STAGES_FILE).writeText(
@@ -160,9 +141,6 @@ class SttPipelineHarnessInstrumentedTest {
     private suspend fun replayOne(
         file: File,
         context: Context,
-        runtime: OnnxParakeetEouRuntime,
-        vocab: ParakeetVocabulary,
-        config: ParakeetEouConfig,
         smartTurnRequested: Boolean,
         logTranscripts: Boolean,
     ): HarnessRow {
@@ -182,13 +160,11 @@ class SttPipelineHarnessInstrumentedTest {
         val recorder = HarnessRecorder(fileId, timeline, logTranscripts)
         val audioInput = PacedFileAudioInput(samples = pcm.samples, timeline = timeline)
         val diagnostics = RecordingDiagnosticsSink(recorder)
+        val engine = SttEngine(SttMode.ANDROID_SPEECH, Locale.US)
         val adapter =
-            ParakeetEouSpeechToText(
-                decoderFactory =
-                    ParakeetDecoderSessionFactory {
-                        ParakeetDecoderSessions.ofDecoder(ParakeetStreamingDecoder(vocab, config, runtime))
-                    },
-                inputGain = ParakeetInputGain(),
+            AndroidSpeechRecognizerSpeechToText(
+                context = context,
+                engine = engine,
                 diagnostics = diagnostics,
                 clock = SystemMonotonicClock,
             )
@@ -216,7 +192,6 @@ class SttPipelineHarnessInstrumentedTest {
                 repository = repository,
                 speechToText = adapter,
                 turnDetector = turnDetector,
-                endOfUtterance = adapter.endOfUtterance,
                 listener = HarnessListener(recorder),
                 diagnostics = diagnostics,
                 clock = SystemMonotonicClock,
@@ -351,9 +326,8 @@ class SttPipelineHarnessInstrumentedTest {
         const val STAGE_DIRECTORY = "voicechat-stt-harness"
         const val SUMMARY_FILE = "summary.csv"
         const val STAGES_FILE = "stages.csv"
-        const val VOCAB_FILE = "vocab.json"
-        const val ENGINE_ID = "parakeet-eou-streaming"
-        const val MODEL_ID = "parakeet-eou-120m-onnx-int8"
+        const val ENGINE_ID = "android-speech-recognizer"
+        const val MODEL_ID = "android-speech-on-device"
         const val FRAME_SAMPLES = 320 // 20 ms at 16 kHz
         const val SAMPLE_RATE_HZ = 16_000
         const val NANOS_PER_MILLI = 1_000_000L
@@ -368,16 +342,14 @@ class SttPipelineHarnessInstrumentedTest {
                 "model_id",
                 "audio_duration_ms",
                 "smart_turn",
-                "capture_start_to_first_transcript_ms",
-                "onset_to_first_transcript_ms",
+                "capture_start_to_first_partial_ms",
+                "onset_to_first_partial_ms",
                 "input_end_to_final_ms",
                 "vad_endpoint_to_final_ms",
-                "eou_offset_ms",
-                "vad_endpoint_offset_ms",
-                "eou_minus_vad_ms",
+                "end_of_speech_to_final_ms",
                 "vad_onset_count",
                 "vad_endpoint_count",
-                "transcript_count",
+                "partial_count",
                 "last_endpoint_reason",
                 "final_chars",
                 "wall_time_ms",
@@ -486,27 +458,24 @@ class SttPipelineHarnessInstrumentedTest {
             recorder.stage("SESSION_STATE", detail = state.name)
         }
 
-        override fun onListeningStarted(turnId: com.voicechat.agent.domain.TurnId) {
+        override fun onListeningStarted(turnId: TurnId) {
             recorder.stage("STT_LISTENING_STARTED", detail = turnId.value)
         }
 
         override fun onProvisionalTranscript(
-            turnId: com.voicechat.agent.domain.TurnId,
+            turnId: TurnId,
             text: String,
         ) {
             recorder.recordTranscript(text.length)
             recorder.logTranscript("partial", text)
         }
 
-        override fun onParakeetEndpointTiming(
-            turnId: com.voicechat.agent.domain.TurnId,
-            timing: ParakeetEndpointTiming,
-        ) {
-            recorder.recordEndpointTiming(timing)
+        override fun onSttEndOfSpeech(turnId: TurnId) {
+            recorder.recordEndOfSpeech()
         }
 
         override fun onUtteranceCommitted(
-            turnId: com.voicechat.agent.domain.TurnId,
+            turnId: TurnId,
             transcript: com.voicechat.agent.domain.Transcript,
         ) {
             recorder.recordCommitted(transcript.text, transcript.isFinal)
@@ -548,13 +517,10 @@ class SttPipelineHarnessInstrumentedTest {
         private var lastEndpointWallMillis: Long? = null
 
         @Volatile
+        private var endOfSpeechWallMillis: Long? = null
+
+        @Volatile
         private var lastEndpointReason: String? = null
-
-        @Volatile
-        private var lastEouOffsetMillis: Long? = null
-
-        @Volatile
-        private var lastVadOffsetMillis: Long? = null
 
         @Volatile
         private var committedChars: Int? = null
@@ -654,16 +620,9 @@ class SttPipelineHarnessInstrumentedTest {
             }
         }
 
-        fun recordEndpointTiming(timing: ParakeetEndpointTiming) {
-            lastEouOffsetMillis = timing.eouOffsetMillis
-            lastVadOffsetMillis = timing.vadEndpointOffsetMillis
-            stage(
-                name = "ENDPOINT_TIMING",
-                detail =
-                    "eou_offset_ms=${timing.eouOffsetMillis ?: -1} " +
-                        "vad_offset_ms=${timing.vadEndpointOffsetMillis ?: -1} " +
-                        "eou_minus_vad_ms=${timing.eouMinusVadMillis ?: -1}",
-            )
+        fun recordEndOfSpeech() {
+            if (endOfSpeechWallMillis == null) endOfSpeechWallMillis = wallOffsetMillis()
+            stage("STT_END_OF_SPEECH")
         }
 
         fun recordTranscript(chars: Int) {
@@ -712,12 +671,13 @@ class SttPipelineHarnessInstrumentedTest {
             val firstTranscript = firstTranscriptWallMillis
             val onset = firstOnsetWallMillis
             val committed = committedWallMillis
+            val endOfSpeech = endOfSpeechWallMillis
             return HarnessRow(
                 fileId = fileId,
                 audioDurationMillis = audioDurationMillis,
                 smartTurn = smartTurn,
-                captureStartToFirstTranscriptMillis = firstTranscript,
-                onsetToFirstTranscriptMillis =
+                captureStartToFirstPartialMillis = firstTranscript,
+                onsetToFirstPartialMillis =
                     if (onset != null && firstTranscript != null) (firstTranscript - onset).coerceAtLeast(0L) else null,
                 inputEndToFinalMillis =
                     if (inputEndWall != null && committed != null) {
@@ -731,11 +691,15 @@ class SttPipelineHarnessInstrumentedTest {
                     } else {
                         null
                     },
-                eouOffsetMillis = lastEouOffsetMillis,
-                vadEndpointOffsetMillis = lastVadOffsetMillis,
+                endOfSpeechToFinalMillis =
+                    if (endOfSpeech != null && committed != null) {
+                        (committed - endOfSpeech).coerceAtLeast(0L)
+                    } else {
+                        null
+                    },
                 vadOnsetCount = onsetCount,
                 vadEndpointCount = endpointCount,
-                transcriptCount = transcriptCount,
+                partialCount = transcriptCount,
                 lastEndpointReason = lastEndpointReason,
                 finalChars = committedChars,
                 wallTimeMillis = wallTimeMillis,
@@ -768,15 +732,14 @@ class SttPipelineHarnessInstrumentedTest {
         val fileId: String,
         val audioDurationMillis: Long?,
         val smartTurn: Boolean = false,
-        val captureStartToFirstTranscriptMillis: Long? = null,
-        val onsetToFirstTranscriptMillis: Long? = null,
+        val captureStartToFirstPartialMillis: Long? = null,
+        val onsetToFirstPartialMillis: Long? = null,
         val inputEndToFinalMillis: Long? = null,
         val vadEndpointToFinalMillis: Long? = null,
-        val eouOffsetMillis: Long? = null,
-        val vadEndpointOffsetMillis: Long? = null,
+        val endOfSpeechToFinalMillis: Long? = null,
         val vadOnsetCount: Int = 0,
         val vadEndpointCount: Int = 0,
-        val transcriptCount: Int = 0,
+        val partialCount: Int = 0,
         val lastEndpointReason: String? = null,
         val finalChars: Int? = null,
         val wallTimeMillis: Long = 0L,
@@ -784,14 +747,6 @@ class SttPipelineHarnessInstrumentedTest {
         val errorCode: String? = null,
         val stages: List<Stage> = emptyList(),
     ) {
-        val eouMinusVadMillis: Long?
-            get() =
-                if (eouOffsetMillis != null && vadEndpointOffsetMillis != null) {
-                    eouOffsetMillis - vadEndpointOffsetMillis
-                } else {
-                    null
-                }
-
         fun toCsv(): String =
             listOf(
                 fileId,
@@ -799,16 +754,14 @@ class SttPipelineHarnessInstrumentedTest {
                 MODEL_ID,
                 audioDurationMillis.csv(),
                 smartTurn.toString(),
-                captureStartToFirstTranscriptMillis.csv(),
-                onsetToFirstTranscriptMillis.csv(),
+                captureStartToFirstPartialMillis.csv(),
+                onsetToFirstPartialMillis.csv(),
                 inputEndToFinalMillis.csv(),
                 vadEndpointToFinalMillis.csv(),
-                eouOffsetMillis.csv(),
-                vadEndpointOffsetMillis.csv(),
-                eouMinusVadMillis.csv(),
+                endOfSpeechToFinalMillis.csv(),
                 vadOnsetCount.toString(),
                 vadEndpointCount.toString(),
-                transcriptCount.toString(),
+                partialCount.toString(),
                 lastEndpointReason.orEmpty(),
                 finalChars?.toString().orEmpty(),
                 wallTimeMillis.toString(),
@@ -818,11 +771,11 @@ class SttPipelineHarnessInstrumentedTest {
 
         fun toLogLine(): String =
             "STT_HARNESS_RESULT,file=$fileId,smart_turn=$smartTurn,audio_ms=${audioDurationMillis.csv()}," +
-                "first_transcript_ms=${captureStartToFirstTranscriptMillis.csv()}," +
-                "onset_to_first_ms=${onsetToFirstTranscriptMillis.csv()}," +
+                "first_partial_ms=${captureStartToFirstPartialMillis.csv()}," +
+                "onset_to_first_ms=${onsetToFirstPartialMillis.csv()}," +
                 "input_end_to_final_ms=${inputEndToFinalMillis.csv()}," +
                 "vad_end_to_final_ms=${vadEndpointToFinalMillis.csv()}," +
-                "eou_minus_vad_ms=${eouMinusVadMillis.csv()}," +
+                "eos_to_final_ms=${endOfSpeechToFinalMillis.csv()}," +
                 "outcome=$outcome,error_code=${errorCode.orEmpty()}"
 
         private fun Long?.csv(): String = this?.toString().orEmpty()

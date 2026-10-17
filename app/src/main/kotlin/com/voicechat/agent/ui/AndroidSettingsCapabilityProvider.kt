@@ -5,10 +5,12 @@ import com.voicechat.agent.log.AppLog
 import com.voicechat.agent.providers.DocumentedModelCatalog
 import com.voicechat.agent.settings.SettingsCapabilities
 import com.voicechat.agent.settings.SettingsCapabilityProvider
+import com.voicechat.agent.stt.AndroidSpeechSttStatus
 import com.voicechat.agent.stt.MlKitSttStatus
-import com.voicechat.agent.stt.ParakeetEouSttCatalog
+import com.voicechat.agent.stt.SttAvailability
+import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttEngines
-import com.voicechat.agent.stt.parakeet.ParakeetEouModelStore
+import com.voicechat.agent.stt.SttMode
 import com.voicechat.agent.tts.AndroidTtsEngine
 import com.voicechat.agent.tts.TtsVoice
 import com.voicechat.agent.turn.SmartTurnCatalog
@@ -46,11 +48,6 @@ class AndroidSettingsCapabilityProvider(
     private val smartTurnStore: SmartTurnModelStore =
         SmartTurnModelStore(File(appContext.filesDir, SmartTurnModelStore.DIRECTORY_NAME))
 
-    // The app-managed Parakeet-EOU model set (five files) lives in its own
-    // app-private directory; state() verifies every file off the main thread.
-    private val parakeetEouStore: ParakeetEouModelStore =
-        ParakeetEouModelStore(File(appContext.filesDir, ParakeetEouModelStore.DIRECTORY_NAME))
-
     override suspend fun snapshot(): SettingsCapabilities =
         SettingsCapabilities(
             sttAvailability = readSttAvailability(),
@@ -60,15 +57,16 @@ class AndroidSettingsCapabilityProvider(
         )
 
     /**
-     * The app-managed Parakeet-EOU engine (the default) plus the ML Kit modes.
-     * Parakeet is reported from the verified on-disk model set, so an uninstalled
-     * set is a first-class [com.voicechat.agent.stt.SttAvailability.DownloadRequired]
-     * and never a fabricated ready state; only the ML Kit modes go through
+     * The platform `SpeechRecognizer` engine (the default) plus the ML Kit modes.
+     * The platform engine is reported from `SpeechRecognizer`, so a device with no
+     * on-device recognizer is a first-class [SttAvailability.Unavailable] and never
+     * a fabricated ready state; only the ML Kit modes go through
      * [MlKitSttStatus.check].
      */
-    private suspend fun readSttAvailability(): List<com.voicechat.agent.stt.SttAvailability> =
-        listOf(ParakeetEouSttCatalog.availability(parakeetEouStore.state())) +
-            SttEngines.mlKitCatalog().map { MlKitSttStatus.check(it) }
+    private suspend fun readSttAvailability(): List<SttAvailability> =
+        listOf(
+            AndroidSpeechSttStatus.check(appContext, SttEngine(SttMode.ANDROID_SPEECH, SttEngines.DEFAULT_LOCALE)),
+        ) + SttEngines.mlKitCatalog().map { MlKitSttStatus.check(it) }
 
     private suspend fun readTtsVoices(): List<TtsVoice> {
         val engine = AndroidTtsEngine(appContext)
