@@ -19,6 +19,7 @@ import com.voicechat.agent.providers.ProviderCapabilityRegistry
 import com.voicechat.agent.providers.StaticModelCapabilityCatalog
 import com.voicechat.agent.settings.InMemorySettingsStore
 import com.voicechat.agent.settings.InvalidSelection
+import com.voicechat.agent.settings.KokoroState
 import com.voicechat.agent.settings.SettingsCapabilities
 import com.voicechat.agent.settings.SettingsCapabilityProvider
 import com.voicechat.agent.settings.SettingsNotice
@@ -32,6 +33,8 @@ import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttMode
 import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
+import com.voicechat.agent.tts.kokoro.KokoroInstallStatus
+import com.voicechat.agent.tts.kokoro.KokoroModelInstaller
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -79,11 +82,13 @@ class SettingsViewModelTest {
         voices: List<TtsVoice> = listOf(embeddedVoice()),
         engines: List<TtsEngineInfo> = listOf(systemEngine()),
         stt: List<SttAvailability> = listOf(SttAvailability.Ready(SttEngine(SttMode.ADVANCED, Locale.US))),
+        kokoro: KokoroState = KokoroState.Installed,
     ) = SettingsCapabilities(
         sttAvailability = stt,
         ttsVoices = voices,
         ttsEngines = engines,
         smartTurn = smartTurn,
+        kokoro = kokoro,
         models = models,
     )
 
@@ -100,6 +105,7 @@ class SettingsViewModelTest {
         capabilities: SettingsCapabilities = capabilities(),
         downloader: SttModelDownloader = NoOpSttModelDownloader,
         smartTurnInstaller: SmartTurnModelInstaller = UnavailableSmartTurnModelInstaller,
+        kokoroInstaller: KokoroModelInstaller = com.voicechat.agent.tts.kokoro.UnavailableKokoroModelInstaller,
         capabilityProvider: SettingsCapabilityProvider = StaticSettingsCapabilityProvider(capabilities),
     ): Harness {
         val dispatcher = UnconfinedTestDispatcher(scheduler)
@@ -114,6 +120,7 @@ class SettingsViewModelTest {
                 modelCatalog = modelCatalog,
                 sttDownloader = downloader,
                 smartTurnInstaller = smartTurnInstaller,
+                kokoroInstaller = kokoroInstaller,
                 dispatcher = dispatcher,
                 scope = scope,
             )
@@ -568,6 +575,47 @@ class SettingsViewModelTest {
             advanceUntilIdle()
 
             assertFalse(h.viewModel.uiState.value.smartTurn.enabled)
+            h.scope.cancel()
+        }
+
+    @Test
+    fun installingKokoroRefreshesTheVerifiedVoiceCapability() =
+        runTest {
+            var installed = false
+            val missing = capabilities(voices = emptyList(), kokoro = KokoroState.DownloadRequired)
+            val provider =
+                object : SettingsCapabilityProvider {
+                    override suspend fun snapshot(): SettingsCapabilities =
+                        if (installed) capabilities(kokoro = KokoroState.Installed) else missing
+                }
+            val installer =
+                KokoroModelInstaller {
+                    flow {
+                        emit(KokoroInstallStatus.Started(totalBytes = 123L))
+                        installed = true
+                        emit(KokoroInstallStatus.Completed)
+                    }
+                }
+            val h =
+                harness(
+                    testScheduler,
+                    capabilities = missing,
+                    capabilityProvider = provider,
+                    kokoroInstaller = installer,
+                )
+            advanceUntilIdle()
+
+            assertTrue(h.viewModel.uiState.value.kokoro.needsDownload)
+            h.viewModel.onDownloadKokoroModel()
+            advanceUntilIdle()
+
+            assertEquals(KokoroState.Installed, h.viewModel.uiState.value.kokoro.state)
+            assertFalse(h.viewModel.uiState.value.kokoro.installing)
+            assertEquals(
+                listOf(embeddedVoice().id),
+                h.viewModel.uiState.value.tts.options
+                    .map { it.value.id },
+            )
             h.scope.cancel()
         }
 

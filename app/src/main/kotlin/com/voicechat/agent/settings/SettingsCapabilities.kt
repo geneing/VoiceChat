@@ -5,6 +5,20 @@ import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
 
+/** Availability of the pinned on-device Kokoro voice graph. */
+sealed interface KokoroState {
+    /** The pinned graph passed integrity verification and is ready to load. */
+    data object Installed : KokoroState
+
+    /** The graph is absent and can be installed after the user approves a download. */
+    data object DownloadRequired : KokoroState
+
+    /** The graph cannot be used; [reason] is safe to show in Settings. */
+    data class Unavailable(
+        val reason: String,
+    ) : KokoroState
+}
+
 /**
  * Availability of the optional Smart Turn v3.2 semantic turn detector.
  *
@@ -29,11 +43,11 @@ sealed interface SmartTurnState {
 /**
  * A snapshot of what the current device/runtime actually offers (M22).
  *
- * These lists come from the running engines and runtime status checks
- * (`SettingsCapabilityProvider`), never from a static assumption: STT modes from
- * the ML Kit feature status, TTS voices from `getVoices()`, and models from the
- * provider's `/models` surface. An unknown or unverified entry simply does not
- * appear, so an unsupported option is never presented as fact.
+ * These lists come from runtime status checks (`SettingsCapabilityProvider`),
+ * never from a static assumption: STT modes from recognizer/model status, TTS
+ * voices from verified Kokoro graphs, and models from the provider catalog. An
+ * unknown or unverified entry simply does not appear, so an unsupported option
+ * is never presented as fact.
  */
 data class SettingsCapabilities(
     /** Availability of the STT modes on this device. */
@@ -42,6 +56,8 @@ data class SettingsCapabilities(
     val ttsVoices: List<TtsVoice> = emptyList(),
     /** Every platform TTS engine the device reports, for the settings engine picker. */
     val ttsEngines: List<TtsEngineInfo> = emptyList(),
+    /** Integrity-checked availability of the selected distilled Kokoro voice. */
+    val kokoro: KokoroState = KokoroState.Unavailable("Kokoro model availability has not been checked."),
     /** Smart Turn availability; default unavailable until M10. */
     val smartTurn: SmartTurnState =
         SmartTurnState.Unavailable("Smart Turn is not installed; the bounded VAD endpoint is used."),

@@ -49,6 +49,7 @@ import com.voicechat.agent.R
 import com.voicechat.agent.contracts.ModelAvailability
 import com.voicechat.agent.contracts.ModelCatalogState
 import com.voicechat.agent.domain.ConnectionState
+import com.voicechat.agent.settings.KokoroState
 import com.voicechat.agent.settings.SelectableOption
 import com.voicechat.agent.settings.SettingsActions
 import com.voicechat.agent.settings.SettingsNotice
@@ -74,6 +75,9 @@ object SettingsTestTags {
     const val CONNECTION_STATE = "settings-connection-state"
     const val SIGN_IN = "settings-sign-in"
     const val TTS_NO_VOICE = "settings-tts-no-voice"
+    const val KOKORO_MODEL_DOWNLOAD = "settings-kokoro-model-download"
+    const val KOKORO_MODEL_PROGRESS = "settings-kokoro-model-progress"
+    const val KOKORO_MODEL_REASON = "settings-kokoro-model-reason"
     const val SMART_TURN_TOGGLE = "settings-smart-turn-toggle"
     const val SMART_TURN_REASON = "settings-smart-turn-reason"
 
@@ -398,27 +402,53 @@ private fun TtsSection(
     state: SettingsUiState,
     actions: SettingsActions,
 ) {
-    SettingsHeading("Text-to-speech")
-    Text("On-device voices only; a network voice is never used.", style = MaterialTheme.typography.bodySmall)
+    SettingsHeading("On-device speech")
+    Text(
+        "Distilled Kokoro voice model; speech stays on-device with no platform or network fallback.",
+        style = MaterialTheme.typography.bodySmall,
+    )
 
-    // The speech engine (speech API) is offered only when the device reports more
-    // than one; the selected engine speaks, and a voice is chosen within it.
-    if (state.tts.hasEngineChoices) {
-        OptionDropdown(
-            label = "Speech engine",
-            options = state.tts.engines,
-            selected = state.tts.displayedEngine,
-            tag = SettingsTestTags.TTS_ENGINE_DROPDOWN,
-            optionTag = { SettingsTestTags.menuOption(it.value.id) },
-            onSelect = { actions.onSelectTtsEngine(it.value.id) },
-        )
+    when {
+        state.kokoro.installing -> {
+            Column(modifier = Modifier.testTag(SettingsTestTags.KOKORO_MODEL_PROGRESS)) {
+                Text("Installing Kokoro voice model…", style = MaterialTheme.typography.bodySmall)
+                state.kokoro.totalBytes?.takeIf { it > 0L }?.let { bytes ->
+                    Text("Model size: $bytes bytes", style = MaterialTheme.typography.bodySmall)
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+
+        state.kokoro.state is KokoroState.DownloadRequired -> {
+            Text(
+                "The Kokoro voice model is not installed. Speech remains unavailable until it is installed.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag(SettingsTestTags.KOKORO_MODEL_REASON),
+            )
+            Button(
+                onClick = actions::onDownloadKokoroModel,
+                modifier = Modifier.testTag(SettingsTestTags.KOKORO_MODEL_DOWNLOAD),
+            ) {
+                Text("Install Kokoro voice model")
+            }
+        }
+
+        state.kokoro.state is KokoroState.Unavailable -> {
+            Text(
+                state.kokoro.unavailableReason.orEmpty(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag(SettingsTestTags.KOKORO_MODEL_REASON),
+            )
+        }
     }
 
     if (state.tts.noOnDeviceVoice) {
         Text(
             text =
-                "No on-device voice is installed for this locale; the app stays text-only. " +
-                    "Install one in system settings to enable speech.",
+                "No installed Kokoro voice is available for this locale; the app stays text-only.",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.testTag(SettingsTestTags.TTS_NO_VOICE),
         )

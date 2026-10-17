@@ -19,6 +19,7 @@ import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttMode
 import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
+import com.voicechat.agent.tts.kokoro.KokoroArtifact
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -54,11 +55,13 @@ class SettingsValidatorTest {
         voices: List<TtsVoice> = listOf(embeddedVoice()),
         engines: List<TtsEngineInfo> = listOf(systemEngine()),
         smartTurn: SmartTurnState = SmartTurnState.Available,
+        kokoro: KokoroState = KokoroState.Installed,
     ) = SettingsCapabilities(
         sttAvailability = stt,
         ttsVoices = voices,
         ttsEngines = engines,
         smartTurn = smartTurn,
+        kokoro = kokoro,
         models = models,
     )
 
@@ -187,6 +190,23 @@ class SettingsValidatorTest {
 
         assertEquals(listOf(InvalidSelection.TTS_VOICE), validation.invalid)
         assertNull(validation.settings.ttsVoiceId)
+    }
+
+    @Test
+    fun aKnownKokoroVoiceSelectionIsKeptWhileItsModelCanBeDownloaded() {
+        val voiceId = KokoroArtifact.DEFAULT.id
+        val settings = VoiceSettings(ttsVoiceId = voiceId)
+
+        val validation =
+            SettingsValidator.validate(
+                settings,
+                registry,
+                capabilities(voices = emptyList(), kokoro = KokoroState.DownloadRequired),
+                modelCatalog,
+            )
+
+        assertTrue(validation.isValid)
+        assertEquals(voiceId, validation.settings.ttsVoiceId)
     }
 
     @Test
