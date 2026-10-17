@@ -168,6 +168,7 @@ class AppContainer(
                 context = appContext,
                 locale = settings.locale(),
                 voiceId = settings.ttsVoiceId,
+                engineId = settings.ttsEngineId,
                 diagnostics = diagnosticsSink,
             )
         return OrchestratingVoiceAssistant(

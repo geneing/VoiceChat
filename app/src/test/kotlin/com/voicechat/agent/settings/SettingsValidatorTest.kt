@@ -17,6 +17,7 @@ import com.voicechat.agent.providers.StaticModelCapabilityCatalog
 import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttMode
+import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -51,8 +52,15 @@ class SettingsValidatorTest {
         models: List<ModelAvailability> = listOf(ModelAvailability.Ready(model)),
         stt: List<SttAvailability> = listOf(SttAvailability.Ready(sttEngine(SttMode.ADVANCED))),
         voices: List<TtsVoice> = listOf(embeddedVoice()),
+        engines: List<TtsEngineInfo> = listOf(systemEngine()),
         smartTurn: SmartTurnState = SmartTurnState.Available,
-    ) = SettingsCapabilities(sttAvailability = stt, ttsVoices = voices, smartTurn = smartTurn, models = models)
+    ) = SettingsCapabilities(
+        sttAvailability = stt,
+        ttsVoices = voices,
+        ttsEngines = engines,
+        smartTurn = smartTurn,
+        models = models,
+    )
 
     @Test
     fun aFullyValidSelectionIsPreserved() {
@@ -64,6 +72,7 @@ class SettingsValidatorTest {
                 llmAuthMethod = AuthMethod.API_KEY,
                 reasoningLevel = ReasoningLevel.HIGH,
                 ttsVoiceId = embeddedVoice().id,
+                ttsEngineId = systemEngine().id,
                 smartTurnEnabled = true,
             )
 
@@ -181,6 +190,26 @@ class SettingsValidatorTest {
     }
 
     @Test
+    fun anUnknownTtsEngineSelectionIsCleared() {
+        val settings = VoiceSettings(ttsEngineId = "com.example.missing.tts")
+
+        val validation = SettingsValidator.validate(settings, registry, capabilities(), modelCatalog)
+
+        assertEquals(listOf(InvalidSelection.TTS_ENGINE), validation.invalid)
+        assertNull(validation.settings.ttsEngineId)
+    }
+
+    @Test
+    fun aReportedTtsEngineSelectionIsPreserved() {
+        val settings = VoiceSettings(ttsEngineId = systemEngine().id)
+
+        val validation = SettingsValidator.validate(settings, registry, capabilities(), modelCatalog)
+
+        assertTrue(validation.isValid)
+        assertEquals(systemEngine().id, validation.settings.ttsEngineId)
+    }
+
+    @Test
     fun smartTurnIsClearedWhenUnavailableWithoutAnInvalidSelectionNotice() {
         val settings = VoiceSettings(smartTurnEnabled = true)
         val smartTurn = SmartTurnState.Unavailable("not installed")
@@ -201,6 +230,8 @@ class SettingsValidatorTest {
     private fun sttEngine(mode: SttMode) = SttEngine(mode, Locale.US)
 
     private fun embeddedVoice() = TtsVoice("voice-on-device", "On-device", Locale.US, requiresNetwork = false)
+
+    private fun systemEngine() = TtsEngineInfo("com.google.android.tts", "Google speech services", isSystemDefault = true)
 
     private fun descriptor(
         id: ModelId,

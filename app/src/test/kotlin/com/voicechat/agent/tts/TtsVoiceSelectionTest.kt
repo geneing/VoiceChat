@@ -62,6 +62,24 @@ class TtsVoiceSelectionTest {
     }
 
     @Test
+    fun theMostNaturalVoiceIsTheHighestQualityEmbeddedVoiceForTheLocale() {
+        val voices =
+            listOf(
+                ttsVoice("natural", quality = 500),
+                ttsVoice("plain", quality = 300),
+                ttsVoice("network-natural", requiresNetwork = true, quality = 500),
+            )
+
+        // Naturalness is the platform's quality rank; the network voice is never a
+        // candidate and an equal-quality lower-latency voice breaks the tie.
+        assertEquals("natural", OnDeviceVoiceSelector.mostNatural(voices, Locale.US)?.id)
+        assertEquals(
+            OnDeviceVoiceSelector.mostNatural(voices, Locale.US)?.id,
+            OnDeviceVoiceSelector.select(voices, Locale.US)?.id,
+        )
+    }
+
+    @Test
     fun selectPreferredReturnsTheExactInstalledEmbeddedVoice() {
         val voices =
             listOf(

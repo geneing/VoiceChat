@@ -24,13 +24,15 @@ object OnDeviceTts {
     /**
      * Builds the platform TTS path. [locale] selects the embedded voice;
      * [voiceId], when non-null, requires that exact installed embedded voice
-     * (R-0181). [diagnostics] receives privacy-safe
-     * `TTS_SYNTHESIS`/`TTS_PLAYBACK` events.
+     * (R-0181); [engineId], when non-null, requires that exact installed platform
+     * TTS engine (`null` uses the platform default). [diagnostics] receives
+     * privacy-safe `TTS_SYNTHESIS`/`TTS_PLAYBACK` events.
      */
     fun create(
         context: Context,
         locale: Locale = Locale.getDefault(),
         voiceId: String? = null,
+        engineId: String? = null,
         diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
         clock: MonotonicClock = SystemMonotonicClock,
         dispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -40,6 +42,7 @@ object OnDeviceTts {
                 context = context.applicationContext,
                 locale = locale,
                 preferredVoiceId = voiceId,
+                preferredEnginePackage = engineId,
                 dispatcher = dispatcher,
             )
         return EngineTextToSpeech(engine = engine, diagnostics = diagnostics, clock = clock)

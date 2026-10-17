@@ -26,6 +26,7 @@ private object SettingsKeys {
     val LLM_SERVER_URL = stringPreferencesKey("llm.serverUrl")
     val LLM_LOCAL_MODEL = stringPreferencesKey("llm.localModel")
     val TTS_VOICE = stringPreferencesKey("tts.voice")
+    val TTS_ENGINE = stringPreferencesKey("tts.engine")
     val SMART_TURN = booleanPreferencesKey("smartTurn.enabled")
 }
 
@@ -54,6 +55,7 @@ class PreferencesSettingsStore(
             preferences.putOrRemove(SettingsKeys.LLM_SERVER_URL, settings.llmServerUrl)
             preferences.putOrRemove(SettingsKeys.LLM_LOCAL_MODEL, settings.llmLocalModelId?.value)
             preferences.putOrRemove(SettingsKeys.TTS_VOICE, settings.ttsVoiceId)
+            preferences.putOrRemove(SettingsKeys.TTS_ENGINE, settings.ttsEngineId)
             preferences[SettingsKeys.SMART_TURN] = settings.smartTurnEnabled
         }
     }
@@ -91,6 +93,7 @@ private fun Preferences.toVoiceSettings(): VoiceSettings {
             this[SettingsKeys.LLM_SERVER_URL] == null &&
             this[SettingsKeys.LLM_LOCAL_MODEL] == null &&
             this[SettingsKeys.TTS_VOICE] == null &&
+            this[SettingsKeys.TTS_ENGINE] == null &&
             this[SettingsKeys.SMART_TURN] == null
     return if (pristine) VoiceSettings.firstRunDefaults() else toStoredVoiceSettings()
 }
@@ -105,6 +108,7 @@ private fun Preferences.toStoredVoiceSettings(): VoiceSettings =
         reasoningLevel = enumOrNull<ReasoningLevel>(this[SettingsKeys.REASONING]),
         llmServerUrl = this[SettingsKeys.LLM_SERVER_URL],
         ttsVoiceId = this[SettingsKeys.TTS_VOICE],
+        ttsEngineId = this[SettingsKeys.TTS_ENGINE],
         smartTurnEnabled = this[SettingsKeys.SMART_TURN] ?: true,
         llmLocalModelId = this[SettingsKeys.LLM_LOCAL_MODEL]?.let(::ModelId),
     )

@@ -70,6 +70,7 @@ class PreferencesSettingsStoreTest {
                     reasoningLevel = ReasoningLevel.HIGH,
                     llmServerUrl = "https://hermes.example.com/v1",
                     ttsVoiceId = "voice-on-device",
+                    ttsEngineId = "com.google.android.tts",
                     smartTurnEnabled = false,
                 )
 

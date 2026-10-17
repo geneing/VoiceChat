@@ -16,6 +16,7 @@ import com.voicechat.agent.providers.StaticModelCapabilityCatalog
 import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttMode
+import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -92,6 +93,20 @@ class SettingsOptionsTest {
 
         assertEquals(listOf("voice-on-device"), options.map { it.value.id })
         assertTrue(options.single().isAvailable)
+    }
+
+    @Test
+    fun reportedTtsEnginesAreListedAndTheSystemDefaultIsLabelled() {
+        val google = TtsEngineInfo("com.google.android.tts", "Google speech services", isSystemDefault = true)
+        val other = TtsEngineInfo("com.example.tts", "Example engine")
+
+        val options = SettingsOptions.ttsEngines(listOf(google, other), selectedId = "com.example.tts")
+
+        assertEquals(listOf("com.google.android.tts", "com.example.tts"), options.map { it.value.id })
+        assertTrue(options.all { it.isAvailable })
+        assertEquals("Google speech services (system default)", options[0].label)
+        assertEquals("Example engine", options[1].label)
+        assertTrue(options[1].isSelected)
     }
 
     @Test

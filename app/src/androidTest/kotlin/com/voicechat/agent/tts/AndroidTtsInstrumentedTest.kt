@@ -72,6 +72,12 @@ class AndroidTtsInstrumentedTest {
                         )
                     }
 
+                    is TtsEngineAvailability.SelectedEngineUnavailable -> {
+                        // No engine id is requested in this probe; preserve an
+                        // explicit result if engine policy changes later.
+                        Log.w(TAG, "M11 selected engine unavailable: ${availability.engineId}")
+                    }
+
                     is TtsEngineAvailability.Unavailable -> {
                         // Recorded above; an unavailable engine is not a pass or a fake.
                         Log.w(TAG, "M11 engine unavailable: ${availability.error.code}")

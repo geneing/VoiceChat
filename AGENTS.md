@@ -18,7 +18,8 @@ microphone capture (M07), on-device Android `SpeechRecognizer` speech-to-text
 (`EXTRA_SEGMENTED_SESSION` over the piped `EXTRA_AUDIO_SOURCE` PCM) with ML Kit
 GenAI as an alternative,
 measured-audio VAD/onset and bounded endpointing (M09), on-device platform TTS
-(M11), a provider-independent LLM streaming contract with a deterministic fake
+with a speech-engine/voice picker and a most-natural-voice default (M11), a
+provider-independent LLM streaming contract with a deterministic fake
 (M12), Keystore-backed credential storage with a provider capability registry
 (M13), pure-Kotlin turn orchestration with cancellation (M21), the OpenAI (M14),
 OpenRouter (M15), DeepSeek (M16), OpenCode Go (M17), OpenCode Zen (M18), and
@@ -33,7 +34,8 @@ Smart Turn v3.2 semantic end-of-turn detection through ONNX Runtime (M10,
 opt-in and default off), plus eligible on-device local LLM runtimes with a
 curated (currently empty) model catalog and explicit local-versus-remote
 selection (M20). Speech/latency evaluation (M25) now has a pure-Kotlin harness
-(`eval/`) with host tests, but its Pixel 10 result rows are empty, so no latency
+(`eval/`, including a TTS-stage step) with host tests, but its Pixel 10 result
+rows are empty, so no latency
 or accuracy claim exists. Release hardening (M26) is in progress: the voice loop
 bounds a stalled recognizer, surfaces typed STT errors, and honors the persisted
 STT mode; the transport bounds in-flight calls; and app-scoped
@@ -185,6 +187,7 @@ app/                        the only application module
     audio/                  microphone capture + lifecycle (M07)
     credentials/            Keystore-backed credential storage (M13)
     diagnostics/            privacy-safe turn tracing and timing (M04)
+    eval/                   M25 host harness: latency, endpoint, TTS, and LLM measurement
     log/                    release-safe developer logging (off in release)
     local/                  eligible on-device LLM runtimes + curated catalog (M20)
     orchestration/          turn state machine + orchestrator (M21)
@@ -194,7 +197,7 @@ app/                        the only application module
     replay/                 deterministic PCM replay + fixtures (M03)
     settings/               settings model + DataStore persistence (M22)
     stt/                    Android SpeechRecognizer + ML Kit GenAI STT adapters (M08)
-    tts/                    on-device platform TTS adapter (M11)
+    tts/                    on-device platform TTS engine, voice policy, and engine/voice config (M11)
     turn/                   Smart Turn v3.2 ONNX detector + model lifecycle (M10)
     ui/                     Compose conversation + settings UI (M06/M22)
     vad/                    measured-audio VAD/onset + endpointing (M09)
@@ -206,6 +209,7 @@ app/                        the only application module
     audio/, stt/, tts/      JVM capture, STT, and TTS adapter tests
     credentials/, providers/  JVM credential, registry, and adapter tests
     diagnostics/, log/      JVM tracing and logging tests
+    eval/                   JVM latency/endpoint/TTS/LLM harness tests
     local/                  JVM runtime discovery, catalog, lifecycle, and local-adapter tests
     orchestration/          JVM turn state-machine and orchestrator tests
     persistence/, settings/ JVM persistence (Robolectric) and settings tests
@@ -220,7 +224,7 @@ app/                        the only application module
   src/debug/                                 debug-only Application + credential import
   src/testDebug/                             debug-variant JVM tests
 .github/workflows/ci.yml    CI running the same fast checks
-scripts/                    fetch/push helpers: pinned models + debug credentials
+scripts/                    fetch/push helpers (pinned models, debug credentials) + harness runners
 models/                     downloaded model artifacts (gitignored; README/manifest tracked)
 secrets/                    local secrets for debug runs (gitignored; README tracked)
 test_data/                  speech sound files usable to simulate STT

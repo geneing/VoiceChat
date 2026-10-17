@@ -80,6 +80,18 @@ interface TtsEngine {
     /** Every voice the engine reports, including network-required ones. */
     fun installedVoices(): List<TtsVoice>
 
+    /**
+     * Every text-to-speech engine (speech API) the platform reports, with the
+     * system default flagged, so settings can offer an engine choice.
+     *
+     * Engine enumeration is platform-level (`TextToSpeech.getEngines()`) and does
+     * not require [initialize]. Implementations that cannot enumerate engines
+     * return an empty list rather than a fabricated one; the app then keeps the
+     * platform default. The engine a caller actually speaks through is fixed when
+     * the engine object is constructed, so this is discovery only, not a switch.
+     */
+    fun installedEngines(): List<TtsEngineInfo> = emptyList()
+
     /** Selects a previously discovered voice; a no-op if it is not installed. */
     suspend fun selectVoice(voice: TtsVoice)
 

@@ -17,6 +17,7 @@ data class TtsVoice(
     val displayName: String,
     val locale: Locale,
     val requiresNetwork: Boolean,
+    /** The platform's naturalness rank (`Voice.getQuality()`); higher is more natural. */
     val quality: Int = UNKNOWN_RANK,
     val latency: Int = UNKNOWN_RANK,
 ) {
@@ -62,6 +63,16 @@ sealed interface TtsEngineAvailability {
         val locale: Locale,
     ) : TtsEngineAvailability
 
+    /**
+     * The persisted speech-engine selection ([engineId]) is not an engine the
+     * platform reports, so it cannot be used. Reported explicitly rather than
+     * letting the platform quietly fall back to its default engine — the app
+     * never silently substitutes a different speech API than the one chosen.
+     */
+    data class SelectedEngineUnavailable(
+        val engineId: String,
+    ) : TtsEngineAvailability
+
     /** The engine could not be initialized; [error] is safe to show. */
     data class Unavailable(
         val error: VoiceAgentError,
@@ -72,9 +83,10 @@ sealed interface TtsEngineAvailability {
  * Pure policy for choosing an embedded voice.
  *
  * "On-device" is decided only by [TtsVoice.requiresNetwork], never inferred from
- * a name or locale. [select] prefers an exact locale match, then the higher
- * quality, then the lower latency, and returns `null` when no embedded voice
- * matches, so the caller must surface the explicit "no on-device voice" state.
+ * a name or locale. [mostNatural] (and its alias [select]) prefers an exact
+ * locale match, then the higher quality — the platform's naturalness rank — then
+ * the lower latency, and returns `null` when no embedded voice matches, so the
+ * caller must surface the explicit "no on-device voice" state.
  */
 object OnDeviceVoiceSelector {
     /**
@@ -103,18 +115,45 @@ object OnDeviceVoiceSelector {
     /** Installed voices that do not require a network connection. */
     fun onDeviceVoices(voices: List<TtsVoice>): List<TtsVoice> = voices.filter { it.isOnDevice }
 
-    /** The best embedded voice for [locale], or `null` when none is installed. */
-    fun select(
+    /**
+     * The most natural embedded voice for [locale], or `null` when none is
+     * installed.
+     *
+     * **Naturalness is the platform's own quality rank.** A TTS engine reports
+     * `Voice.getQuality()` on a `QUALITY_VERY_LOW`..`QUALITY_VERY_HIGH` scale,
+     * which is the only naturalness signal `android.speech.tts` exposes; the app
+     * prefers the highest quality rather than picking by name or by the order the
+     * platform happens to return. Lower latency breaks a quality tie, because a
+     * more responsive voice is preferable when two voices sound equally natural.
+     *
+     * An exact locale match still ranks above quality (a higher-quality en-GB
+     * voice is never chosen for an en-US request), and a network-required voice
+     * is never a candidate. This is the app's default when the user has not
+     * picked a voice ([select]); it never substitutes a network voice.
+     */
+    fun mostNatural(
         voices: List<TtsVoice>,
         locale: Locale,
     ): TtsVoice? =
         supportedVoices(voices)
             .filter { it.locale.language == locale.language }
-            .sortedWith(
-                compareByDescending<TtsVoice> { it.locale == locale }
-                    .thenByDescending { it.quality }
-                    .thenBy { it.latency },
-            ).firstOrNull()
+            .sortedWith(naturalnessOrder(locale))
+            .firstOrNull()
+
+    /**
+     * The embedded voice the app uses for [locale] when no voice is chosen. An
+     * alias of [mostNatural], kept as the seam the engine and tests already use.
+     */
+    fun select(
+        voices: List<TtsVoice>,
+        locale: Locale,
+    ): TtsVoice? = mostNatural(voices, locale)
+
+    /** Exact locale first, then the most natural (highest quality), then fastest. */
+    private fun naturalnessOrder(locale: Locale): Comparator<TtsVoice> =
+        compareByDescending<TtsVoice> { it.locale == locale }
+            .thenByDescending { it.quality }
+            .thenBy { it.latency }
 
     /**
      * The installed embedded voice with exactly [voiceId], or `null` when it is

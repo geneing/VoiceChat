@@ -43,6 +43,12 @@ data class VoiceSettings(
     val llmServerUrl: String? = null,
     /** The selected embedded TTS voice id, or `null`. */
     val ttsVoiceId: String? = null,
+    /**
+     * The selected platform TTS **engine** package (`docs/decisions.md` §2.2),
+     * or `null` to use the platform's default engine. Validated against the
+     * engines the device reports; never a fabricated id.
+     */
+    val ttsEngineId: String? = null,
     /** Smart Turn is on by default when the detector is installed (decisions §3.3). */
     val smartTurnEnabled: Boolean = true,
     /**

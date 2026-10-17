@@ -74,7 +74,8 @@ they do not fake availability, and none requires a human speaker.
 | `audio.MicrophoneCaptureInstrumentedTest` | Without `RECORD_AUDIO`, capture refuses with `AUDIO_PERMISSION_DENIED`; a closed input refuses with `AUDIO_DEVICE_UNAVAILABLE`; with the permission granted a session emits 16 kHz mono frames and a second session can start after the first stops (no busy recorder). |
 | `audio.VadCaptureInstrumentedTest` | Live M07 capture feeds the real M09 `EnergyVoiceActivityDetector` and `BoundedTurnEndpointPolicy`: a bounded window of real audio produces typed events without failing, and the policy emits at least one endpoint with a non-negative offset. It is a runs-and-does-not-crash smoke check, not a quality measurement. |
 | `stt.MlKitSttInstrumentedTest` | Both catalog modes return a typed `SttAvailability` without throwing; the adapter reports the single engine ID; and, when the engine is **not** ready, the adapter refuses to run and emits a typed `STT_MODEL_NOT_READY`/`STT_UNAVAILABLE` failure. When the engine is ready this case is skipped (`Assume`), never faked. |
-| `tts.AndroidTtsInstrumentedTest` | The platform TTS engine initializes and enumerates installed voices; a "ready" voice must be one `getVoices()` reported and not network-required (network voices are never selectable); immediate `stop()` during playback ends the utterance with a terminal event without hanging (skipped with `Assume` when no embedded voice exists); the `OnDeviceTts` contract adapter rejects empty input and closes. Availability is recorded, never faked. |
+| `tts.AndroidTtsInstrumentedTest` | The platform TTS engine initializes and enumerates installed voices and installed engines; a "ready" voice must be one `getVoices()` reported and not network-required (network voices are never selectable); immediate `stop()` during playback ends the utterance with a terminal event without hanging (skipped with `Assume` when no embedded voice exists); the `OnDeviceTts` contract adapter rejects empty input and closes. Availability is recorded, never faked. |
+| `eval.tts.VoiceTtsHarnessInstrumentedTest` | Opt-in (`-e ttsHarnessRunId`): speaks the fixed `VoiceTtsHarnessCases` texts through the real platform engine and the selected embedded voice and records `tts_first_audible` / `tts_completion` to app-private cache. **Not run** — no Pixel 10 attached; skipped (`Assume`) when no embedded voice exists. |
 | `ui.ConversationAppInstrumentedTest` | **Removed.** The app-launch/Compose smoke check is not automatable on Android 17 with `androidx.test.ext:junit` 1.3.0 (Espresso `InputManager.getInstance()` reflection fails). The Compose surface is covered by Robolectric JVM tests; launch is a manual step. |
 | `credentials.AndroidKeystoreCredentialStoreInstrumentedTest` | The real AndroidKeyStore-backed store stores/replaces/removes a credential against the device KeyStore; a second store instance reads the persisted value (restart proxy); the app-private preferences file holds only ciphertext, never the plaintext secret. |
 | `orchestration.TurnOrchestrationInstrumentedTest` | Runs the real M21 `TurnOrchestrator`/`TurnStateMachine` on device with an inline fake provider and an in-memory repository: one text turn completes and persists a truthful assistant turn. No network, credential, microphone, or real TTS; a structural smoke check, not a provider/voice measurement. |
@@ -152,15 +153,22 @@ speaker), and the airplane-mode proof. Do not claim these from the JVM tests.
 Engine: the Android platform `android.speech.tts.TextToSpeech` API, restricted to
 **embedded (non-network) voices** only (`isNetworkConnectionRequired() == false`,
 `docs/decisions.md` §2.2). There is no cloud TTS and no fallback to a network
-voice. Instrumented coverage is `tts.AndroidTtsInstrumentedTest`; the manual
-checks below are **not** automated and were **not** run for this milestone.
+voice. The settings screen offers a speech-engine picker (when the device reports
+more than one engine) and a voice picker, defaulting to the most natural embedded
+voice. Instrumented coverage is `tts.AndroidTtsInstrumentedTest`; the opt-in
+TTS-stage harness is `eval.tts.VoiceTtsHarnessInstrumentedTest`. The manual checks
+below are **not** automated and were **not** run for this milestone.
 
 What to record for every run:
 
 - Device model/build, Android build fingerprint, build variant (`debug`), commit.
+- The installed TTS **engine** list from `getEngines()` with the system default,
+  the engine selected in settings (or "platform default"), and the engine the
+  session actually used.
 - The full embedded voice list from `getVoices()` with, for each voice, its
-  locale and `isNetworkConnectionRequired()` flag; the voice the engine selected,
-  and the locale requested.
+  locale, `isNetworkConnectionRequired()` flag, and `getQuality()`/
+  `getLatency()`; the voice the app selected (the most natural embedded voice, or
+  the persisted choice), and the locale requested.
 - The output route kind at playback start (built-in speaker, wired headset,
   Bluetooth) and any route change during playback.
 - First-audible time (from `speak()` to the `TtsEvent.Started`/first-audible
@@ -173,6 +181,9 @@ What to record for every run:
 | Check | How | Record |
 | --- | --- | --- |
 | Voice discovery | Run `AndroidTtsInstrumentedTest` and read the logged availability/voice counts. | Installed voice count and the embedded subset; the selected voice id; `NoOnDeviceVoice` when no embedded voice exists. Never claim a voice exists without `getVoices()`. |
+| Engine discovery and selection | Run `AndroidTtsInstrumentedTest` and open Settings; change the speech engine when more than one is installed. | The `getEngines()` list with the system default; that a single-engine device shows no engine picker; that the chosen engine is the one used (or a typed "not installed" if it disappeared). |
+| Most natural voice | Leave the voice unset and read the selected voice. | The selected voice's `getQuality()` is the highest among the embedded voices for the locale; note any tie broken by latency. |
+| TTS-stage timings (harness) | `.\\scripts\\run-tts-harness-device.ps1` (opt-in). | The `summary.md` table: median `tts_first_audible` and `tts_completion` per text, with the conditions the script copied back. Currently **not run**. |
 | On-device-only selection | Inspect the selected voice's `isNetworkConnectionRequired()`. | It is `false`; a network voice is never selected even when it is the only/locale-best match. |
 | First-audible latency | Speak a fixed phrase per voice/route; time `speak()` to the first-audible event; measure audible output, not the API return. | p50/tail first-audible per voice and route; do not set a budget from a single run. |
 | Speaker / headset routing | Play a phrase through the built-in speaker, a wired headset, and Bluetooth; watch output routing. | Audio is audible on the expected output; the recorded `AUDIO_ROUTE` kind changes; no crash on route change. |

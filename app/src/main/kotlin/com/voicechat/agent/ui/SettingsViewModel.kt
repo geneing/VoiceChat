@@ -232,6 +232,10 @@ class SettingsViewModel(
         update(current.copy(ttsVoiceId = voiceId))
     }
 
+    override fun onSelectTtsEngine(engineId: String) {
+        update(current.copy(ttsEngineId = engineId))
+    }
+
     override fun onSetSmartTurnEnabled(enabled: Boolean) {
         update(current.copy(smartTurnEnabled = enabled))
     }
@@ -546,6 +550,8 @@ class SettingsViewModel(
 
         val tts =
             TtsSettingsSection(
+                engines = SettingsOptions.ttsEngines(capabilities.ttsEngines, current.ttsEngineId),
+                selectedEngineId = current.ttsEngineId,
                 options = SettingsOptions.ttsVoices(capabilities.ttsVoices, current.ttsVoiceId),
                 selectedVoiceId = current.ttsVoiceId,
             )

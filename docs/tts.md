@@ -9,20 +9,37 @@ complements [decisions.md](./decisions.md) §2.2 (the decision),
 and [validation.md](./validation.md).
 
 > Status: the engine seam, contract adapter, on-device-only voice policy, and
-> playback accounting are implemented and unit tested on the JVM. The platform
-> engine has **not** been run from this repository on a device; that is the
-> manual test in [Tests.md](../Tests.md) (M11). No first-audible or stop-latency
-> number is claimed.
+> playback accounting are implemented and unit tested on the JVM. The settings
+> screen exposes a **speech engine** picker and a **voice** picker (M22), and the
+> default voice is the most natural embedded one (highest platform quality). A
+> TTS-stage harness (`eval/tts/`) measures time-to-first-audible and full
+> playback on the JVM with a deterministic fake and on the device with the real
+> engine. The platform engine has **not** been run from this repository on a
+> device; that is the manual test in [Tests.md](../Tests.md) (M11). No
+> first-audible or stop-latency number is claimed.
 
 ## Engine and decision
 
 - **Engine:** the Android platform `android.speech.tts.TextToSpeech` API — the
   M00-selected TTS engine ([decisions.md](./decisions.md) §2.2). There is no ML
   Kit GenAI / AICore TTS API, so TTS cannot be an AICore path.
+- **Speech engine (speech API) choice.** The device may install more than one TTS
+  engine. When it does, the settings screen lists what `TextToSpeech.getEngines()`
+  reports and the user may pick one; `null` (the default) lets the platform choose.
+  A persisted engine id the device no longer reports is cleared by validation and,
+  if it reaches the engine anyway, yields the explicit
+  `TtsEngineAvailability.SelectedEngineUnavailable` rather than a silent fallback
+  to the default engine.
 - **On-device only.** A voice is usable only when the platform reports
   `Voice.isNetworkConnectionRequired() == false`. Network-required voices are
   never selected, and there is no silent fallback to one
   ([decisions.md](./decisions.md) §2.2).
+- **Most natural voice.** When the user has not chosen a voice, the app picks the
+  highest-quality embedded voice for the locale. `Voice.getQuality()`
+  (`QUALITY_VERY_LOW`..`QUALITY_VERY_HIGH`) is the only naturalness signal the
+  platform exposes, so it is the primary rank; lower latency breaks a tie, and an
+  exact locale match still outranks quality. This is `OnDeviceVoiceSelector.mostNatural`
+  (`select` is its alias).
 
 ## Implementation map
 
@@ -30,14 +47,15 @@ All engine code lives in `app/src/main/kotlin/com/voicechat/agent/tts/`:
 
 | File | Role |
 | --- | --- |
-| `TtsVoice.kt` | Platform-free `TtsVoice`, `TtsEngineAvailability` (`Ready` / `NoOnDeviceVoice` / `Unavailable`), and the `OnDeviceVoiceSelector` policy that excludes network voices. |
-| `TtsEngine.kt` | The replaceable `TtsEngine` seam: `initialize`, `installedVoices`, `selectVoice`, per-utterance `speak` flow, `stop`, `close`, plus `TtsEngineEvent` / `TtsEngineFailureKind`. |
+| `TtsVoice.kt` | Platform-free `TtsVoice`, `TtsEngineAvailability` (`Ready` / `NoOnDeviceVoice` / `SelectedVoiceUnavailable` / `SelectedEngineUnavailable` / `Unavailable`), and the `OnDeviceVoiceSelector` policy that excludes network voices and prefers the most natural embedded voice. |
+| `TtsEngineInfo.kt` | Platform-free descriptor of one installed TTS **engine** (`TextToSpeech.EngineInfo`), for the settings engine picker. |
+| `TtsEngine.kt` | The replaceable `TtsEngine` seam: `initialize`, `installedVoices`, `installedEngines`, `selectVoice`, per-utterance `speak` flow, `stop`, `close`, plus `TtsEngineEvent` / `TtsEngineFailureKind`. |
 | `TtsOutputRoute.kt` | Platform-free output route kind for diagnostics (speaker/headset/Bluetooth/…); distinct from the M07 input `AudioRouteType`. |
 | `EngineTextToSpeech.kt` | The M02 `TextToSpeech` contract adapter: gates on availability, maps engine events to `TtsEvent`, enforces the on-device-only policy, and emits privacy-safe diagnostics. |
 | `TtsPlaybackAccounting.kt` | Truthful ledger of generated / queued / started / delivered text, aligned with `AssistantDelivery`. |
-| `AndroidTtsEngine.kt` | The platform `android.speech.tts.TextToSpeech` implementation (all platform TTS types stay here). |
+| `AndroidTtsEngine.kt` | The platform `android.speech.tts.TextToSpeech` implementation (all platform TTS types stay here), including speech-engine selection at construction and `getEngines()` discovery. |
 | `AndroidTtsOutputRoute.kt` | Maps `AudioDeviceInfo` output types to `TtsOutputRoute`. |
-| `OnDeviceTts.kt` | App-boundary factory: `AndroidTtsEngine` wrapped by `EngineTextToSpeech`. |
+| `OnDeviceTts.kt` | App-boundary factory: `AndroidTtsEngine` wrapped by `EngineTextToSpeech`; takes the persisted engine and voice ids. |
 
 `TtsSourcePurityTest` enforces that `TtsVoice.kt`, `TtsEngine.kt`,
 `TtsOutputRoute.kt`, `EngineTextToSpeech.kt`, and `TtsPlaybackAccounting.kt`
@@ -78,13 +96,16 @@ via `toDelivery(...) -> AssistantDelivery`.
 
 `AndroidTtsEngine.initialize()` awaits `TextToSpeech` init, sets the
 `UtteranceProgressListener`, enumerates `getVoices()`, and calls
-`OnDeviceVoiceSelector.select(voices, locale)`:
+`OnDeviceVoiceSelector.mostNatural(voices, locale)`:
 
 - `installedVoices()` returns every reported voice with its
   `requiresNetwork` flag; nothing is inferred from a voice name.
 - `OnDeviceVoiceSelector.onDeviceVoices` filters to
-  `requiresNetwork == false`; `select` prefers an exact locale match, then
-  higher quality, then lower latency.
+  `requiresNetwork == false`; `mostNatural` (and its alias `select`) prefers an
+  exact locale match, then the highest quality (the platform naturalness rank),
+  then the lowest latency.
+- `installedEngines()` lists the platform's TTS engines with the system default
+  flagged, for the settings picker; it never fabricates an engine.
 - `null` selection becomes `TtsEngineAvailability.NoOnDeviceVoice(locale)`,
   which the adapter surfaces as `TTS_NO_ON_DEVICE_VOICE`. The app stays
   text-only; it never selects a network voice.
@@ -124,24 +145,53 @@ turn identity; orchestration binds TTS events to the active turn (M21). Wiring
 the per-turn `TurnTraceRecorder.playbackStarted` / `playbackDelivered` helpers
 and barge-in stop timing remains M21/M24 (R-0029, R-0059).
 
+## TTS-stage harness (M25)
+
+The TTS stage is measured in `app/src/main/kotlin/com/voicechat/agent/eval/tts/`
+(`VoiceTtsHarness`, `VoiceTtsHarnessReport`, `VoiceTtsHarnessCases`):
+
+- it drives the M02 `TextToSpeech` contract with fixed assistant-shaped texts and
+  records, per attempt, the time from the `speak()` call to the first audible
+  `Started` event and to full `Delivered`, aggregated as the
+  `tts_first_audible` / `tts_completion` metrics in a `LatencyReport`;
+- it never fakes a duration: an attempt that fails or is interrupted is recorded
+  as a failed outcome and produces no latency sample, so an unmeasured stage stays
+  absent rather than zero;
+- it carries `MeasurementConditions` (device, route, locale, voice/engine) with
+  every record.
+
+`VoiceTtsHarnessTest` runs it on the JVM with a deterministic clock-advancing
+`TextToSpeech`, proving the aggregation and failure handling. The device run is
+`VoiceTtsHarnessInstrumentedTest` (opt-in via `-e ttsHarnessRunId`), which speaks
+through the real platform engine and selected embedded voice; it is **not run**
+for this change (no Pixel 10 attached). `scripts/run-tts-harness-device.ps1`
+stages, runs, and copies the reports back. See
+[evaluation.md](./evaluation.md#the-tts-stage-harness).
+
 ## Automated tests
 
 `app/src/test/kotlin/com/voicechat/agent/tts/` (JVM, no device):
 
-- `EngineTextToSpeechTest` (9) — queued→started→delivered order; empty input
+- `EngineTextToSpeechTest` — queued→started→delivered order; empty input
   without engine work; explicit `TTS_NO_ON_DEVICE_VOICE` when only network voices
-  exist (and the engine is never called); chunk ordering; typed engine failure;
+  exist (and the engine is never called); a missing selected engine is the same
+  typed failure, not a fallback; chunk ordering; typed engine failure;
   `stop()` interrupting every queued chunk with nothing left unaccounted;
   cancelling one collection without hanging; idempotent `close` and
   speak-after-close; privacy-safe first-audible/delivered diagnostics.
-- `TtsVoiceSelectionTest` (5) — network voices excluded; selection never returns
+- `TtsVoiceSelectionTest` — network voices excluded; selection never returns
   a network voice; `null` when no embedded voice matches the language; exact
-  locale, then quality, then latency preference.
-- `TtsPlaybackAccountingTest` (6) — generated/queued/started/delivered counts;
+  locale, then quality (naturalness), then latency preference; `mostNatural`
+  agrees with `select`.
+- `TtsPlaybackAccountingTest` — generated/queued/started/delivered counts;
   interruption leaves nothing unaccounted and keeps only the audible prefix;
   unaccounted and failed states; clamping to the generated prefix; empty ledger.
-- `TtsSourcePurityTest` (1) — the platform-free TTS types import no
+- `TtsSourcePurityTest` — the platform-free TTS types import no
   `android.*`/`androidx.*`.
+
+`app/src/test/kotlin/com/voicechat/agent/eval/tts/VoiceTtsHarnessTest.kt` covers
+the harness aggregation, the failure/no-latency path, and the record's
+conditions.
 
 The instrumented test `app/src/androidTest/.../tts/AndroidTtsInstrumentedTest.kt`
 compiles on the host (`:app:assembleDebugAndroidTest`) and runs only on a device:
@@ -152,6 +202,9 @@ compiles on the host (`:app:assembleDebugAndroidTest`) and runs only on a device
 - exercises immediate `stop()` during playback and requires a terminal event
   without hanging (skipped with `Assume` when no embedded voice is installed);
 - the `OnDeviceTts` contract adapter rejects empty input and closes.
+
+`app/src/androidTest/.../eval/tts/VoiceTtsHarnessInstrumentedTest.kt` is the
+opt-in device harness and is compiled but **not run**.
 
 ## Manual Pixel 10 test (deferred)
 
@@ -177,5 +230,17 @@ immediate-stop latency, and empty/failed-input behavior.
 - **Shared focus boundary (R-0060, R-0050).** Capture and TTS both request
   transient `USAGE_ASSISTANT` focus via the same boundary; simultaneous operation
   and the final duck/pause policy are unvalidated until M24.
-- **Wiring.** Settings/UI voice selection and the voice-loop integration are
-  M22/M24; M11 exposes the engine, availability, and contract but no UI yet.
+- **Wiring.** Voice and speech-engine selection are M22 and the voice-loop
+  integration is M24; both are implemented and wired through `AppContainer`, so
+  the persisted engine/voice drives the session's TTS engine. The device run is
+  still unmeasured (R-0057).
+- **Naturalness rank (R-0258).** "Most natural" is `Voice.getQuality()`, the only
+  naturalness signal `android.speech.tts` exposes. It is coarse; on Android 15+
+  the platform's own supertonic voices are reported with the same quality ranks,
+  so the app cannot prefer one by API. Re-verify when the platform exposes a
+  naturalness/feature signal.
+- **Selected-engine fallback (R-0257).** `TextToSpeech(context, listener, engine)`
+  is created with the persisted package, and the app refuses a package the device
+  does not report, but the platform does not expose which engine a live instance
+  actually bound to. A device/engine that silently ignores the package cannot be
+  detected from the API; the settings validation is the primary guard.
