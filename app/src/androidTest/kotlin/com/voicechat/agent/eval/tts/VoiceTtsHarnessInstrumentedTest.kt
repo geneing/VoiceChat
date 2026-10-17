@@ -7,9 +7,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.voicechat.agent.eval.MeasurementConditions
 import com.voicechat.agent.log.AndroidLogging
 import com.voicechat.agent.log.LogLevel
+import com.voicechat.agent.settings.PreferencesSettingsStore
 import com.voicechat.agent.tts.AndroidTtsEngine
 import com.voicechat.agent.tts.EngineTextToSpeech
 import com.voicechat.agent.tts.TtsEngineAvailability
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -58,13 +60,18 @@ class VoiceTtsHarnessInstrumentedTest {
 
             AndroidLogging.install(debug = true, minLevel = LogLevel.INFO)
             val context = InstrumentationRegistry.getInstrumentation().targetContext
-            val locale = Locale.getDefault()
 
-            // The app's default: the platform engine its configured voice lives in.
-            // The engine selects the most natural embedded voice for the locale; a
-            // device with no embedded voice is skipped rather than measured against
-            // a network voice.
-            val engine = AndroidTtsEngine(context, locale)
+            // Measure the configuration the app itself would use: the persisted
+            // locale, engine, and voice from the settings store, exactly as
+            // AppContainer builds the session engine. The device default locale is
+            // not used, because it can carry a Unicode extension (for example
+            // `en-US-u-mu-celsius`) that the app never requests and that would pick
+            // a different voice.
+            val settings = PreferencesSettingsStore.create(context).observe().first()
+            val locale = settings.locale()
+
+            val engine =
+                AndroidTtsEngine(context, locale, preferredVoiceId = settings.ttsVoiceId, preferredEnginePackage = settings.ttsEngineId)
             val availability = engine.initialize()
             assumeTrue(
                 "no embedded voice on this device; the TTS harness needs a real on-device voice",
@@ -80,7 +87,10 @@ class VoiceTtsHarnessInstrumentedTest {
                         locale = locale.toLanguageTag(),
                         fixture = "tts-harness",
                         model = voice.id,
-                        notes = "engine=${engine.engineId.value}, fingerprint=${Build.FINGERPRINT}",
+                        notes =
+                            "engine=${engine.engineId.value}, voiceQuality=${voice.quality}, " +
+                                "voiceLatency=${voice.latency}, selectedVoice=${settings.ttsVoiceId ?: "most-natural"}, " +
+                                "fingerprint=${Build.FINGERPRINT}",
                     )
                 val harness =
                     VoiceTtsHarness(
