@@ -217,6 +217,49 @@ Genuinely manual and **not** automated: audible first-audible timing, speaker /
 wired / Bluetooth routing, focus interaction, real voice quality, and the
 airplane-mode proof. Do not claim these from the JVM tests.
 
+## M28 — Distilled Kokoro on-device TTS
+
+Engine: the distilled "Teacher in the Loop" Kokoro-82M student
+(`MithrilMan/teacher-in-the-loop`), English voice `af_heart`, run through ONNX
+Runtime on the CPU execution provider (`docs/decisions.md` §2.4). It replaces the
+platform engine on the voice-loop path: `AndroidTtsEngine` stays in the tree but
+is no longer wired. The graph is **not** in the APK — it is downloaded
+app-privately (or pushed by script), verified by exact size and SHA-256, and a
+missing/corrupt graph is a visible "install the voice model" state, never a
+silent fallback to another voice.
+
+JVM coverage (runs in `:app:testDebugUnitTest`, no device, no native library):
+`tts.kokoro.KokoroModelStoreTest` (integrity, atomic install, failure and
+cancellation cleanup), `tts.kokoro.KokoroTtsEngineTest` (first-audible ordering,
+chunked playback, interruption accounting, typed failures),
+`tts.kokoro.phonemes.*` (the phonemizer port against Python-generated fixtures),
+`eval.tts.KokoroTtsStageHarnessTest` (the latency aggregation, with a
+deterministic clock). Nothing here loads ONNX Runtime or the 9 MB graph.
+
+Install the artifact before a device run:
+
+```bash
+# WSL, repo root
+bash scripts/fetch-models.sh kokoro-af-heart
+bash scripts/push-models.sh kokoro-af-heart
+```
+
+| Check | How | Record |
+| --- | --- | --- |
+| Graph integrity | `scripts/push-models.sh kokoro-af-heart`, then open Settings. | The section reports the voice installed; a truncated/wrong-hash file reports `DownloadRequired`/corrupt with a reason instead of speaking. |
+| Time to first sound | `.\\scripts\\run-kokoro-tts-latency.ps1` (opt-in). | `synthesis-record.md`: text start → phonemes → first PCM → all PCM per text, plus the realtime factor; `audible-record.md`: `tts_first_audible` through real playback. The gap between the two is the audio device's start cost. |
+| Interruption | Start a long reply, then speak over it. | Playback stops promptly; the interrupted utterance reports only the text that was actually audible (the ported chunker's source-text spans), never more. |
+| Route | Play through the built-in speaker, a wired headset, and Bluetooth. | Audio is audible on the expected route; the recorded `AUDIO_ROUTE` kind changes; no crash on a route change. |
+| Offline | After install, run in airplane mode. | Playback still works: the graph, the vocabulary, and the lexicon are all on-device. |
+| Airplane/empty path | Speak empty text and punctuation-only text. | No playback, no `Started`, a normal completion — not a failure and not fabricated audio. |
+| Phonemizer parity | `bash scripts/kokoro-phoneme-parity.sh` (WSL) or the JVM parity test. | The measured sentence-exact agreement with the Python reference (`docs/tts.md`), with the categories that differ. |
+
+### Kokoro latency run (Pixel 10)
+
+**Not run yet.** The harness, the runner, and the host-side aggregation exist;
+the device numbers must come from a real run and are recorded here when they do,
+with the device, build, graph revision, and repeat count.
+
 ## M09 — VAD, fast onset, and bounded endpointing
 
 Path: measured-audio VAD (normalized frame RMS + zero-crossing rate) behind the
