@@ -56,62 +56,79 @@ recommendations below are all `none` or `low`.
 
 ## The short list
 
-Measured on both an easy question and the harder "recommend three Yosemite
-hikes" request (the latter with the recommended voice prompt). TTFT is time to
-the first assistant text token; "first sentence" is when the TTS chunker would
-have something to speak; "characters" is assistant text only.
+Re-measured by the LLM harness on **2026-10-17** (three attempts per model, median
+of the "recommend three hikes" request with the voice prompt below); the full
+record is the "harness run" section of
+[voice-llm-results.md](./voice-llm-results.md). TTFT is time to the first
+assistant text token; "first sentence" is when the TTS chunker would have
+something to speak.
 
-| Rank | Model | Endpoint | Thinking parameter | TTFT easy / hard (s) | First sentence, hard (s) | Full answer, hard (s) | $/M in / out | Retention |
+| Rank | Model | Endpoint | Thinking parameter | TTFT (s) | First sentence (s) | Full answer (s) | $/M in / out | Retention |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `claude-haiku-5-5` | Messages | none (model default), or `thinking.type=adaptive` with `output_config.effort=low` | 0.75-1.00 / 1.00 | 1.28 | 2.35 | 0.10 / 0.50 | 30 days |
-| 2 | `gpt-6-luna` | Responses | `reasoning.effort=none` (easy) / `low` (harder) | 0.68-1.18 / 0.90 | 1.40 | 2.36 | 0.10 / 0.50 | 30 days |
-| 3 | `gpt-5.6-luna` | Responses | `reasoning.effort=none` | 0.78-1.01 / 0.85 | 1.11 | 1.98 | 0.20 / 1.20 | 30 days |
-| 4 | `minimax-m3` | Messages | none | 0.89-1.04 / 0.94 | 1.22 | 2.13 | 0.30 / 1.20 | 0 days |
-| 5 | `glm-5.3-flash` | Chat Completions | `reasoning_effort=none` | 1.04 at `low` / 0.84 at `none` | - | - | 0.15 / 0.50 | 0 days |
+| 1 | `claude-haiku-5-5` | Messages | none (model default; no thinking block) | 0.73 | 1.17 | 2.21 | 0.10 / 0.50 | 30 days |
+| 2 | `gpt-5.6-luna` | Responses | `reasoning.effort=none` (**sent explicitly**) | 0.90 | 1.09 | 2.05 | 0.20 / 1.20 | 30 days |
+| 3 | `minimax-m3` | Messages | none (no reasoning field) | 0.90 | 1.14 | 2.44 | 0.30 / 1.20 | 0 days |
+| 4 | `qwen3.8-flash` | Messages | `thinking.type=disabled` | 0.96 | 1.33 | 2.66 | 0.15 / 0.47 | 0 days |
+| 5 | `gpt-6-luna` | Responses | `reasoning.effort=none` (**sent explicitly**) | 0.98 | 1.30 | 2.53 | 0.10 / 0.50 | 30 days |
+
+**`none` must be sent, not omitted.** Omitting the field means "provider
+default", and for `gpt-6-luna` the default reasons: the same request took
+**7.70 s** (median, ~310-650 reasoning tokens) with the field absent and **0.93 s**
+with `reasoning.effort="none"`. The other adapters in this app omit `NONE`
+because some providers reject `"none"`; here the models that were measured to
+accept it (`gpt-6-luna`, `gpt-5.6-luna`, `deepseek-v4.1-flash`, `kimi-k3`) get it
+explicitly, and `grok-4.7`, which rejects it, does not.
 
 Alternates, in order of usefulness:
 
-- `deepseek-v4.1-flash` (Chat Completions, `thinking.type=disabled`): the cheap
-  floor, but 2.13 s TTFT on the hard question. Acceptable when an answer is not
-  the first thing spoken.
-- `qwen3.8-flash` (Messages, `thinking.type=disabled`): 1.19 s TTFT, but a
-  4.43 s full answer and the least focused answer of the set in this run.
-- `kimi-k3` (Chat Completions, `reasoning_effort=none`): 1.25 s TTFT once
-  reasoning is off, but 3.00 / 15.00 per million tokens.
+- `deepseek-v4.1-flash` (Chat Completions, `reasoning_effort=none`): 1.79 s TTFT
+  and 3.00 s to a full answer — usable, and the cheapest of the set at
+  0.15 / 0.60.
+- `kimi-k3` (Chat Completions, `reasoning_effort=none`): 1.91 s TTFT, but
+  3.00 / 15.00 per million tokens.
+- `deepseek-v4-pro` (Chat Completions, `reasoning_effort=none`): 1.24 s TTFT
+  measured once; not in the harness set.
 
 Dropped on measurement, not on reputation:
 
-- `space-bunny`: 1.30 s on the easy question but 12.16 s here with 4033
-  reasoning characters, and it rejects both `reasoning_effort` and `thinking`
-  (HTTP 400), so it cannot be made to answer without reasoning.
+- `glm-5.3-flash`: it was a live-tier candidate on 2026-10-16 (`reasoning_effort=none`,
+  0.84 s), but on 2026-10-17 the gateway refuses **every** off form for it —
+  "[1210] This model always engages in thinking and cannot be disabled; please
+  use low, high, or…" — and answers in 3.74 s at `low`, 6.32 s at `max`, and
+  7.80 s with the field omitted (~300 reasoning tokens). A provider-side change,
+  not a harness artefact; the adapter now omits the field for `NONE` instead of
+  sending `none`, which would be a HTTP 400 (R-0252).
+- `space-bunny`: 1.30 s on the easy question but 12.16 s on the planning one, and
+  it rejects both `reasoning_effort` and `thinking` (HTTP 400), so it cannot be
+  made to answer without reasoning.
 - `step-5-preview`: accepted the parameters but kept reasoning and emitted no
   text before the token cap; 7.67 s TTFT.
 - `grok-4.7`: rejects `reasoning.effort=none`, and `low` was 10.15 s here
-  (384 reasoning characters) against 2.77 s on the easier question.
-- `glm-5.3` (4.65 s, 1783 reasoning characters), `qwen3.7-plus` (20.5 s on an
-  easy question, 97 s on a hard one), `hy3`, `longcat-2.0` (first byte alone
-  4-6 s): too slow to lead a turn. `qwen3.8-flash` without
-  `thinking.type=disabled` reasoned 6674 characters and emitted no text at all.
-- `mimo-v2.6-flash` (in this repo's documented catalog) answers HTTP 400
-  "model_coming_soon".
+  against 2.77 s on the easier question.
+- `glm-5.2` and `space-bunny` reject `reasoning_effort=none` with HTTP 400;
+  `glm-5.2`'s error names a thinking-only model.
+- `longcat-2.5-preview-free` (the app's default model): 9.31 s with
+  `reasoning_effort=none` and 301 reasoning tokens — the field is not honoured.
+- `mimo-v2.5` (3.45 s), `glm-5.3` (4.65 s), `qwen3.7-plus` (20.5 s / 97 s),
+  `hy3`, `longcat-2.0`: too slow to lead a turn.
 
 ## Recommended combinations
 
 1. **One model, no second tier (default).** `claude-haiku-5-5` with no thinking
-   parameter, or `gpt-6-luna` with `reasoning.effort=none`. First sentence
-   ~1.0-1.4 s, whole answer ~2.4 s, one request, nothing to reconcile. This
-   already satisfies both requirements for ordinary questions.
+   parameter, or `gpt-6-luna` / `gpt-5.6-luna` with `reasoning.effort=none` sent
+   explicitly. First sentence ~1.1-1.3 s, whole answer ~2.1-2.5 s, one request,
+   nothing to reconcile. This already satisfies both requirements for ordinary
+   questions, and it is what the wired voice loop does by default.
 2. **Live plus background research.** Keep `claude-haiku-5-5` (or `gpt-6-luna`
    `none`) as the live tier, and start a second call to `gpt-6-luna` with
-   `reasoning.effort=medium` (13.6 s) or `high` (22.6 s), or `gpt-5.6-luna`
-   with `effort=low` (1.9 s) if the deep tier itself must be speakable. The live
-   tier answers and may say in one clause that it is checking; the deep result is
-   spoken as a short follow-up when it lands. A deep call must never sit in front
-   of the first spoken sentence.
-3. **Cheap floor, no Messages family.** `glm-5.3-flash` with
-   `reasoning_effort=none` (0.84 s) as live, `deepseek-v4.1-flash` with
-   `thinking.type=disabled` as the fallback/detail tier. Both are Chat
-   Completions, so they avoid the Messages-family auth gap below entirely.
+   `reasoning.effort=low` (3.55 s median) or `medium`/`high` (13.6 s / 22.6 s), or
+   `gpt-5.6-luna` with `effort=low` (1.89 s) if the deep tier itself must be
+   speakable. The live tier answers and may say in one clause that it is
+   checking; the deep result is spoken as a short follow-up when it lands. A deep
+   call must never sit in front of the first spoken sentence.
+3. **Cheap floor, Chat Completions only.** `minimax-m3` (0.90 s, Messages) or
+   `deepseek-v4.1-flash` with `reasoning_effort=none` (1.79 s) as the live tier
+   when cost matters more than the last few hundred milliseconds.
 
 Keep provider and model identity explicit in each case: no silent swap between
 tiers, which is the repository's existing rule.
@@ -145,9 +162,9 @@ Conversation:
 
 ## Provider facts verified against the live gateway
 
-These are measured against `zen/go/v1` on 2026-10-16/17 and **contradict parts of
-`docs/opencode-go-adapter.md` as written** (see the corrections section there and
-R-0248-R-0252):
+These were measured against `zen/go/v1` on 2026-10-16/17 and **contradicted**
+`docs/opencode-go-adapter.md` as written; the adapter now implements them (see
+the re-verification section there and R-0248-R-0252):
 
 | Concern | Measured behaviour |
 | --- | --- |
@@ -170,32 +187,31 @@ is raised (R-0251).
 
 ## What blocks this today
 
-The short list cannot be selected or driven by the app as it stands:
+The model side is wired — the harness drives every recommended model through the
+real adapter, and the voice loop resolves the selection from settings — so what
+remains is verification rather than plumbing:
 
-- The M17 Messages family sends `Authorization: Bearer` for every family, so
-  every Messages-family model fails with 401 (R-0248).
-- The Go registry row declares `reasoningLevels = emptySet()` and
-  `usageReporting = false`, and `LlmRequestValidator` refuses any level a
-  provider does not declare, so the parameters this document recommends cannot be
-  requested (R-0249). `ReasoningLevel` also cannot express `thinking.type=disabled`
-  or `adaptive` + effort, so the mapping needs a decision, not just a registry
-  edit.
-- The picker's documented catalog is `OpenCodeGoModels.FAMILIES`, which has
-  drifted: it omits `claude-haiku-5-5` (the recommended live model) and lists
-  entries the gateway no longer serves (R-0250).
-- No live tier is stable without a working reasoning-off switch, and three
-  models have none (R-0252).
-- `x-opencode-session` is required, and the adapter does send it, but the
-  per-conversation value is the only thing making caching possible; anything that
+- The reasoning table is dated. Go's `/models` is identity-only, so a new or
+  renamed model, or an upstream change like `glm-5.3-flash` becoming
+  thinking-only, is only found by re-running the harness (R-0130, R-0252).
+- The Go provider row still marks reasoning *unverified* as a discoverable
+  capability, because per-model reasoning cannot be read from the wire; the
+  measured table is the substitute.
+- The documented catalog no longer lists `space-bunny-free` (the gateway reports
+  it unavailable) and still lists `mimo-v2.6-flash` (not served yet), which fails
+  honestly at request time rather than being hidden (R-0250).
+- `x-opencode-session` is required and the adapter sends it, but the
+  per-conversation value is also what makes caching possible; anything that
   changes it per request would silently disable caching.
 
 ## Not measured
 
 - Anything on device: Android TTS time-to-first-audio, whether 160-character
-  chunks sound natural, audio-route behaviour, and the end-to-end voice turn.
-- Percentiles. Every row here is one run; the same model moved by 2x between the
-  easy and the hard question, and `minimax-m3` once took 4.98 s on a single
-  greeting.
+  chunks sound natural, echo cancellation on the real speaker and headset routes,
+  and the end-to-end voice turn (R-0254, R-0255).
+- Percentiles. A single call is not a measurement — the same model and
+  parameters moved by more than 7x between single runs on 2026-10-17 — so the
+  harness repeats and reports the median of three; it is still not a p50/p95.
 - Whether Go's terms accept a non-coding voice client (R-0012/R-0020).
 - Answer accuracy: the Yosemite suggestions were not checked against National
   Park Service guidance.

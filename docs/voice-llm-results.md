@@ -210,6 +210,45 @@ What this means for the live tier:
 - These probe rows ran without the voice system prompt, so they are not directly
   comparable with the table above; the reasoning split is what dominates TTFT.
 
+## Harness run (2026-10-17)
+
+The `com.voicechat.agent.eval.llm.VoiceLlmHarnessTest` harness reproduces the
+request below through the **real adapter** (`scripts/run-llm-harness.ps1`), three
+attempts per configuration, and reports the median. It is the same method as the
+single-run table above, but repeated, and it is what caught the upstream
+`glm-5.3-flash` change (that model now refuses every reasoning-off form and was
+dropped from the live tier).
+
+| Model | Thinking | Attempts | TTFT median (s) | First sentence median (s) | Full response median (s) | Characters | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `claude-haiku-5-5` | no thinking field | 3 | 0.73 | 1.17 | 2.21 | 560 | completed |
+| `gpt-6-luna` | `reasoning.effort=none` | 3 | 0.98 | 1.30 | 2.53 | 539 | completed |
+| `gpt-5.6-luna` | `reasoning.effort=none` | 3 | 0.90 | 1.09 | 2.05 | 606 | completed |
+| `minimax-m3` | no reasoning field | 3 | 0.90 | 1.14 | 2.44 | 643 | completed |
+| `qwen3.8-flash` | `thinking.type=disabled` | 3 | 0.96 | 1.33 | 2.66 | 320 | completed |
+| `deepseek-v4.1-flash` | `reasoning_effort=none` | 3 | 1.79 | 2.10 | 3.00 | 320 | completed |
+| `gpt-6-luna` | `reasoning.effort=low` (deep tier) | 3 | 3.55 | 3.80 | 4.55 | 600 | completed |
+
+The first answer from one attempt, verbatim, as the record writes it:
+
+```text
+Here are three good Yosemite hikes, all under ten miles. For an easy one, try the Mirror Lake loop, about two miles round trip on a paved road with gentle slopes. For intermediate, take the Vernal Fall footbridge and Mist Trail, roughly three miles round trip, with steep granite steps and spray near the waterfall. For challenging, the Upper Yosemite Fall trail is about seven miles round trip with a steady climb to a spectacular view above the valley. Bring water, wear sturdy shoes, and check trail conditions at the park visitor center before you set out.
+```
+
+Two facts about the method matter for reading the numbers:
+
+- The harness measures the **adapter's** first assistant text delta, so a
+  provider's reasoning channel is excluded by construction (R-0066) — this is the
+  delay a spoken turn waits for.
+- The `none` field is sent explicitly wherever the model was measured to accept
+  it. `gpt-6-luna` with the field omitted reasoned ~650 tokens and took a 7.70 s
+  median instead of 0.98 s, which is why "omit `none`" is wrong for this
+  provider.
+
+The generated record (with every attempt and answer) is written to
+`build/llm-harness/` and is not committed; the file is reproduced by running the
+harness script.
+
 ## Voice system prompt used for every row
 
 ```text

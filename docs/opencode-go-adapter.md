@@ -18,10 +18,10 @@ R-0072 requires before an adapter ships). Sources are listed at the end.
 | Endpoints | Three per-model completion endpoints: `…/chat/completions`, `…/responses`, `…/messages`. The Go model table names the endpoint **and** the AI SDK package per model. |
 | Model discovery | `GET …/models` returns the OpenAI-shaped `{"object":"list","data":[{"id":…,"object":"model","owned_by":"opencode"}]}`. It lists **identities only** — no family, reasoning, or usage metadata. |
 | Model discovery is public | The `…/models` endpoint answers **without** an `Authorization` header (read directly 2026-09-29), so it can list models but can never validate a credential. The adapter therefore offers **no** credential validator (`CredentialValidationSupport.NONE`). |
-| Authentication | User-supplied API key, from the OpenCode Console after subscribing to Go/Go Plus. Sent as `Authorization: Bearer <key>` (the Console/Zen surface documents that bearer form; Go's page says to copy the Console API key). No password, OAuth, device, or QR flow is documented. |
+| Authentication | User-supplied API key (see the 2026-10-17 re-verification: Chat Completions and Responses use Bearer, Messages uses `x-api-key` + `anthropic-version`), from the OpenCode Console after subscribing to Go/Go Plus. Sent as `Authorization: Bearer <key>` (the Console/Zen surface documents that bearer form; Go's page says to copy the Console API key). No password, OAuth, device, or QR flow is documented. |
 | Client identity | The Go page asks a client to identify itself with its own user agent (`my-coding-agent/1.0`) and to send a stable `x-opencode-session` id per conversation. Both are sent; neither carries a credential. |
 | Protocol families | `@ai-sdk/openai-compatible` → `/chat/completions` (GLM, Kimi, LongCat, DeepSeek, MiMo, Hy, Space Bunny); `@ai-sdk/openai` → `/responses` (Grok, GPT Luna, Muse Spark); `@ai-sdk/anthropic` → `/messages` (MiniMax, Qwen). |
-| Reasoning control | **Not documented.** The Go page describes no reasoning/thinking parameter, so the adapter declares no reasoning level and refuses any requested level except `none`. |
+| Reasoning control | **Not documented**, but measured to work per model (see the 2026-10-17 re-verification): a per-model table maps the level to the family field, and an unmeasured model still refuses any level except `none`. |
 | Usage reporting | **Not promised.** The adapter parses usage only when a family's own protocol actually reports it; the provider capability claims no usage reporting. |
 | Privacy (per-model) | The Go page lists per-model retention/training. Grok/GPT: 30-day retention; most others: 0 days; Muse Spark Contributor models **use prompts/completions to train Meta models**; DeepSeek uses a monthly ZDR agreement. (Not yet surfaced in the app; R-0139.) |
 | Terms | Go is "designed for OpenCode and other coding agents"; traffic is monitored for abuse. A non-coding voice client is not explicitly addressed (R-0020 stays open). |
@@ -38,19 +38,26 @@ with a typed `LLM_INVALID_REQUEST` rather than guessing a protocol (R-0137).
 ## Re-verification (2026-10-17, live credential)
 
 The 2026-09-29 facts above were re-checked against the live gateway with a
-credential on 2026-10-17. Four rows and one test expectation are wrong or
-incomplete; the measurements and the model choice behind them are in
+credential on 2026-10-16/17. Five rows and one test expectation were wrong or
+incomplete, and the adapter now **implements** the measured behaviour: the
+measurements and the model choice behind them are in
 [voice-llm-selection.md](./voice-llm-selection.md) and
 [voice-llm-results.md](./voice-llm-results.md) (R-0248-R-0252).
 
-| Concern | 2026-09-29 text above | Measured 2026-10-17 |
+| Concern | 2026-09-29 text above | Measured, and what the adapter does now |
 | --- | --- | --- |
-| Authentication | Bearer for all families | **Messages needs `x-api-key` + `anthropic-version`.** With `Authorization: Bearer`, Messages-family calls return HTTP 401 `"Go requires a credential"`. Chat Completions and Responses keep Bearer. The `eachFamilyGoesToItsDocumentedEndpointWithBearerAuthAndClientHeaders` expectation must be split per family. |
+| Authentication | Bearer for all families | **Messages needs `x-api-key` + `anthropic-version`.** With `Authorization: Bearer`, Messages-family calls return HTTP 401 `"Go requires a credential"`. `OpenCodeGoLanguageModel.headers` now sends the family's own scheme, and the bearer-for-all expectation is split per family. |
 | Client identity | "Both are sent; neither carries a credential." | `x-opencode-session` is **required**, not merely advisory: without it every family returns HTTP 400 `MissingSessionID`. |
-| Reasoning control | "Not documented … the adapter declares no reasoning level" | The parameters are not documented, but the gateway accepts and honours them: Responses `reasoning.effort` (`none`…`max`; first token 0.93 s at `none` vs 41.80 s at `max` on one planning question), Chat `reasoning_effort` and `thinking.type=disabled`, Messages `thinking.type=adaptive` with `output_config.effort` (`budget_tokens` is rejected with "use adaptive"). `space-bunny` and `grok-4.7` reject these fields with HTTP 400 and `step-5-preview` accepts them without stopping its reasoning. |
-| Usage reporting | "Not promised" | All three families report usage when asked, including per-family cached-token fields. |
+| Reasoning control | "Not documented … the adapter declares no reasoning level" | The parameters are not documented, but the gateway accepts and honours them **per model**, so `OpenCodeGoReasoning` holds a dated per-model table and the encoder sends that family's field: Responses `reasoning.effort`, Chat `reasoning_effort`, Messages `thinking.type=adaptive` + `output_config.effort`, or `thinking.type=disabled` for a thinking-only Messages model. A level a model was not measured to take is refused before any request is sent. |
+| `NONE` handling | (implicitly: omit the field) | For `gpt-6-luna` the omitted form means "provider default" and reasons: 7.70 s median to the first token and ~650 reasoning tokens, against 0.93 s with `reasoning.effort="none"`. The field is therefore **sent** for `none` wherever the model was measured to accept it, and omitted only for a model like `grok-4.7` that rejects it. |
+| Usage reporting | "Not promised" | All three families report usage when asked, including per-family cached-token fields; the registry row claims it. |
 | Prompt caching | Session id is a "routing/prompt-caching hint" | Confirmed with a stable session id and prefix: 1703 of 1706 tokens cached on the second call, first token 0.88 s → 0.71 s. |
-| Model list drift | Static dated map | `space-bunny-free` answers "Model is unavailable" while `space-bunny` works, `mimo-v2.6-flash` is `model_coming_soon`, and `step-5-preview`/`beam-free` are Chat Completions models. `claude-haiku-5-5` is served but is not in the map. |
+| Model list drift | Static dated map | `space-bunny-free` answers "Model is unavailable" while `space-bunny` works, `mimo-v2.6-flash` is `model_coming_soon`, `step-5-preview`/`beam-free` are Chat Completions models, and `claude-haiku-5-5` is served. The map was corrected; `OpenCodeGoModelCatalog` adds the per-model capabilities. |
+
+An upstream change was also caught on 2026-10-17: the gateway now refuses every
+reasoning-off form for `glm-5.3-flash` ("[1210] This model always engages in
+thinking and cannot be disabled"), so sending it `none` is a HTTP 400 and it is no
+longer usable in the live tier (R-0252).
 
 ## Request mapping
 

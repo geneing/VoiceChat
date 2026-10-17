@@ -25,9 +25,10 @@ OpenRouter (M15), DeepSeek (M16), OpenCode Go (M17), OpenCode Zen (M18), and
 Hermes (M19) adapters over a shared remote HTTP/JSON/SSE transport,
 capability-aware settings with DataStore persistence (M22), a text-first
 end-to-end provider slice that drives the selected adapter through orchestration
-(M23), a voice-loop coordinator (M24; currently narrowed on `dev/STT` to capture,
-VAD, on-device STT, optional Smart Turn, and transcript persistence, with no
-LLM or TTS connection), and optional
+(M23), a voice-loop coordinator (M24; now wired to the assistant as well as
+capture, VAD, on-device STT, optional Smart Turn, and transcript persistence —
+VAD onset interrupts the reply and cancels the in-flight request, while a
+VAD-confirmed pause is what asks Smart Turn, on `dev/LLM`), and optional
 Smart Turn v3.2 semantic end-of-turn detection through ONNX Runtime (M10,
 opt-in and default off), plus eligible on-device local LLM runtimes with a
 curated (currently empty) model catalog and explicit local-versus-remote

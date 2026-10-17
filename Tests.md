@@ -782,6 +782,27 @@ Device-level latency, cancellation-acknowledgement timing, and live provider
 behavior remain unmeasured and are tracked in R-0131 and R-0138. **Do not mark
 any of these passed unless the command was actually run.**
 
+### LLM-only harness (JVM, opt-in, run on 2026-10-17)
+
+`com.voicechat.agent.eval.llm.VoiceLlmHarnessTest` drives the **real adapter**
+through the M12 `LanguageModel` contract for every model the voice loop may
+select, with the thinking parameter `docs/voice-llm-selection.md` recommends, and
+records the timings and the verbatim answers. It is skipped unless
+`VOICECHAT_LLM_HARNESS=1` and `OPENCODE_API_KEY` are set.
+
+```powershell
+# Reads secrets/opencode-go.key, sets the environment, runs the harness, and
+# prints the record path. Three attempts per model; the record shows the median.
+.\scripts\run-llm-harness.ps1
+.\scripts\run-llm-harness.ps1 -OutputPath build/llm-harness/yosemite-2026-10-17.md -Repeats 5
+```
+
+It **was run** on 2026-10-17 with three attempts per model; the medians and the
+answers are recorded in
+[voice-llm-results.md](./docs/voice-llm-results.md#harness-run-2026-10-17). It is
+host-side only — no Pixel, microphone, or TTS — so it is model-choice evidence,
+not a voice-loop latency result (R-0253).
+
 ## M18 — OpenCode Zen adapter
 
 M18 is a **JVM-first** milestone. The adapter is pure Kotlin behind the M12
@@ -1176,25 +1197,43 @@ and the Keystore round-trip under the app) remains unmeasured and is tracked in
 R-0138, R-0161, and the M17 section. **Do not mark any of these passed unless
 the run was actually performed.**
 
-## M24 — Voice loop and responsive barge-in
+## M24 - Voice loop and responsive barge-in
 
-This section records the earlier M24 voice-response implementation. The current
-`dev/STT` microphone path is narrowed to capture, VAD, on-device STT, optional
-Smart Turn, and transcript persistence; see [voice-loop.md](docs/voice-loop.md).
+The current microphone path is capture, VAD/onset, on-device STT, optional Smart
+Turn, transcript persistence, and — with an assistant wired — the LLM reply with
+on-device TTS and VAD barge-in; see [voice-loop.md](docs/voice-loop.md).
 
 M24 is a **JVM-first** milestone. The voice loop is a pure-Kotlin coordinator
 (`com.voicechat.agent.voice`) wired over the M02 contracts, so the acceptance
 behavior is proven by `:app:testDebugUnitTest` with deterministic fakes and the
-M03 replay fixtures — no device, network, credential, microphone, or real
+M03 replay fixtures - no device, network, credential, microphone, or real
 STT/TTS. The only platform file is `VoiceSessionAssembly.kt`, enforced by
 `VoiceSourcePurityTest`. See [docs/voice-loop.md](./docs/voice-loop.md).
+
+### Wired reply and barge-in (dev/LLM)
+
+`VoiceAssistantLoopTest` covers the sequencing rules that the M24 guidelines
+require, and `EchoCancellationTest` covers the capture-side echo wiring:
+
+- **A finalized transcript is answered.** The assistant receives the conversation
+  *before* the user turn, persists both turns itself, and the coordinator writes
+  nothing — proving the loop never double-persists a transcript.
+- **VAD onset interrupts first.** With the reply still outstanding, a speech-onset
+  event interrupts the assistant before any transcript, recognizer result, or
+  Smart Turn decision exists, returns the state to `LISTENING`, opens the next
+  recognition turn, and does not wait for the interrupted reply to settle.
+- **A failed reply stays visible.** A typed provider failure reaches
+  `VoiceSessionListener.onError` and the session keeps listening.
+- **Echo.** The capture path attaches the platform echo canceller per session,
+  records its state (`ENABLED`/`NO_SESSION`/`UNAVAILABLE`/`FAILED`) as an
+  `AUDIO_INPUT` diagnostic, and releases it when the session ends.
 
 ```powershell
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 
-# Fast, deterministic checks (no device): voice turns, interruptions at multiple
-# LLM/TTS points, stale-event dropping, delivered-only history, false/noise
-# recovery, short acknowledgements, stop ending the session, recorded timing.
+# Fast, deterministic checks (no device): the isolated STT path, the wired reply
+# and barge-in sequencing, echo-canceller wiring, stale-event dropping, and
+# delivered-only history.
 .\gradlew.bat :app:testDebugUnitTest
 
 # Lint / format / assemble
@@ -1203,6 +1242,10 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 # Compile the instrumented sources WITHOUT a device
 .\gradlew.bat :app:assembleDebugAndroidTest
 ```
+
+The on-device matrix below is **still not run** for the wired loop: time to first
+audible audio, echo behaviour per route, and a real barge-in remain unmeasured
+(R-0254, R-0255).
 
 What the JVM suite proves (details in the linked document):
 
