@@ -23,7 +23,7 @@ import kotlin.coroutines.coroutineContext
  * SHA-256 remains the byte-identity check (`docs/model-runtime.md`).
  */
 class OkHttpKokoroModelSource(
-    private val voice: KokoroVoiceArtifact,
+    private val voice: KokoroVoiceArtifact = KokoroArtifact.DEFAULT,
     private val client: OkHttpClient = defaultClient(),
 ) : KokoroModelSource {
     override suspend fun downloadTo(destination: File) {

@@ -30,8 +30,8 @@ sealed interface KokoroInstallStatus {
 /** Production installer for the pinned, app-private Kokoro model. */
 class DefaultKokoroModelInstaller(
     private val store: KokoroModelStore,
-    private val source: KokoroModelSource = OkHttpKokoroModelSource(),
     private val voice: KokoroVoiceArtifact = KokoroArtifact.DEFAULT,
+    private val source: KokoroModelSource = OkHttpKokoroModelSource(voice),
 ) : KokoroModelInstaller {
     /** Convenience constructor using the standard app-private model directory. */
     constructor(directory: File) :

@@ -37,7 +37,7 @@ object KokoroTts {
             )
         return DefaultKokoroModelInstaller(
             store = resolvedStore,
-            source = source ?: OkHttpKokoroModelSource(),
+            source = source ?: OkHttpKokoroModelSource(KokoroArtifact.DEFAULT),
         )
     }
 
