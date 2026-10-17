@@ -108,6 +108,27 @@ class EngineTextToSpeechTest {
         }
 
     @Test
+    fun aSelectedSpeechEngineThatIsNotInstalledIsAnExplicitTypedFailure() =
+        runTest {
+            val engine =
+                FakeTtsEngine(
+                    voices = listOf(ttsVoice("voice-a")),
+                    availabilityOverride = TtsEngineAvailability.SelectedEngineUnavailable("com.example.missing.tts"),
+                )
+            val tts = EngineTextToSpeech(engine)
+
+            val events = tts.speak("hello", first).toList()
+
+            assertEquals(1, events.size)
+            val failure = events.single() as TtsEvent.Failed
+            assertEquals(ErrorCode.TTS_NO_ON_DEVICE_VOICE, failure.error.code)
+            assertTrue(
+                "a missing engine must not silently fall back to the default",
+                engine.spokenTexts.isEmpty(),
+            )
+        }
+
+    @Test
     fun incrementalChunksAreQueuedInOrder() =
         runTest {
             val engine = FakeTtsEngine()

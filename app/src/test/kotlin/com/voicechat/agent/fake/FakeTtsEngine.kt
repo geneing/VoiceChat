@@ -7,6 +7,7 @@ import com.voicechat.agent.tts.TtsEngine
 import com.voicechat.agent.tts.TtsEngineAvailability
 import com.voicechat.agent.tts.TtsEngineEvent
 import com.voicechat.agent.tts.TtsEngineFailureKind
+import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -46,6 +47,8 @@ class FakeTtsEngine(
     private val failFirst: Boolean = false,
     private val locale: Locale = Locale.US,
     private val preferredVoiceId: String? = null,
+    private val engines: List<TtsEngineInfo> = emptyList(),
+    private val availabilityOverride: TtsEngineAvailability? = null,
 ) : TtsEngine {
     override val engineId: EngineId = EngineId("fake-tts")
 
@@ -68,6 +71,7 @@ class FakeTtsEngine(
     private var speakCount = 0
 
     override suspend fun initialize(): TtsEngineAvailability {
+        availabilityOverride?.let { return it }
         if (preferredVoiceId != null) {
             val preferred = OnDeviceVoiceSelector.selectPreferred(voices, preferredVoiceId)
             selectedVoice = preferred
@@ -81,6 +85,8 @@ class FakeTtsEngine(
     }
 
     override fun installedVoices(): List<TtsVoice> = voices
+
+    override fun installedEngines(): List<TtsEngineInfo> = engines
 
     override suspend fun selectVoice(voice: TtsVoice) {
         selectedVoice = voice

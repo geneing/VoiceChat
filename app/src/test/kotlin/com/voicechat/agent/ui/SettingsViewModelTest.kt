@@ -30,6 +30,7 @@ import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttDownloadStatus
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttMode
+import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -76,10 +77,12 @@ class SettingsViewModelTest {
         models: List<ModelAvailability> = listOf(ModelAvailability.Ready(model)),
         smartTurn: SmartTurnState = SmartTurnState.Available,
         voices: List<TtsVoice> = listOf(embeddedVoice()),
+        engines: List<TtsEngineInfo> = listOf(systemEngine()),
         stt: List<SttAvailability> = listOf(SttAvailability.Ready(SttEngine(SttMode.ADVANCED, Locale.US))),
     ) = SettingsCapabilities(
         sttAvailability = stt,
         ttsVoices = voices,
+        ttsEngines = engines,
         smartTurn = smartTurn,
         models = models,
     )
@@ -325,6 +328,7 @@ class SettingsViewModelTest {
             h.viewModel.onSelectLlmModel(modelId)
             h.viewModel.onSelectSttMode(SttMode.ADVANCED)
             h.viewModel.onSelectTtsVoice(embeddedVoice().id)
+            h.viewModel.onSelectTtsEngine(systemEngine().id)
             advanceUntilIdle()
             h.viewModel.shutdown()
             h.scope.cancel()
@@ -337,7 +341,46 @@ class SettingsViewModelTest {
             assertEquals(modelId, llm.selectedModelId)
             assertEquals(SttMode.ADVANCED, restarted.viewModel.uiState.value.stt.selectedMode)
             assertEquals(embeddedVoice().id, restarted.viewModel.uiState.value.tts.selectedVoiceId)
+            assertEquals(systemEngine().id, restarted.viewModel.uiState.value.tts.selectedEngineId)
             restarted.scope.cancel()
+        }
+
+    @Test
+    fun selectingATtsEnginePersistsAndShowsIt() =
+        runTest {
+            val h = harness(testScheduler)
+            h.viewModel.onSelectTtsEngine(systemEngine().id)
+            advanceUntilIdle()
+
+            assertEquals(
+                systemEngine().id,
+                h.store
+                    .observe()
+                    .first()
+                    .ttsEngineId,
+            )
+            val tts = h.viewModel.uiState.value.tts
+            assertEquals(systemEngine().id, tts.selectedEngineId)
+            assertEquals(systemEngine().id, tts.displayedEngine?.value?.id)
+            h.scope.cancel()
+        }
+
+    @Test
+    fun anUnknownTtsEngineIsClearedAndNotPersisted() =
+        runTest {
+            // The device reports no engine by that id, so the selection is refused.
+            val h = harness(testScheduler, capabilities = capabilities(engines = listOf(systemEngine())))
+            h.viewModel.onSelectTtsEngine("com.example.missing.tts")
+            advanceUntilIdle()
+
+            assertNull(
+                h.store
+                    .observe()
+                    .first()
+                    .ttsEngineId,
+            )
+            assertNull(h.viewModel.uiState.value.tts.selectedEngineId)
+            h.scope.cancel()
         }
 
     @Test
@@ -734,6 +777,8 @@ class SettingsViewModelTest {
         }
 
     private fun embeddedVoice() = TtsVoice("voice-on-device", "On-device", Locale.US, requiresNetwork = false)
+
+    private fun systemEngine() = TtsEngineInfo("com.google.android.tts", "Google speech services", isSystemDefault = true)
 
     private fun descriptor(
         id: ModelId,

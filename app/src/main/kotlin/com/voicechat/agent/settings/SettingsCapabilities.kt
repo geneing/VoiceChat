@@ -2,6 +2,7 @@ package com.voicechat.agent.settings
 
 import com.voicechat.agent.contracts.ModelAvailability
 import com.voicechat.agent.stt.SttAvailability
+import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
 
 /**
@@ -39,6 +40,8 @@ data class SettingsCapabilities(
     val sttAvailability: List<SttAvailability> = emptyList(),
     /** Every installed TTS voice; the on-device policy filters this further. */
     val ttsVoices: List<TtsVoice> = emptyList(),
+    /** Every platform TTS engine the device reports, for the settings engine picker. */
+    val ttsEngines: List<TtsEngineInfo> = emptyList(),
     /** Smart Turn availability; default unavailable until M10. */
     val smartTurn: SmartTurnState =
         SmartTurnState.Unavailable("Smart Turn is not installed; the bounded VAD endpoint is used."),

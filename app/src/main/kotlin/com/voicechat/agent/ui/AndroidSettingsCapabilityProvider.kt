@@ -12,6 +12,7 @@ import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttEngines
 import com.voicechat.agent.stt.SttMode
 import com.voicechat.agent.tts.AndroidTtsEngine
+import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
 import com.voicechat.agent.turn.SmartTurnCatalog
 import com.voicechat.agent.turn.SmartTurnModelStore
@@ -48,13 +49,16 @@ class AndroidSettingsCapabilityProvider(
     private val smartTurnStore: SmartTurnModelStore =
         SmartTurnModelStore(File(appContext.filesDir, SmartTurnModelStore.DIRECTORY_NAME))
 
-    override suspend fun snapshot(): SettingsCapabilities =
-        SettingsCapabilities(
+    override suspend fun snapshot(): SettingsCapabilities {
+        val (voices, engines) = readTts()
+        return SettingsCapabilities(
             sttAvailability = readSttAvailability(),
-            ttsVoices = readTtsVoices(),
+            ttsVoices = voices,
+            ttsEngines = engines,
             smartTurn = SmartTurnCatalog.settingsState(smartTurnStore.state()),
             models = DocumentedModelCatalog.availableModels(),
         )
+    }
 
     /**
      * The platform `SpeechRecognizer` engine (the default) plus the ML Kit modes.
@@ -68,13 +72,15 @@ class AndroidSettingsCapabilityProvider(
             AndroidSpeechSttStatus.check(appContext, SttEngine(SttMode.ANDROID_SPEECH, SttEngines.DEFAULT_LOCALE)),
         ) + SttEngines.mlKitCatalog().map { MlKitSttStatus.check(it) }
 
-    private suspend fun readTtsVoices(): List<TtsVoice> {
+    private suspend fun readTts(): Pair<List<TtsVoice>, List<TtsEngineInfo>> {
         val engine = AndroidTtsEngine(appContext)
         return try {
             // initialize() discovers and selects a voice; installedVoices() then
-            // returns the full list (the settings screen keeps only embedded ones).
+            // returns the full list (the settings screen keeps only embedded ones),
+            // and installedEngines() reads the platform's TTS engine list from the
+            // same instance.
             engine.initialize()
-            engine.installedVoices()
+            engine.installedVoices() to engine.installedEngines()
         } catch (cancellation: CancellationException) {
             // A cancelled refresh must stay cancelled, not become a successful
             // "no voices" snapshot (CODE_REVIEW P2, R-0225).
@@ -85,7 +91,7 @@ class AndroidSettingsCapabilityProvider(
             // (A distinct init-failure state is part of the settings-state
             // simplification still tracked as R-0164/R-0221.)
             AppLog.w(failure) { "settings: TTS voice discovery failed" }
-            emptyList()
+            emptyList<TtsVoice>() to emptyList()
         } finally {
             runCatching { engine.close() }
         }

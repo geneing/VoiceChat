@@ -5,15 +5,17 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Source guard for the TTS boundary: the voice policy, engine seam, contract
- * adapter, accounting, and route kinds must stay platform-free so they run as
- * ordinary JVM unit tests. Only `AndroidTtsEngine.kt`, `AndroidTtsOutputRoute.kt`,
- * and `OnDeviceTts.kt` may import `android.*` / `androidx.*`.
+ * Source guard for the TTS boundary: the voice policy, engine descriptor, engine
+ * seam, contract adapter, accounting, and route kinds must stay platform-free so
+ * they run as ordinary JVM unit tests. Only `AndroidTtsEngine.kt`,
+ * `AndroidTtsOutputRoute.kt`, and `OnDeviceTts.kt` may import `android.*` /
+ * `androidx.*`.
  */
 class TtsSourcePurityTest {
     private val pureFiles =
         listOf(
             "TtsVoice.kt",
+            "TtsEngineInfo.kt",
             "TtsEngine.kt",
             "TtsOutputRoute.kt",
             "EngineTextToSpeech.kt",

@@ -104,6 +104,9 @@ object SettingsTestTags {
     /** The selectable dropdown for a TTS voice. */
     const val TTS_DROPDOWN = "settings-tts-voice-dropdown"
 
+    /** The selectable dropdown for a TTS engine (speech API). */
+    const val TTS_ENGINE_DROPDOWN = "settings-tts-engine-dropdown"
+
     /** The catalog-level notice shown when no model is listed (M27, R-0102). */
     const val MODEL_CATALOG_NOTICE: String = "settings-model-catalog-notice"
 
@@ -397,6 +400,20 @@ private fun TtsSection(
 ) {
     SettingsHeading("Text-to-speech")
     Text("On-device voices only; a network voice is never used.", style = MaterialTheme.typography.bodySmall)
+
+    // The speech engine (speech API) is offered only when the device reports more
+    // than one; the selected engine speaks, and a voice is chosen within it.
+    if (state.tts.hasEngineChoices) {
+        OptionDropdown(
+            label = "Speech engine",
+            options = state.tts.engines,
+            selected = state.tts.displayedEngine,
+            tag = SettingsTestTags.TTS_ENGINE_DROPDOWN,
+            optionTag = { SettingsTestTags.menuOption(it.value.id) },
+            onSelect = { actions.onSelectTtsEngine(it.value.id) },
+        )
+    }
+
     if (state.tts.noOnDeviceVoice) {
         Text(
             text =

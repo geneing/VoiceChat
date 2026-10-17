@@ -29,6 +29,9 @@ enum class InvalidSelection {
 
     /** The TTS voice is not installed as an on-device voice. */
     TTS_VOICE,
+
+    /** The TTS engine (speech API) is not one the device reports. */
+    TTS_ENGINE,
 }
 
 /**
@@ -146,6 +149,14 @@ object SettingsValidator {
             if (!installed) {
                 result = result.copy(ttsVoiceId = null)
                 invalid += InvalidSelection.TTS_VOICE
+            }
+        }
+        val engineId = result.ttsEngineId
+        if (engineId != null && !capabilities.isUnread) {
+            val installed = capabilities.ttsEngines.any { it.id == engineId }
+            if (!installed) {
+                result = result.copy(ttsEngineId = null)
+                invalid += InvalidSelection.TTS_ENGINE
             }
         }
 

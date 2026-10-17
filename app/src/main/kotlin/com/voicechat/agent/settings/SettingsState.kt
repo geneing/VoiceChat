@@ -12,6 +12,7 @@ import com.voicechat.agent.providers.AuthMethod
 import com.voicechat.agent.providers.ProviderCapabilities
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttMode
+import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
 
 /** A user-visible, non-sensitive settings notice. */
@@ -94,13 +95,28 @@ data class SttDownloadProgress(
         get() = if (bytesToDownload > 0L) (bytesDownloaded.toDouble() / bytesToDownload.toDouble()).toFloat().coerceIn(0f, 1f) else null
 }
 
-/** TTS section: installed embedded voices only. */
+/** TTS section: the platform speech engine plus installed embedded voices only. */
 data class TtsSettingsSection(
+    /** The platform TTS engines the device reports; empty when none could be read. */
+    val engines: List<SelectableOption<TtsEngineInfo>> = emptyList(),
+    /** The selected engine id, or `null` for the platform default engine. */
+    val selectedEngineId: String? = null,
     val options: List<SelectableOption<TtsVoice>> = emptyList(),
     val selectedVoiceId: String? = null,
 ) {
     /** True when no embedded voice is installed; the app stays text-only. */
     val noOnDeviceVoice: Boolean get() = options.isEmpty()
+
+    /** True when more than one speech engine is installed, so the choice is real. */
+    val hasEngineChoices: Boolean get() = engines.size > 1
+
+    /**
+     * The engine row shown as the current selection: the explicitly chosen engine,
+     * or the platform's default engine when nothing was chosen. `null` only when
+     * the device reported no engines at all.
+     */
+    val displayedEngine: SelectableOption<TtsEngineInfo>?
+        get() = engines.firstOrNull { it.isSelected } ?: engines.firstOrNull { it.value.isSystemDefault } ?: engines.firstOrNull()
 }
 
 /** LLM section: provider, model, auth, reasoning, connection, and disclosure. */
@@ -205,6 +221,9 @@ interface SettingsActions {
 
     /** Selects an installed embedded TTS voice. */
     fun onSelectTtsVoice(voiceId: String)
+
+    /** Selects the platform TTS engine (speech API) the app speaks through. */
+    fun onSelectTtsEngine(engineId: String)
 
     /** Enables or disables Smart Turn (only persisted when it is available). */
     fun onSetSmartTurnEnabled(enabled: Boolean)

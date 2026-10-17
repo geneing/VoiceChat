@@ -222,6 +222,13 @@ class EngineTextToSpeech(
                 )
             }
 
+            is TtsEngineAvailability.SelectedEngineUnavailable -> {
+                VoiceAgentError(
+                    code = ErrorCode.TTS_NO_ON_DEVICE_VOICE,
+                    detail = "the selected speech engine \"$engineId\" is not installed on this device",
+                )
+            }
+
             is TtsEngineAvailability.Unavailable -> {
                 error
             }

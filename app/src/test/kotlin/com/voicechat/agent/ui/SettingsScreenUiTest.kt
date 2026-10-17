@@ -47,6 +47,7 @@ import com.voicechat.agent.settings.VoiceSettings
 import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttMode
+import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -275,6 +276,31 @@ class SettingsScreenUiTest {
     }
 
     @Test
+    fun theTtsEnginesAreOfferedAsADropdownWhenMoreThanOneIsInstalled() {
+        val actions = RecordingSettingsActions()
+        render(baseState(), actions)
+
+        composeRule.onNodeWithTag(SettingsTestTags.TTS_ENGINE_DROPDOWN).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTestTags.menuOption("com.example.tts")).performScrollTo().performClick()
+
+        assertEquals("com.example.tts", actions.lastEngine)
+    }
+
+    @Test
+    fun aSingleInstalledTtsEngineShowsNoEngineDropdown() {
+        render(
+            baseState().copy(
+                tts =
+                    baseState().tts.copy(
+                        engines = baseState().tts.engines.take(1),
+                    ),
+            ),
+        )
+
+        composeRule.onNodeWithTag(SettingsTestTags.TTS_ENGINE_DROPDOWN).assertDoesNotExist()
+    }
+
+    @Test
     fun aMissingSmartTurnModelOffersADownload() {
         val actions = RecordingSettingsActions()
         render(
@@ -416,6 +442,21 @@ class SettingsScreenUiTest {
                 ),
             tts =
                 TtsSettingsSection(
+                    engines =
+                        listOf(
+                            com.voicechat.agent.settings.SelectableOption(
+                                value = TtsEngineInfo("com.google.android.tts", "Google speech services", isSystemDefault = true),
+                                label = "Google speech services (system default)",
+                                state = com.voicechat.agent.settings.OptionState.Available,
+                                selected = true,
+                            ),
+                            com.voicechat.agent.settings.SelectableOption(
+                                value = TtsEngineInfo("com.example.tts", "Example engine"),
+                                label = "Example engine",
+                                state = com.voicechat.agent.settings.OptionState.Available,
+                            ),
+                        ),
+                    selectedEngineId = "com.google.android.tts",
                     options =
                         listOf(
                             com.voicechat.agent.settings.SelectableOption(
@@ -458,6 +499,7 @@ private class RecordingSettingsActions : SettingsActions {
     var lastReasoning: ReasoningLevel? = null
     var lastSttMode: SttMode? = null
     var lastVoice: String? = null
+    var lastEngine: String? = null
     var lastSmartTurn: Boolean? = null
     var lastDestination: String? = null
     var lastCredential: String? = null
@@ -493,6 +535,10 @@ private class RecordingSettingsActions : SettingsActions {
 
     override fun onSelectTtsVoice(voiceId: String) {
         lastVoice = voiceId
+    }
+
+    override fun onSelectTtsEngine(engineId: String) {
+        lastEngine = engineId
     }
 
     override fun onSetSmartTurnEnabled(enabled: Boolean) {

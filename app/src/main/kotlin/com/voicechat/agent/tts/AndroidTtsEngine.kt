@@ -36,6 +36,13 @@ import java.util.concurrent.atomic.AtomicInteger
  * locale has no embedded voice and it returns
  * [TtsEngineAvailability.NoOnDeviceVoice]. A network voice is never used.
  *
+ * **Speech engine (speech API).** [preferredEnginePackage] selects the platform
+ * TTS engine the instance speaks through (`TextToSpeech(context, listener,
+ * engine)`); `null` uses the platform default engine. A package the platform does
+ * not report yields [TtsEngineAvailability.SelectedEngineUnavailable] rather than
+ * a silent fall-through to the default engine. [installedEngines] lists the
+ * engines the platform offers for the settings picker and never fabricates one.
+ *
  * **Queued chunking.** [speak] enqueues with `QUEUE_ADD`, so incremental chunks
  * play in order. Each call returns a cold flow backed by a `callbackFlow`
  * registered under its utterance id; the platform `UtteranceProgressListener`
@@ -54,6 +61,7 @@ class AndroidTtsEngine(
     context: Context,
     private val locale: Locale = Locale.getDefault(),
     private val preferredVoiceId: String? = null,
+    private val preferredEnginePackage: String? = null,
     private val focusController: AudioFocusController = AndroidAudioFocusController(context.applicationContext),
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : TtsEngine {
@@ -76,13 +84,18 @@ class AndroidTtsEngine(
     init {
         tts =
             runCatching {
-                TextToSpeech(appContext) { status -> initStatus.complete(status) }
+                val listener = TextToSpeech.OnInitListener { status -> initStatus.complete(status) }
+                if (preferredEnginePackage != null) {
+                    TextToSpeech(appContext, listener, preferredEnginePackage)
+                } else {
+                    TextToSpeech(appContext, listener)
+                }
             }.onFailure { AppLog.w(it) { "tts: TextToSpeech construction failed" } }
                 .getOrNull()
     }
 
     override val engineId: EngineId
-        get() = EngineId(tts?.defaultEngine?.takeIf { it.isNotBlank() } ?: FALLBACK_ENGINE_ID)
+        get() = EngineId(preferredEnginePackage ?: tts?.defaultEngine?.takeIf { it.isNotBlank() } ?: FALLBACK_ENGINE_ID)
 
     override suspend fun initialize(): TtsEngineAvailability =
         withContext(dispatcher) {
@@ -90,6 +103,11 @@ class AndroidTtsEngine(
                 tts ?: return@withContext TtsEngineAvailability.Unavailable(
                     VoiceAgentError(ErrorCode.TTS_SYNTHESIS_FAILED, "text-to-speech engine unavailable"),
                 )
+            val requestedPackage = preferredEnginePackage
+            if (requestedPackage != null && installedEngines().none { it.id == requestedPackage }) {
+                AppLog.w { "tts: selected speech engine not installed engine=$requestedPackage" }
+                return@withContext TtsEngineAvailability.SelectedEngineUnavailable(requestedPackage)
+            }
             if (!initialized) {
                 val status = withTimeoutOrNull(INIT_TIMEOUT_MILLIS) { initStatus.await() }
                 if (status != TextToSpeech.SUCCESS) {
@@ -149,6 +167,29 @@ class AndroidTtsEngine(
         val platformVoice = textToSpeech.voices?.firstOrNull { it.name == voice.id } ?: return
         runCatching { textToSpeech.voice = platformVoice }
             .onFailure { AppLog.w(it) { "tts: setVoice failed voice=${voice.id}" } }
+    }
+
+    /**
+     * The platform's installed TTS engines, system default first, from
+     * `TextToSpeech.getEngines()`. Enumeration is read-only and needs no
+     * initialization; a platform that cannot enumerate returns an empty list
+     * rather than a fabricated one.
+     */
+    override fun installedEngines(): List<TtsEngineInfo> {
+        val textToSpeech = tts ?: return emptyList()
+        return runCatching {
+            val defaultEngine = textToSpeech.defaultEngine
+            (textToSpeech.engines ?: emptyList())
+                .mapNotNull { info ->
+                    val name = info.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    TtsEngineInfo(
+                        id = name,
+                        displayName = info.label?.takeIf { it.isNotBlank() } ?: name,
+                        isSystemDefault = name == defaultEngine,
+                    )
+                }.sortedWith(compareByDescending<TtsEngineInfo> { it.isSystemDefault }.thenBy { it.displayName })
+        }.onFailure { AppLog.w(it) { "tts: engine enumeration failed" } }
+            .getOrDefault(emptyList())
     }
 
     override fun speak(

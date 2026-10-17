@@ -12,6 +12,7 @@ import com.voicechat.agent.providers.ProviderCapabilityRegistry
 import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.tts.OnDeviceVoiceSelector
+import com.voicechat.agent.tts.TtsEngineInfo
 import com.voicechat.agent.tts.TtsVoice
 
 /**
@@ -177,6 +178,26 @@ object SettingsOptions {
                 label = "${voice.displayName} (${voice.locale.toLanguageTag()})",
                 state = OptionState.Available,
                 selected = voice.id == selectedId,
+            )
+        }
+
+    /**
+     * The platform TTS engines (speech APIs) the device reports, for the engine
+     * picker. Every reported engine is selectable; the one the platform treats as
+     * its default is labelled so the user can tell which runs when no explicit
+     * engine is chosen. An engine is never invented: the list is exactly what the
+     * runtime reported.
+     */
+    fun ttsEngines(
+        engines: List<TtsEngineInfo>,
+        selectedId: String?,
+    ): List<SelectableOption<TtsEngineInfo>> =
+        engines.map { engine ->
+            SelectableOption(
+                value = engine,
+                label = if (engine.isSystemDefault) "${engine.displayName} (system default)" else engine.displayName,
+                state = OptionState.Available,
+                selected = engine.id == selectedId,
             )
         }
 
