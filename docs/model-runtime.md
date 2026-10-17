@@ -1,9 +1,8 @@
 # Model and Runtime Support
 
-This document defines the intended selection policy. It is not a list of
-currently integrated models; the repository has no model catalog or inference
-runtime yet. The verified runtime versions, the current (empty) speech-model
-allow-list, and the pinned Smart Turn artifact identity are recorded in the
+This document defines the selection policy and the app-managed models currently
+allow-listed. The verified runtime versions, the pinned Smart Turn and Kokoro
+graphs, and their task-specific contracts are recorded in the
 [decision record](./decisions.md); this document stays the policy the catalog
 must satisfy.
 
@@ -66,6 +65,33 @@ configured VAD-only endpoint policy. See the reference
 [model manifest](https://github.com/soniqo/speech-android/blob/main/sdk/src/main/kotlin/audio/soniqo/speech/ModelManager.kt)
 and [integration test](https://github.com/soniqo/speech-android/blob/main/sdk/src/androidTest/kotlin/audio/soniqo/speech/SmartTurnTest.kt)
 for the pinned artifact and exercised endpoint behavior.
+
+### ONNX Runtime for distilled Kokoro TTS (M28)
+
+ONNX Runtime is also allow-listed for the single pinned English
+`MithrilMan/teacher-in-the-loop` `af_heart` student graph. The artifact is an
+8.07M-parameter, int8-weight, one-voice distillation of Kokoro-82M, pinned at
+revision `115a6c0469632a84fbcc6c8ed0ad7b1e06154b92`, under Apache-2.0. Its
+9,168,506 bytes and SHA-256 are recorded in `KokoroArtifact` and
+`models/manifest.json`. It is downloaded into app-private storage, verified
+before load, and never packaged in the APK. See [decision record §3.4](./decisions.md).
+
+The graph contract is `input_ids` int64 `[1, T]` with padding id 0 at each end
+and at most 510 phonemes, `speed` float32 `[1]`, and `waveform` float32 `[1, N]`
+at 24 kHz. The synthesizer rejects overlong or malformed inputs rather than
+truncating them. The CPU session uses two intra-op threads; only the session is
+closed by the engine, not ONNX Runtime's shared environment. The
+`scripts/kokoro-onnx-contract.py` check verifies the actual graph metadata and
+real CPU inference. Its random excitation means repeated outputs for identical
+inputs are not expected to be bit-identical.
+
+Only `af_heart` is wired. The upstream Italian students (`if_sara`, `im_nicola`)
+are not selectable because the app does not include their required Italian
+phonemizer. The shared Kokoro vocabulary and Misaki English lexicon are app
+assets fetched by `scripts/fetch-kokoro-phoneme-data.sh`; the graph itself stays
+an independently managed model download. Upstream throughput and quality
+figures are not this app's device measurements; Pixel 10 load, memory, latency,
+and listening validation remain required.
 
 ### External LLM API
 

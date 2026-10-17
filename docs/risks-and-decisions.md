@@ -7,7 +7,7 @@ limitations. It is not a decision record. Resolved choices live in
 that made them; this file records what is still not settled and who is expected
 to settle it.
 
-It currently covers M00-M26. Later milestone agents **append** items here as
+It currently covers M00-M28. Later milestone agents **append** items here as
 they find them and **close** items they resolve.
 
 ## Convention
@@ -58,6 +58,7 @@ genuinely unknown, write "unknown" rather than guessing.
 - [Voice-loop LLM measurement (M25 input)](#voice-loop-llm-measurement-m25-input) - R-0248-R-0255
 - [TTS configuration and harness (dev/TTS)](#tts-configuration-and-harness-devtts) - R-0256-R-0258
 - [Voice-loop opening audio and echo (dev)](#voice-loop-opening-audio-and-echo-dev) - R-0259-R-0260
+- [Distilled Kokoro TTS (M28)](#distilled-kokoro-tts-m28) - R-0261-R-0262
 
 ## Speech: on-device STT, TTS, VAD, and turn completion
 
@@ -67,13 +68,13 @@ genuinely unknown, write "unknown" rather than guessing.
 | R-0002 | open | speech | Advanced STT mode requires Pixel 10/11 specifically; Basic needs API 31+. Availability is device/config dependent and not yet tested here. | decisions.md §2.1 | M08 | Pixel 10 run recording engine/mode and proof of on-device processing; explicit unavailable path if status is not `AVAILABLE`. |
 | R-0003 | open | speech | STT is not supported on devices with an unlocked bootloader; AICore binding/preparation can fail. | decisions.md §2.1 | unspecified | Failures surfaced through `checkStatus()` as an explicit unavailable reason, not a crash. |
 | R-0004 | resolved (M11) | speech | No on-device TTS voice is guaranteed; voices are device- and user-configurable, so a network voice must never be used silently. | decisions.md §2.2 | M11 | Resolved: `AndroidTtsEngine.installedVoices()` reads `getVoices()` with `isNetworkConnectionRequired()`, and `OnDeviceVoiceSelector` keeps only embedded voices and returns `null` otherwise, surfaced as the explicit `NoOnDeviceVoice`/`TTS_NO_ON_DEVICE_VOICE` state. Unit tests (`TtsVoiceSelectionTest`, `EngineTextToSpeechTest`) prove network voices are excluded and never spoken. On-device enumeration is still unrun (see R-0057). |
-| R-0005 | resolved (M09) | speech | No VAD/onset path or model was selected; ONNX scope is Smart Turn only, so an ONNX VAD (for example Silero) is out of scope; no TFLite VAD is allow-listed. | decisions.md §2.3 | — | M09 implements a measured-audio VAD (normalized frame RMS plus zero-crossing rate) behind `VoiceActivityDetector` and a validated, route-aware bounded maximum-silence endpoint behind `BoundedTurnEndpointPolicy`. No model, runtime, dependency, or permission was added, and an ONNX VAD remains out of scope (see docs/vad-endpointing.md). |
+| R-0005 | resolved (M09) | speech | No VAD/onset path or model was selected; Smart Turn is the ONNX end-of-turn model, with the separately scoped M28 Kokoro ONNX TTS exception; an ONNX VAD (for example Silero) remains out of scope and no TFLite VAD is allow-listed. | decisions.md §2.3, §3.4 | — | M09 implements a measured-audio VAD (normalized frame RMS plus zero-crossing rate) behind `VoiceActivityDetector` and a validated, route-aware bounded maximum-silence endpoint behind `BoundedTurnEndpointPolicy`. No VAD model, runtime, dependency, or permission was added, and an ONNX VAD remains out of scope (see docs/vad-endpointing.md). |
 | R-0006 | open | speech | Smart Turn v3.2 accuracy/latency is unmeasured on Pixel 10 and the feature is opt-in (default off) until M25 evidence. | decisions.md §3.3 | M10 (integration), M25 (default decision) | On-device load time, inference time, memory, false-commit/false-hold tradeoffs meeting agreed acceptance; stays default-off until then. |
 | R-0007 | open | speech | TFLite/LiteRT STT and TTS models are deferred; the evaluation backlog entries are unverified for identity, license, and contract. | decisions.md §3.2, §5 | M20 | Recorded task, source, license, runtime, operators/delegates, ABI, tensor contract, and integrity plus device tests before allow-list. |
 | R-0008 | open | speech | The pinned Smart Turn artifact is a third-party re-export (not the Pipecat publisher) and its download/install lifecycle is not implemented. | decisions.md §3.3, §5 | M10 | Re-verify revision, size, and SHA-256 at integration; app-private download with integrity check, atomic install, cancellation, and removal; prefer an upstream embedded-front-end artifact if it appears. |
 | R-0009 | accepted | speech | TTS alternatives are out of scope: there is no ML Kit GenAI/AICore TTS API, and network-required TTS voices are unsupported. | decisions.md §2.2, §5 | — | No action; revisit only if GenAI adds a TTS API or the on-device TTS requirement changes. |
 | R-0010 | resolved (M27) | speech | Platform `SpeechRecognizer` is adopted as the default STT engine (on-device), replacing the removed Parakeet-EOU ONNX engine. | decisions.md §2.1, §5; docs/android-speech-recognition.md | M27 | Resolved: `AndroidSpeechRecognizerSpeechToText` uses `createOnDeviceSpeechRecognizer`/`EXTRA_PREFER_OFFLINE` behind the `SpeechToText` contract; availability is gated on `isOnDeviceRecognitionAvailable` (see R-0243/R-0244 for the remaining device-validation work). |
-| R-0011 | accepted | speech | General ONNX Runtime support is out of scope; scope is the pinned Smart Turn artifact only. | decisions.md §5 | — | No action; revisit only on an explicit scope change. |
+| R-0011 | accepted | speech | General ONNX Runtime support is out of scope; only the pinned Smart Turn detector and Kokoro `af_heart` TTS graph are allow-listed. | decisions.md §3.1, §3.3, §3.4 | — | No action; these are task-specific paths, not arbitrary ONNX support. Revisit only on an explicit scope change. |
 
 ## Language models, providers, and credentials
 
@@ -430,3 +431,14 @@ with a playback-aware onset bar).
 | --- | --- | --- | --- | --- | --- | --- |
 | R-0259 | open | speech | The pre-roll is a fixed 50 frames (≈1.0 s) and is not calibrated on device. It is cleared when a turn ends, but on a **barge-in** the pre-roll can still contain up to a second of the assistant's own (echo-cancelled) audio, which the recognizer may transcribe as spurious words; and whether 1.0 s recovers the whole clipped prefix depends on how far the opening syllable sits below the onset threshold. | docs/voice-loop.md, docs/android-speech-recognition.md, voice/CapturePreRoll.kt | M25 | A Pixel 10 run recording the words recovered by the pre-roll and whether any assistant words leak into a barge-in transcript, then set the pre-roll length (or an onset-threshold change) from that measurement. |
 | R-0260 | open | speech | The playback-aware onset bar (`VadConfig.playbackOnsetRmsThreshold` = `0.03`) and the lowered idle threshold (`onsetRmsThreshold` = `0.012`) are provisional. The probe measured the echo residual (mean `0.005`, p95 `0.010`, peak `~0.02`), so `0.03` clears it with margin, but a softly spoken barge-in may not clear `0.03` while the assistant speaks, and a very loud reply could push the residual above it. Neither the idle threshold against real room noise/music nor the bar against several reply volumes has been measured. | docs/vad-endpointing.md, vad/VadConfig.kt, vad/VadStateMachine.kt | M25 | A Pixel 10 run at several reply volumes recording false onsets from the assistant and successful barge-ins at normal speaking volume, then set both thresholds from that measurement. |
+
+## Distilled Kokoro TTS (M28)
+
+The M28 English student graph is pinned and has a host-side ONNX contract
+reproduction script. Host inference and physical-device behavior remain
+separate validations; the upstream model-card figures are not app measurements.
+
+| ID | Status | Area | Item and open question | Source | Resolves in | Evidence to close |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-0261 | open | device-validation | The distilled Kokoro graph has not been loaded or exercised on Pixel 10; startup time, peak memory, synthesis latency, audio quality, and behavior when the graph is unavailable/corrupt remain unmeasured on device. | docs/model-runtime.md, Tests.md | M28 device validation | Run the installed app on Pixel 10 with the pinned graph and missing/corrupt cases; record device/build/runtime, load and synthesis timings, memory, and a listening assessment. |
+| R-0262 | resolved (M28, WSL) | model-validation | The pinned Kokoro ONNX graph contract and repeated-inference behavior had not been independently exercised. | scripts/kokoro-onnx-contract.py, models/README.md | M28 | Resolved: `~/titl-venv/bin/python scripts/kokoro-onnx-contract.py` ran with Python ONNX Runtime 1.31.0 and NumPy 2.5.4. It verified graph/vocabulary hashes, observed `input_ids` int64 `[1,tokens]`, `speed` float `[1]`, `waveform` float `[symbolic_dim,samples]`, and generated non-silent shape `[1,24600]` audio from the hand-built ids. Two runs differed (max abs `0.025423080`, mean abs `0.000882367`, RMS `0.002141009`). Android runtime/device behavior remains open under R-0261. |
