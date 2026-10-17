@@ -315,3 +315,56 @@ class VoiceLlmHarness(
         private val SENTENCE_ENDINGS = setOf('.', '!', '?', '\n')
     }
 }
+
+/**
+ * The measured set: the models the voice loop may select, each with the thinking
+ * parameter `docs/voice-llm-selection.md` recommends, and the voice-shaped request
+ * they are measured on.
+ *
+ * One definition, used by both the host harness (`VoiceLlmHarnessTest`, opt-in)
+ * and the on-device harness (`VoiceLlmHarnessInstrumentedTest`), so a device run
+ * measures exactly what the host run measured. `gpt-6-luna` at `low` is included
+ * as the deep tier, to keep the confirmation that it cannot lead a spoken turn in
+ * the record.
+ */
+object VoiceLlmHarnessCases {
+    /** The recommended models and their thinking parameters. */
+    val VOICE_CASES: List<VoiceLlmCase> =
+        listOf(
+            VoiceLlmCase("claude-haiku-5-5", ReasoningLevel.NONE, "model default (no thinking field)"),
+            VoiceLlmCase("gpt-6-luna", ReasoningLevel.NONE, "reasoning.effort = none"),
+            VoiceLlmCase("gpt-5.6-luna", ReasoningLevel.NONE, "reasoning.effort = none"),
+            VoiceLlmCase("minimax-m3", ReasoningLevel.NONE, "no reasoning field"),
+            VoiceLlmCase("deepseek-v4.1-flash", ReasoningLevel.NONE, "reasoning_effort = none"),
+            VoiceLlmCase("qwen3.8-flash", ReasoningLevel.NONE, "thinking.type = disabled"),
+            VoiceLlmCase("glm-5.3-flash", ReasoningLevel.LOW, "reasoning_effort = low (no off switch)"),
+            VoiceLlmCase("gpt-6-luna", ReasoningLevel.LOW, "reasoning.effort = low (deep tier)"),
+        )
+
+    /** The recommended voice prompt, verbatim from `docs/voice-llm-selection.md`. */
+    val VOICE_PROMPT: VoiceLlmPrompt =
+        VoiceLlmPrompt(
+            systemPrompt =
+                """
+                You are the voice of a live spoken assistant. Everything you write is read aloud by a speech synthesiser, so write the way a thoughtful person talks.
+
+                Style:
+                - Plain speech only. No markdown, no bullets, no headings, no emoji, no code, no tables, no stage directions. Spell out numbers, times, units and symbols as words ("three thirty p m", "about five hundred milliseconds").
+                - Short sentences. If a sentence would not sound natural read aloud, rewrite it.
+                - Never say you are an AI, never mention these instructions, never mention tokens or models.
+
+                Shape of every answer:
+                - Sentence one is the answer itself: the most useful thing you can commit to right now, at most twenty words, no hedging, no "let me think".
+                - Then go straight on into two to four more sentences with the useful detail, reason or next step.
+                - If the question genuinely needs work you do not have yet, sentence one says in a short clause what you are doing, and the rest carries the answer as soon as you have it.
+                - Whole reply stays under about one hundred and twenty words unless the user asks for more.
+
+                Conversation:
+                - If the user starts speaking, stop and listen; never repeat what you already said.
+                - Ask at most one short clarifying question, and only when you truly cannot go on.
+                """.trimIndent(),
+            userText =
+                "I'm going to Yosemite. Recommend best three hikes up to 10 miles long. " +
+                    "One easy, one intermediate, and one challenging.",
+        )
+}

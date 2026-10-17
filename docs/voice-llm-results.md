@@ -249,6 +249,53 @@ The generated record (with every attempt and answer) is written to
 `build/llm-harness/` and is not committed; the file is reproduced by running the
 harness script.
 
+## Device run (Pixel 10, 2026-10-17)
+
+The same harness through the same adapter, run **on the Pixel 10** by
+`scripts/run-llm-harness-device.ps1` (instrumented
+`VoiceLlmHarnessInstrumentedTest`), so the numbers include the phone's own network
+path and ART runtime rather than the host's.
+
+- Device: Pixel 10 (`frankel`), Android 17 / API 37, build
+  `google/frankel/frankel:17/CP3A.261005.005/16271449:user/release-keys`, debug
+  variant, run id `9d241415d5a84f6b8e11174ae3a41a2e`, three attempts per model.
+- Conditions **sampled after the run**: Wi-Fi connected (5 GHz band),
+  USB-powered at 80% battery, battery temperature 29.0 °C. Radio state, screen
+  state, and thermal throttling were not sampled during the run.
+- The credential came from the app's AndroidKeyStore-backed store (populated by
+  the debug import of the file `scripts/push-credentials.sh` stages); no key was
+  passed on the command line or written to a report.
+
+| Model | Thinking | Attempts | TTFT median (s) | First sentence median (s) | Full response median (s) | Characters | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `claude-haiku-5-5` | no thinking field | 3 | 1.11 | 1.23 | 2.54 | 928 | completed |
+| `gpt-6-luna` | `reasoning.effort=low` (deep tier) | 3 | 1.15 | 1.52 | 2.54 | 548 | completed |
+| `gpt-6-luna` | `reasoning.effort=none` | 3 | 1.16 | 1.58 | 2.97 | 630 | completed |
+| `minimax-m3` | no reasoning field | 3 | 1.22 | 1.34 | 1.78 | 705 | completed |
+| `qwen3.8-flash` | `thinking.type=disabled` | 3 | 1.32 | 1.73 | 2.87 | 324 | completed |
+| `gpt-5.6-luna` | `reasoning.effort=none` | 3 | 1.41 | 1.67 | 3.04 | 703 | completed |
+| `glm-5.3-flash` | `reasoning_effort=low` (no off switch) | 3 | 1.51 | 1.72 | 5.88 | 426 | completed |
+| `deepseek-v4.1-flash` | `reasoning_effort=none` | 3 | 2.08 | 2.16 | 3.10 | 434 | completed |
+
+What the device adds to the host numbers:
+
+- **Every case still completed**, including the ones the host measured as slow:
+  the adapter's reasoning/auth path works from the device unchanged.
+- **First token is ~0.25-0.55 s later than the same case on the host**
+  (0.73-0.98 s host against 1.11-1.58 s device for the six live models), which is
+  the phone's network path and scheduling. The device remains inside the
+  "first sentence spoken by about 1.2-1.7 s" budget the voice loop was designed
+  around.
+- **`gpt-6-luna` `low` is not reliably slow**: 3.42 s on one attempt, 1.00 s and
+  1.15 s on the others, so a single deep-tier call can look as fast as the live
+  tier. The median hides that; the per-attempt rows are in the record.
+- Characters differ from the host run because the answers are regenerated;
+  the timing comparison is between medians, not between answers.
+
+`scripts/run-llm-harness-device.ps1` copies `summary.md` (this table) and
+`record.md` (the same table plus every attempt's timings and the verbatim answers)
+into `build/llm-harness-device/<runId>/`. Neither is committed.
+
 ## Voice system prompt used for every row
 
 ```text
