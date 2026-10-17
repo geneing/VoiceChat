@@ -7,6 +7,7 @@ import com.voicechat.agent.contracts.TextToSpeech
 import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.diagnostics.SystemMonotonicClock
 import com.voicechat.agent.tts.EngineTextToSpeech
+import com.voicechat.agent.tts.kokoro.phonemes.DefaultKokoroPhonemizer
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import java.io.File

@@ -112,7 +112,13 @@ class KokoroTtsHarnessInstrumentedTest {
             runDir.mkdirs()
             try {
                 // 1. Synthesis stage: text start -> first PCM, no audio device.
-                val stage = KokoroTtsStageHarness(phonemizer = phonemizer, synthesizer = synthesizer, conditions = conditions, now = { timestamp() })
+                val stage =
+                    KokoroTtsStageHarness(
+                        phonemizer = phonemizer,
+                        synthesizer = synthesizer,
+                        conditions = conditions,
+                        now = { timestamp() },
+                    )
                 val stageReport = stage.run(VoiceTtsHarnessCases.TTS_TEXTS, repeats = repeats)
                 write(runDir, SYNTHESIS_RECORD, stageReport.toMarkdown())
                 write(runDir, SYNTHESIS_SUMMARY, stageReport.summaryMarkdown() + "\n")

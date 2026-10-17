@@ -313,7 +313,7 @@ class KokoroTtsEngineTest {
     }
 
     private class FakeSink(
-        private val play: suspend (FloatArray, () -> Unit) -> Boolean,
+        private val playBlock: suspend (FloatArray, () -> Unit) -> Boolean,
     ) : KokoroAudioSink,
         KokoroAudioRouteProvider {
         var closeCount = 0
@@ -323,7 +323,7 @@ class KokoroTtsEngineTest {
         override suspend fun play(
             samples: FloatArray,
             onAudible: () -> Unit,
-        ): Boolean = play(samples, onAudible)
+        ): Boolean = playBlock(samples, onAudible)
 
         override suspend fun stop() = onStop()
 
