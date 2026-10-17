@@ -260,6 +260,14 @@ bash scripts/push-models.sh kokoro-af-heart
 the device numbers must come from a real run and are recorded here when they do,
 with the device, build, graph revision, and repeat count.
 
+Two host-side components have been measured on the development machine (2026-10-17)
+and are recorded in [evaluation.md](./evaluation.md#latency-pixel-10): the real
+phonemizer costs 3-4 ms per assistant-shaped sentence on the JVM
+(`KokoroPhonemizerTimingTest`), and one graph call per sentence costs 111-177 ms
+under Python ONNX Runtime 1.31.0 on the host CPU
+(`scripts/kokoro-onnx-contract.py`). Neither is a device claim: the Pixel's CPU,
+the pinned Android runtime 1.29.0, and the audio device all differ.
+
 ## M09 — VAD, fast onset, and bounded endpointing
 
 Path: measured-audio VAD (normalized frame RMS + zero-crossing rate) behind the

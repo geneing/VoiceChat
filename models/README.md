@@ -89,7 +89,7 @@ float32 shape `[1, 24600]`, or 1.025 seconds at 24 kHz; min/max/mean were
 Repeating the same ids was not bit-identical: max absolute delta `0.025423080`,
 mean absolute delta `0.000882367`, RMS delta `0.002141009`. This confirms the
 graph contract under Python ONNX Runtime 1.31.0, not Android ONNX Runtime 1.29.0
-or Pixel 10 performance; see R-0261/R-0262 in
+or Pixel 10 performance; see R-0267/R-0268 in
 [`docs/risks-and-decisions.md`](../docs/risks-and-decisions.md).
 
 No local LLM (`.litertlm`) is shipped: the external OpenCode Go provider is the

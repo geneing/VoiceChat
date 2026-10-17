@@ -194,37 +194,6 @@ Retained platform fallback/unavailable behavior (M11, not the active path):
 - Voice/engine availability is device- and user-configurable; never claim a
   specific voice exists without listing `getVoices()` at runtime.
 
-### Kokoro English phonemizer (M28)
-
-**Decision: use OpenNLP Penn POS tags with Misaki's US English gold/silver
-lexicons, plus the README's documented letter-rule fallback and inline IPA
-overrides.** This avoids a Python/spaCy runtime and keeps phonemization offline.
-The pinned `org.apache.opennlp:opennlp-tools:2.5.12` is the latest stable release
-in Maven Central metadata checked 2026-10-17 (3.0.0-M6 is a milestone); it is
-Apache-2.0. The offline English Penn perceptron model is bundled at
-`app/src/main/assets/kokoro/en-pos-perceptron.bin` (3,975,786 bytes,
-SHA-256 `0b49b7d9bdb9f888aed85e9f41fbcfd6cab607805ba9cd2370e1e5af4e540db8`),
-from OpenNLP's 1.5 model page under Apache-2.0. The app includes only the US
-Misaki dictionaries supplied for this voice; GB dictionaries and voice support
-remain out of scope. Three VBP corrections from the linked Kokoro Kotlin
-README (`read`, `reread`, `wound`) are applied after dictionary loading.
-
-The JVM fixture suite currently matches Misaki 0.9.4 on all 203 frozen corpus
-sentences. That is fixture parity, not a general English accuracy or device
-latency claim; the rule fallback and the 2010-vintage POS model remain
-best-effort on out-of-vocabulary and unusual prose. Cardinal and currency
-expansion currently uses signed-64-bit arithmetic; larger numeric values are
-outside the validated subset.
-
-Sources checked 2026-10-17:
-
-- Kokoro Kotlin phonemizer design —
-  https://github.com/alexsobolev/kokoro-tts-kotlin/blob/main/README.md
-- Apache OpenNLP Maven metadata —
-  https://repo.maven.apache.org/maven2/org/apache/opennlp/opennlp-tools/maven-metadata.xml
-- OpenNLP 1.5 models (model and Apache license header) —
-  https://opennlp.sourceforge.net/models-1.5/
-
 ### 2.3 Voice activity / turn detection
 
 **Deferred to M09 with an explicit constraint.** No VAD model is allow-listed at
@@ -270,17 +239,15 @@ Verified facts, all from the pinned revision
 
 Deliberate limits of the port, recorded rather than hidden:
 
-- **No spaCy POS tagger.** Misaki selects tag-specific lexicon entries with
-  `en_core_web_sm`'s tagger. Shipping a neural tagger for this is not
-  proportionate, so the port selects the `DEFAULT` entry and replaces the
-  handful of tag-dependent special cases with documented heuristics. Heteronyms
-  whose pronunciation is genuinely tag-dependent can therefore differ from the
-  Python reference.
+- **A substitute tagger.** Misaki selects tag-specific lexicon entries with
+  spaCy's `en_core_web_sm` tagger. Shipping spaCy is not proportionate, so the
+  port tags with Apache OpenNLP's offline Penn perceptron instead (§2.5). A tag
+  disagreement can therefore change a pronunciation.
 - **No eSpeak NG, no BART fallback.** The Python falls back to eSpeak NG
   (GPL-3.0) and, without it, a ~200 MB BART model, for out-of-vocabulary words.
   Neither is acceptable here (license and size), so the port uses a
-  deterministic rule-based grapheme→phoneme fallback and measures how far it
-  agrees with the reference (`docs/tts.md`).
+  deterministic offline rule fallback and inline-IPA overrides, and measures how
+  far the whole port agrees with the reference (`docs/tts.md`, R-0263).
 - **The excitation is random.** Two runs of the same input are not
   bit-identical, by design; tests assert shape, range, and non-silence rather
   than exact samples.
@@ -288,6 +255,39 @@ Deliberate limits of the port, recorded rather than hidden:
 Fallback/unavailable behavior follows §2.2 unchanged: a missing or corrupt graph
 is a typed, visible "install the voice model" state, never a silent switch to
 another voice or a fabricated success.
+
+### 2.5 Kokoro English phonemizer (M28)
+
+**Decision: use OpenNLP Penn POS tags with Misaki's US English gold/silver
+lexicons, plus a documented letter-rule fallback and inline IPA
+overrides.** This avoids a Python/spaCy runtime and keeps phonemization offline.
+The pinned `org.apache.opennlp:opennlp-tools:2.5.12` is the latest stable release
+in Maven Central metadata checked 2026-10-17 (3.0.0-M6 is a milestone); it is
+Apache-2.0. The offline English Penn perceptron model is bundled at
+`app/src/main/assets/kokoro/en-pos-perceptron.bin` (3,975,786 bytes,
+SHA-256 `0b49b7d9bdb9f888aed85e9f41fbcfd6cab607805ba9cd2370e1e5af4e540db8`),
+from OpenNLP's 1.5 model page under Apache-2.0. The app includes only the US
+Misaki dictionaries supplied for this voice; GB dictionaries and voice support
+remain out of scope. Three VBP corrections (`read`, `reread`, `wound`) are applied
+after dictionary loading.
+
+The JVM fixture suite matches Misaki 0.9.4 on all 203 frozen corpus sentences
+plus 8 edge cases (`scripts/kokoro-phoneme-parity.sh`). That is fixture parity on
+a templated corpus, not a general English accuracy or device latency claim; the
+rule fallback and the 2010-vintage POS model remain best-effort on
+out-of-vocabulary and unusual prose. Cardinal and currency expansion currently
+uses signed-64-bit arithmetic; larger numeric values are outside the validated
+subset. The substitution and its risk are recorded as R-0263.
+
+Sources checked 2026-10-17:
+
+- Apache OpenNLP Maven metadata —
+  https://repo.maven.apache.org/maven2/org/apache/opennlp/opennlp-tools/maven-metadata.xml
+- OpenNLP 1.5 models (model and Apache license header) —
+  https://opennlp.sourceforge.net/models-1.5/
+- A third-party Kotlin Kokoro port whose phonemizer design (offline letter-rule
+  fallback, inline IPA overrides, the three VBP corrections) informed this one —
+  https://github.com/alexsobolev/kokoro-tts-kotlin/blob/main/README.md
 
 ## 3. Model runtime and model allow-list
 

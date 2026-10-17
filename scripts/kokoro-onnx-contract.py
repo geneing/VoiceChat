@@ -100,6 +100,66 @@ def main() -> None:
         print(f"repeat mean absolute delta: {difference.mean():.9f}")
         print(f"repeat RMS delta: {np.sqrt(np.mean(difference**2)):.9f}")
 
+        measure_inference(session, vocab)
+
+
+def measure_inference(session, vocab: dict[str, int]) -> None:
+    """Time one graph call per assistant-shaped sentence.
+
+    This is a **host** measurement of the model on this machine's CPU under Python
+    ONNX Runtime, not the app's device latency: it excludes the Android runtime
+    (the app pins 1.29.0), the Kotlin phonemizer, and the audio device. It exists
+    so a device number has something honest to be compared against, and so a
+    graph whose cost changed is visible.
+    """
+    import time
+
+    sentences = [
+        "The weather in Yosemite will be clear this weekend.",
+        "Take the Mist Trail to the top of Vernal Fall, then continue to Nevada Fall.",
+        "Start early, because the parking lot fills by seven thirty in the morning on a summer weekend.",
+    ]
+    phonemizer = None
+    try:
+        from titl.phonemes import Phonemizer
+
+        phonemizer = Phonemizer("en")
+    except Exception as error:  # noqa: BLE001 - the check runs without the G2P when absent
+        print(f"phonemizer unavailable ({error.__class__.__name__}); using repeated hand-built ids")
+
+    print()
+    print(f"inference timing (CPU, {session.get_providers()[0]}, host machine):")
+    for sentence in sentences:
+        if phonemizer is not None:
+            phonemes, _ = phonemizer._g2p(sentence)  # noqa: SLF001 - the same call titl makes
+            phonemes = phonemes.strip()
+            ids = [0, *(int(vocab[c]) for c in phonemes if c in vocab), 0]
+        else:
+            ids = [0, *(int(vocab[s]) for s in ("h", "ə", "ˈ", "l", "o", "ʊ") * 7), 0]
+        input_ids = np.asarray([ids], dtype=np.int64)
+        speed = np.asarray([1.0], dtype=np.float32)
+        session.run(["waveform"], {"input_ids": input_ids, "speed": speed})
+        samples = 0
+        durations = []
+        for _ in range(REPEATS):
+            started = time.perf_counter()
+            samples = int(
+                session.run(["waveform"], {"input_ids": input_ids, "speed": speed})[0].shape[1]
+            )
+            durations.append((time.perf_counter() - started) * 1000.0)
+        durations.sort()
+        median_ms = durations[len(durations) // 2]
+        audio_seconds = samples / SAMPLE_RATE_HZ
+        realtime = (audio_seconds * 1000.0 / median_ms) if median_ms > 0 else float("inf")
+        print(
+            f"  tokens={len(ids)} audio={audio_seconds:.3f}s "
+            f"median={median_ms:.1f}ms min={durations[0]:.1f}ms max={durations[-1]:.1f}ms "
+            f"realtime={realtime:.1f}x"
+        )
+
+
+REPEATS = 5
+
 
 if __name__ == "__main__":
     main()

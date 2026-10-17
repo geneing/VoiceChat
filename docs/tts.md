@@ -166,22 +166,31 @@ follows two Python sources:
   handling, the reverse-order resolution that lets `the`/`to` see the next word's
   vowel, and the final `ɾ`→`T` / `ʔ`→`t` replacement.
 
-Two parts of the Python are deliberately **not** ported, because neither can ship
-here:
+**Parts of speech.** Misaki selects tag-specific lexicon entries and drives
+several special cases with spaCy's `en_core_web_sm` tagger. Shipping spaCy is not
+possible here, so the port tags with Apache OpenNLP's offline Penn Treebank
+perceptron instead (`org.apache.opennlp:opennlp-tools`, Apache-2.0, model
+`assets/kokoro/en-pos-perceptron.bin`, 3,975,786 bytes, SHA-256 `0b49b7d9…`). That
+is a *substitute* tagger, not the one the reference uses, so a tag disagreement
+can still change a pronunciation.
 
-- **spaCy's POS tagger** (`en_core_web_sm`) selects tag-specific lexicon entries
-  and drives a handful of special cases. The port selects the lexicon's
-  `DEFAULT` entry and uses documented heuristics for those cases, so a genuinely
-  tag-dependent heteronym can differ from the Python.
-- **eSpeak NG and the BART fallback network** pronounce out-of-vocabulary words.
-  eSpeak NG is GPL-3.0 and the network is ~200 MB, so the port uses a
-  deterministic rule-based grapheme→phoneme fallback instead.
+**Out-of-vocabulary words.** The Python falls back to eSpeak NG (GPL-3.0) and,
+without it, a ~200 MB BART model. Neither can ship here, so the port uses a
+deterministic offline rule fallback (letter rules, plus lexicon lookup of
+compound parts) and inline-IPA overrides `(word)[phonemes]`.
 
 The vocabulary and the gzipped lexicon are app assets
 (`scripts/fetch-kokoro-phoneme-data.sh`), so phonemization is on-device and
-offline. The measured sentence-exact agreement with the Python reference, and the
-categories that differ, are reported by the parity test and in
-[Tests.md](../Tests.md) M28 (R-0263).
+offline.
+
+**Measured parity.** `scripts/kokoro-phoneme-parity.sh` regenerates the Python
+fixtures and asserts the port against them. On 2026-10-17 the Kotlin port matched
+Misaki 9.4 sentence-for-sentence on **203/203** frozen corpus sentences (100%,
+no differing category) plus all 8 edge cases — numbers, currency, symbols,
+acronyms, a markdown inline-IPA link, punctuation-only text, and a sentence past
+the 510-phoneme cut. Read that as fixture parity, not general English accuracy:
+the corpus is templated, so its vocabulary is bounded, and the residual risk is
+exactly the tagger and the OOV fallback above (R-0263).
 
 One deliberate deviation from the Python chunk list: a chunk whose phonemes carry
 no letter (a punctuation-only fragment such as a bare `.`) is dropped rather than
@@ -341,9 +350,12 @@ proof — are **not** run; no claim is made for them.
 - **Model is a download (R-0262).** The graph is never in the APK, so a fresh
   install has no voice until the user installs it from Settings (or a developer
   pushes it with `scripts/push-models.sh`). The state is visible and typed.
-- **G2P fidelity (R-0263).** The tagger and eSpeak substitutions above mean the
-  port is not byte-identical to the Python reference for every sentence; the
-  residual is pronunciation quality for heteronyms and unknown words.
+- **G2P fidelity (R-0263).** The port substitutes OpenNLP's Penn tagger for
+  spaCy's and a rule fallback for eSpeak NG, so it is not byte-identical to the
+  Python reference by construction; the residual is pronunciation quality for
+  heteronyms and unknown words. The measured parity (203/203 on a templated
+  corpus, plus 8 edge cases) is on a bounded vocabulary and is not general
+  English accuracy.
 - **Voice quality (R-0265).** The students carry the publisher's own known
   defects — a faint metallic ring, 2–4 kHz harmonic contrast partly filled with
   noise, and the teacher's mispronunciations — and no human MOS exists for them.

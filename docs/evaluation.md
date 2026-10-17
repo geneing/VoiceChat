@@ -189,6 +189,21 @@ from one pass, so a row is left out rather than guessed:
 | --- | --- | --- | --- | --- | --- |
 | *(tts_phonemize / tts_first_pcm / tts_synthesis_complete / tts_first_audible — no run recorded — R-0264)* | | | | | |
 
+**Kokoro TTS stage, host components** — measured 2026-10-17 on the development
+machine, **not** the device, and not a substitute for the run above. The two
+halves of "text start to first sound" that a host can measure honestly:
+
+| component | where | measurement |
+| --- | --- | --- |
+| phonemize (real port: lexicon + OpenNLP POS + chunker) | JVM, `KokoroPhonemizerTimingTest` | 3-4 ms per assistant-shaped sentence (median 3 ms) |
+| one graph call per sentence (real int8 graph, Python ONNX Runtime 1.31.0, CPU) | WSL, `scripts/kokoro-onnx-contract.py` | 111 ms / 140 ms / 177 ms for the three harness sentences, 31-34x realtime |
+
+So the host estimate for text start to first PCM is roughly 115-180 ms per
+sentence, dominated by the graph. The device number differs on both sides: the
+Pixel's CPU is slower than this host's, and the app pins ONNX Runtime 1.29.0
+rather than 1.31.0, while the audio device's start cost only appears in
+`tts_first_audible`. Treat the table as an order of magnitude, not a claim.
+
 ### Endpoint sweep (Pixel 10)
 
 | onsetRms | pauseFrames | maxSilence ms | accurate | false commit | false hold | miss | mean delay ms | p95 \|delay\| ms |
