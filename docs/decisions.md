@@ -108,6 +108,13 @@ Verified contract (`developer.android.com/reference/android/speech/SpeechRecogni
   `ParcelFileDescriptor`) plus `EXTRA_AUDIO_SOURCE_{CHANNEL_COUNT,ENCODING,SAMPLING_RATE}`,
   which lets the recognizer read the captured PCM instead of opening the
   microphone.
+- **Segmented session mode** — `EXTRA_SEGMENTED_SESSION` is set to the String
+  `EXTRA_AUDIO_SOURCE` (never a boolean). The service delivers finalized chunks
+  via `onSegmentResults` (text under `RESULTS_RECOGNITION`) and terminates via
+  `onEndOfSegmentedSession`. Confirmed honored on Pixel 10 / API 37 with the
+  piped custom audio: `onResults` is not called in this mode, and joining the
+  segments gives the full-turn transcript (M27, R-0247). A service may ignore the
+  extra; then the partial/`onResults` path applies.
 - ML Kit GenAI Speech Recognition (alternative engine): artifact
   `com.google.mlkit:genai-speech-recognition:1.0.0-alpha1`; **alpha**, no SLA or
   deprecation policy, backward-incompatible changes possible. Library requires

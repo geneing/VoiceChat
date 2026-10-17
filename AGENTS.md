@@ -14,7 +14,9 @@ The app is scaffolded and its core domain types and replaceable contracts exist
 tracing (M04), durable Room-backed conversation persistence with a bounded
 context builder (M05), a Compose conversation UI with a manual text path (M06),
 microphone capture (M07), on-device Android `SpeechRecognizer` speech-to-text
-(M08, `docs/android-speech-recognition.md`) with ML Kit GenAI as an alternative,
+(M08, `docs/android-speech-recognition.md`) using segmented session mode
+(`EXTRA_SEGMENTED_SESSION` over the piped `EXTRA_AUDIO_SOURCE` PCM) with ML Kit
+GenAI as an alternative,
 measured-audio VAD/onset and bounded endpointing (M09), on-device platform TTS
 (M11), a provider-independent LLM streaming contract with a deterministic fake
 (M12), Keystore-backed credential storage with a provider capability registry

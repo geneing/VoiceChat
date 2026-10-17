@@ -334,3 +334,30 @@ clip (this supersedes the earlier all-failed note, R-0235):
 No accuracy/WER claim: platform transcripts were recorded but not scored against
 gold. ML Kit timings start when the adapter begins feeding audio, the platform
 timings from VAD onset/endpoint, so the two clocks are close but not identical.
+
+### Segmented session mode (M27) — transcript fix, latency unchanged
+
+The on-device recognizer's `onResults` was empty and its partial text reset or
+re-emitted around its own `onEndOfSpeech`, so the committed transcript (last
+partial) was sometimes truncated and naive per-segment accumulation duplicated
+other clips. Requesting **segmented session mode**
+(`RecognizerIntent.EXTRA_SEGMENTED_SESSION` set to the String
+`EXTRA_AUDIO_SOURCE`) fixed both: over the 12-clip corpus, 13 sessions delivered
+13 `onEndOfSegmentedSession`, **0 `onResults`**, and 21 non-empty
+`onSegmentResults` chunks, all `FINAL` (truncation gone: `eng-000004` 11→57
+chars, `eng-000031` 44→174, `Walking .m4a` 18→101; duplication gone:
+`eng-000016` stayed 158, not 317).
+
+Latency was **unchanged** by segmented mode (same 12 clips, one run each;
+medians):
+
+| metric | segmented | pre-segmented |
+| --- | --- | --- |
+| first partial after VAD onset | 922 ms (554–1512) | 908 ms (574–1530) |
+| final after VAD end-of-speech | 132 ms (0–395) | 117 ms (0–366) |
+| final after last real audio frame | 1638 ms (0–2398) | 1592 ms (0–2359) |
+
+The "input end → final" figure is dominated by the harness's 3.5 s trailing
+silence driving the VAD silence cap, not by the recognizer. The deltas are
+run-to-run noise; no repeats were run. Residual word-quality differences vs ML Kit
+remain and are not scored (`docs/risks-and-decisions.md` R-0247).
