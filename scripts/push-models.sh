@@ -12,6 +12,7 @@
 #   wsl -e bash -lc "cd /mnt/i/Android_Projects/VoiceChat && bash scripts/push-models.sh"
 #   bash scripts/push-models.sh                 # all artifacts
 #   bash scripts/push-models.sh smart-turn      # one artifact by id
+#   bash scripts/push-models.sh kokoro-af-heart # one voice graph by id
 #
 # Env:
 #   SERIAL=<adb serial>   target a specific device (default: the only one)
@@ -31,7 +32,7 @@ adb_run() { "$ADB_BIN" "${ADB_ARGS[@]}" "$@" </dev/null; }
 # --- catalog: id | local filename | app-private destination (relative to files/) ---
 # TAB-separated. Kept as a here-doc read through a process substitution so the
 # final line is never dropped for lack of a trailing newline.
-CATALOG=$'smart-turn\tsmart-turn-v3.2-int8.onnx\tsmart-turn/smart-turn-v3.2-int8.onnx'
+CATALOG=$'smart-turn\tsmart-turn-v3.2-int8.onnx\tsmart-turn/smart-turn-v3.2-int8.onnx\nkokoro-af-heart\tkokoro-af-heart-model_int8.onnx\tkokoro/af_heart/model_int8.onnx'
 
 want=""
 if [[ $# -gt 0 ]]; then want="$1"; fi

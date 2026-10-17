@@ -11,6 +11,17 @@
       "license": "BSD-2-Clause",
       "source": "soniqo/Smart-Turn-v3.2-ONNX@b48fdbe20772bcec1fef02f4a1a355236ef6359e",
       "runtime": "onnxruntime-android 1.29.0"
+    },
+    {
+      "id": "kokoro-af-heart",
+      "filename": "kokoro-af-heart-model_int8.onnx",
+      "destination": "kokoro/af_heart/model_int8.onnx",
+      "url": "https://huggingface.co/MithrilMan/teacher-in-the-loop/resolve/115a6c0469632a84fbcc6c8ed0ad7b1e06154b92/af_heart/model_int8.onnx",
+      "sizeBytes": 9168506,
+      "sha256": "f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7",
+      "license": "Apache-2.0",
+      "source": "MithrilMan/teacher-in-the-loop@115a6c0469632a84fbcc6c8ed0ad7b1e06154b92",
+      "runtime": "onnxruntime-android 1.29.0"
     }
   ]
 }

@@ -182,8 +182,9 @@ Fallback/unavailable behavior:
 **Deferred to M09 with an explicit constraint.** No VAD model is allow-listed at
 M00:
 
-- The project scopes ONNX Runtime narrowly to Smart Turn v3.2, so an ONNX VAD
-  (e.g. Silero) is **out of scope** unless that scope is deliberately changed.
+- The project scopes ONNX Runtime to the pinned Smart Turn v3.2 turn detector
+  and the separately approved M28 Kokoro TTS graph; an ONNX VAD (e.g. Silero)
+  remains **out of scope** unless that scope is deliberately changed.
 - No TFLite/LiteRT VAD artifact is verified (§3), so M09 must not assume one.
 - M09 must therefore select and measure a VAD/onset path from the audio itself
   and keep the bounded maximum-silence endpoint working without Smart Turn, as
@@ -248,7 +249,7 @@ another voice or a fabricated success.
 | --- | --- | --- |
 | LiteRT (formerly TFLite) | Allow-listed as the app-managed `.tflite` runtime; no model uses it yet | LiteRT v2.2.0 (2026-08-14), min SDK 23, min NDK r26a; Maven `com.google.ai.edge.litert:litert`; code samples Apache-2.0, docs CC-BY-4.0. |
 | LiteRT-LM | Allow-listed only for the optional local-LLM path (M20) | `com.google.ai.edge.litertlm:litertlm-android`; current docs describe v0.16.0; `.litertlm` bundles sourced from the Google AI Edge Hugging Face community. |
-| ONNX Runtime for Android | Allow-listed **only** for the pinned Smart Turn v3.2 artifact | `com.microsoft.onnxruntime:onnxruntime-android` 1.29.0 (2026-08-13), MIT license; Android tested at API 28, "may be compatible with API level 21+"; NNAPI EP requires Android 8.1+; add `-keep class ai.onnxruntime.** { *; }` for R8. |
+| ONNX Runtime for Android | Allow-listed only for the pinned Smart Turn v3.2 and distilled Kokoro `af_heart` graphs | `com.microsoft.onnxruntime:onnxruntime-android` 1.29.0 (2026-08-13), MIT license; Android tested at API 28, "may be compatible with API level 21+"; NNAPI EP requires Android 8.1+; add `-keep class ai.onnxruntime.** { *; }` for R8. |
 | AICore / ML Kit GenAI | Used only through the ML Kit GenAI Speech Recognition API | AICore models are system-managed; never download, copy, inspect, or delete them (ML Kit GenAI docs). |
 
 ### 3.2 Allow-listed speech-task models
@@ -272,10 +273,9 @@ before adoption:
   neighboring `speech-android` SDK (`ModelManager.kt` points at a LiteRT
   encoder/decoder/joint bundle for its Nemotron-3.5 recognizer). Identity,
   license, and size must be verified from the publisher before use.
-- A TTS model in LiteRT format. The same reference project ships ONNX TTS
-  (Kokoro) and a LiteRT TTS ("Supertonic") path, but none of those artifacts are
-  verified for this app, and adopting ONNX beyond Smart Turn would require an
-  explicit scope change.
+- A TTS model in LiteRT format. The reference project also ships a LiteRT TTS
+  ("Supertonic") path, but it is not verified or allow-listed for this app.
+  Kokoro is a separate, narrowly scoped ONNX TTS decision in §3.4.
 
 Rule carried into M20: an artifact may be executed only after its task, source,
 license, format/runtime, operators/delegates, ABI, tensor contract, and
@@ -326,6 +326,39 @@ Rationale and caveats:
   the APK. If the model is missing/corrupt, M09's VAD-only bounded endpoint
   policy applies and the UI reports semantic detection as inactive.
 - Keep Smart Turn **opt-in** (default off) until M25 evidence supports otherwise.
+
+### 3.4 Distilled Kokoro TTS artifact (M28)
+
+**Decision: allow-list the single English `af_heart` student graph** from
+`MithrilMan/teacher-in-the-loop` for on-device TTS. This is a task-specific
+addition to the ONNX Runtime allow-list, not general ONNX model support.
+
+| Property | Pinned value |
+| --- | --- |
+| Publisher / source | `MithrilMan/teacher-in-the-loop` |
+| Revision | `115a6c0469632a84fbcc6c8ed0ad7b1e06154b92` |
+| Paper | Fabio Angela, *Teacher in the Loop: Reliable Distillation of Kokoro-82M into 8M-Parameter Single-Voice Students, in English and Italian* (2026), [Zenodo](https://doi.org/10.5281/zenodo.23400040) |
+| Task / artifact | English `af_heart`, one 8.07M-parameter student graph, int8 weights, `af_heart/model_int8.onnx` |
+| Size / SHA-256 | 9,168,506 bytes / `f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7` |
+| License / runtime | Apache-2.0 / ONNX Runtime Android 1.29.0, CPU, two intra-op threads |
+| Input / output | `input_ids` int64 `[1,T]` with padding 0 at both ends and `T <= 512`; `speed` float32 `[1]`; `waveform` float32 `[1,N]` at 24 kHz |
+
+The model card describes this as a single-voice distilled Kokoro-82M student.
+The graph is fetched by `scripts/fetch-models.sh`, installed only after exact
+size + SHA-256 verification in app-private storage, and never bundled in the
+APK. The graph's excitation is random, so repeated inference is not
+bit-identical. `scripts/kokoro-onnx-contract.py` downloads the graph and pinned
+vocabulary to temporary storage, reports actual tensor metadata, and exercises
+real CPU inference. The WSL run with Python ONNX Runtime 1.31.0 verified the
+graph and vocabulary pins, symbolic input/output metadata, and real waveform
+inference; observed output shape and repeat deltas are recorded in
+`models/README.md` (R-0268). These are contract observations, not Android
+latency or quality claims; Android still pins ONNX Runtime 1.29.0.
+
+Only `af_heart` is wired. The upstream Italian students (`if_sara`, `im_nicola`)
+are not wired because their Italian phonemization path is absent. The shared
+phoneme vocabulary and Misaki English lexicon are separately fetched app assets;
+they are not part of the graph download. See `scripts/fetch-kokoro-phoneme-data.sh`.
 
 ## 4. Provider capability matrix
 
