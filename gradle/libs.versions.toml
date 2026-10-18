@@ -85,8 +85,15 @@ okhttp = "5.1.0"
 # requires kotlin-stdlib 2.3.0, below the pinned 2.4.20 toolchain.
 kotlinxSerialization = "1.10.0"
 
-# English G2P part-of-speech tagging (M28 phonemizer); stable release verified in Maven metadata.
-opennlp = "2.5.12"
+# English G2P part-of-speech tagging (M28 phonemizer).
+#
+# Pinned to 2.3.0, not the newest release: from 2.5.x `BaseModel`'s static
+# initializer references `java.io.ObjectInputFilter`, which Android's runtime
+# does not have, so the tagger (and with it the whole TTS path) dies with
+# NoClassDefFoundError on a device. Verified on the Pixel 10 (2026-10-17) and by
+# scanning the artifacts: 2.3.0 and earlier reference no Java-9-only API in the
+# model-loading path. See R-0267 and docs/decisions.md §2.5.
+opennlp = "2.3.0"
 
 # Testing.
 junit = "4.13.2"

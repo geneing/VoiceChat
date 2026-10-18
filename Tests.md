@@ -255,20 +255,33 @@ bash scripts/push-models.sh kokoro-af-heart
 | Phonemizer parity | `bash scripts/kokoro-phoneme-parity.sh` (WSL) or the JVM parity test. | The measured sentence-exact agreement with the Python reference (`docs/tts.md`), with the categories that differ. |
 | Text normalization | Run the JVM `tts.normalization` tests; speak a reply containing a date, a currency amount, a unit, an abbreviation, and an all-caps initialism. | Each form is spoken as words, not letters or digits; nothing is double-expanded (idempotence); the delivered-text prefix in the transcript still matches what was heard (`docs/text-normalization.md`). |
 
-### Kokoro latency run (Pixel 10)
+### Kokoro latency run (Pixel 10, 2026-10-17)
 
-**Not run yet.** The harness, the runner, and the host-side aggregation exist;
-the device numbers must come from a real run and are recorded here when they do,
-with the device, build, graph revision, and repeat count.
+`.\\scripts\\run-kokoro-tts-latency.ps1 -Repeats 3` on the Pixel 10 (`frankel`,
+Android 17 / API 37, build `CP3A.261005.005`, debug), graph
+`af_heart@115a6c04…`, locale `en-US`, built-in speaker, 3 attempts per text
+(n=9). Every attempt delivered. **Text start to first sound:**
 
-Two host-side components have been measured on the development machine (2026-10-17)
-and are recorded in [evaluation.md](./evaluation.md#latency-pixel-10): the real
-phonemizer costs 3-4 ms per assistant-shaped sentence on the JVM
-(`KokoroPhonemizerTimingTest`), the real text-normalization pipeline costs 1-3 ms
-per rule-heavy sentence in the same test, and one graph call per sentence costs
-111-177 ms under Python ONNX Runtime 1.31.0 on the host CPU
-(`scripts/kokoro-onnx-contract.py`). Neither is a device claim: the Pixel's CPU,
-the pinned Android runtime 1.29.0, and the audio device all differ.
+| metric | n | p50 ms | p90 ms | max ms |
+| --- | --- | --- | --- | --- |
+| tts_phonemize | 9 | 10 | 12 | 12 |
+| tts_first_pcm | 9 | 403 | 482 | 482 |
+| tts_first_audible | 9 | 654 | 1778 | 1778 |
+| tts_synthesis_complete | 9 | 404 | 483 | 483 |
+| tts_completion | 9 | 5463 | 6665 | 6665 |
+
+Warm first-audible attempts were 439-787 ms and scale with length; the 1778 ms
+`p90` is the **first** attempt of the first text, which pays the graph load and
+the first `AudioTrack` creation. One graph call per sentence is 290-483 ms, about
+**12x realtime** against the host's 31-34x (R-0267), and the phonemizer plus text
+normalization cost 10 ms of the total, so the graph dominates first sound.
+
+The first run of this harness measured 3.9-6.5 s instead, and that was a real
+bug rather than a slow device: `AudioTrack.write(WRITE_BLOCKING)` with a whole
+piece blocks until the piece has finished playing, so the sink's first-audible
+callback fired near the end of playback. `AudioTrackKokoroSink` now writes in
+buffer-sized chunks. Inter-sentence gaps, peak memory, and underrun counts were
+**not** measured (R-0271), and audible naturalness is still unjudged (R-0265).
 
 ## M09 — VAD, fast onset, and bounded endpointing
 

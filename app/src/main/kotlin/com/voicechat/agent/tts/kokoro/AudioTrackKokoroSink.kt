@@ -43,11 +43,19 @@ class AudioTrackKokoroSink :
             val initialPlaybackHead = player.playbackHeadPosition
             player.play()
 
+            // Write in buffer-sized chunks. `WRITE_BLOCKING` blocks until *all*
+            // the requested data has been written, so a single call with the whole
+            // piece would return only once the piece had finished playing — and
+            // `onAudible` (which is what the app reports as first-audible audio)
+            // would fire seconds late. A chunk that fits the track's buffer returns
+            // as soon as it is buffered, which is when playback actually starts.
+            val chunkFloats = (player.bufferSizeInFrames / CHUNKS_PER_BUFFER).coerceAtLeast(1)
             var offset = 0
             var notifiedAudible = false
             while (offset < samples.size) {
                 if (closed.get() || generation != stopGeneration.get()) return@withContext false
-                val written = player.write(samples, offset, samples.size - offset, AudioTrack.WRITE_BLOCKING)
+                val count = minOf(chunkFloats, samples.size - offset)
+                val written = player.write(samples, offset, count, AudioTrack.WRITE_BLOCKING)
                 if (written < 0) {
                     if (generation != stopGeneration.get()) return@withContext false
                     throw IOException("AudioTrack float write failed ($written)")
@@ -159,5 +167,14 @@ class AudioTrackKokoroSink :
         const val ENCODING = AudioFormat.ENCODING_PCM_FLOAT
         const val FALLBACK_BUFFER_BYTES = SAMPLE_RATE_HZ * java.lang.Float.BYTES / 2
         const val TARGET_BUFFER_BYTES = SAMPLE_RATE_HZ * java.lang.Float.BYTES / 5
+
+        /**
+         * How many writes a full buffer is divided into.
+         *
+         * Four keeps the first write short (about 50 ms of audio with the target
+         * buffer), so first-audible is reported when playback starts rather than
+         * when the piece ends, while the buffer still absorbs jitter.
+         */
+        const val CHUNKS_PER_BUFFER = 4
     }
 }
