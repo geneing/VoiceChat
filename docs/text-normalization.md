@@ -139,11 +139,29 @@ all-caps words are spelled out.
 
 The ported Misaki lexicon already expands numbers, currency and ordinals, and
 handles `%`/`&`/`+`/`@`. Normalizing first means the phonemizer usually receives
-words rather than digits, so its own expansion is exercised less often. That is
-deliberate: the rules above are documented, table-driven and tested here, and
-they are the same reading the teacher's text-normalization front end would have
-produced. It is also the reason the parity fixtures must stay on raw text — see
+words rather than digits. Measured on the host (2026-10-17), with the pass-through
+normalizer against the English pipeline:
+
+| input | pass-through | English pipeline |
+| --- | --- | --- |
+| `$1500`, `1990s`, `50%`, `NASA`, `WHO` | already correct | **same** reading — the phonemizer's own expansion agrees |
+| `1,234` | one malformed token | "one thousand two hundred thirty-four" |
+| `3/4`, `3-5`, `9:30 a.m.`, `Chapter IV`, `Henry VIII` | letters or digits | "three quarters", "three to five", "nine thirty in the morning", "Chapter four", "Henry the Eighth" |
+| `Dr. Smith`, `etc.`, `5 km`, `Main St.` | spoken as written | "Doctor Smith", "et cetera", "five kilometers", "Main Street" |
+| `user@example.com` | one run-on token | "u s e r at e x a m p l e dot c o m" |
+| `Feb. 13, 2007` | "feb thirteen two thousand seven" | "February thirteenth, two thousand seven" |
+
+So the value is concentrated where the phonemizer has no rule at all — structured
+numbers, units, abbreviations, dates, and non-prose spans — and the pipeline is
+idempotent over all of them, so a form both layers understand is not expanded
+twice. This is also why the parity fixtures must stay on raw text; see
 [Where it runs](#where-it-runs).
+
+One cosmetic artifact to know about: when an abbreviation ends a clause
+(`3 in., and`), the expansion can leave the source period next to the existing
+punctuation (`inches.,`). It has no audible effect — the phonemizer drops
+punctuation outside the vocabulary — and the source project behaves the same way,
+so the port keeps it rather than diverging.
 
 ## Planned rules
 
@@ -160,6 +178,15 @@ what this app does not need.
   editor is the intended extension point and does not exist yet.
 - **Language:** per-language rule sets behind `forLanguageTag` (currently `en`).
 
+## Cost
+
+Measured on the host JVM (2026-10-17) by
+`KokoroPhonemizerTimingTest`, on sentences built to exercise the rules rather than
+prose that every rule skips: **1-3 ms per sentence**, against 3-5 ms for the
+phonemizer's lexicon and tagger work on the same machine. It is a host
+measurement, not a device claim; the device number is recorded with the rest of
+the M28 latency run in [Tests.md](../Tests.md).
+
 ## Testing strategy
 
 - Pure host JVM JUnit tests per rule and for the combined pipeline
@@ -173,6 +200,18 @@ what this app does not need.
 - The engine seam is covered separately: the phonemizer's parity test runs with
   `TextNormalizer.Identity` (reference fidelity) and the spoken path is asserted
   with the English pipeline.
+
+## Known limits
+
+- **English only.** The pipeline is the source project's English rule set;
+  `forLanguageTag` passes any other language through untouched. Only the English
+  Kokoro voice is wired, so nothing is currently passed through in practice.
+- **User lexicon.** `LexiconNormalizer` takes a user pronunciation map; there is
+  no Settings editor for it yet. That is the intended extension point.
+- **Book prose, not chat.** The rules were written for EPUB prose. An assistant
+  reply can contain the same forms, but a false expansion on LLM output (a
+  sentence that looks like an abbreviation or a Roman numeral) is the risk to
+  watch, and it is recorded as R-0269.
 
 ## Provenance
 

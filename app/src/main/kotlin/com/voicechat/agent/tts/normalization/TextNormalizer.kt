@@ -30,7 +30,7 @@ package com.voicechat.agent.tts.normalization
  * **Extending.** Add a [TextNormalizationRule] to [English] at the intended
  * position. Keep each rule pure, deterministic, and independently unit-tested.
  */
-internal class TextNormalizer(
+class TextNormalizer internal constructor(
     private val rules: List<TextNormalizationRule>,
 ) {
     /** Applies every rule in order and returns the spoken form of [text]. */

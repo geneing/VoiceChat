@@ -151,8 +151,17 @@ and the latency harness compares durations, never waveforms.
 
 ## Kokoro phonemization
 
-The port is `app/src/main/kotlin/com/voicechat/agent/tts/kokoro/phonemes/` and
-follows two Python sources:
+The spoken string is normalized first: the rule pipeline ported from the
+neighboring EpubReader project runs per sentence, between the sentence split and
+the G2P, so dates, amounts, units, abbreviations and initialisms become words
+before Misaki sees them. That layer has its own document —
+[text-normalization.md](./text-normalization.md) — and its own decision
+([decisions.md](./decisions.md) §2.6). It rewrites only what is handed to the
+phonemizer: each chunk keeps the **original** sentence as its source text, so
+delivered-text accounting is unaffected.
+
+The port itself is `app/src/main/kotlin/com/voicechat/agent/tts/kokoro/phonemes/`
+and follows two Python sources:
 
 - the publisher's `titl/phonemes.py` — the sentence split, `split_phonemes`'s
   cut-at-the-last-fitting-space rule, the 510-phoneme bound, the padding tokens,
@@ -307,7 +316,7 @@ unrelated numbers:
 
 | metric | what it is | where |
 | --- | --- | --- |
-| `tts_phonemize` | text → phoneme chunks planned | `KokoroTtsStageHarness` |
+| `tts_phonemize` | text → phoneme chunks planned (normalization included) | `KokoroTtsStageHarness` |
 | `tts_first_pcm` | text → the first synthesized piece is in memory | `KokoroTtsStageHarness` |
 | `tts_synthesis_complete` | text → every piece is in memory | `KokoroTtsStageHarness` |
 | `tts_first_audible` | text → audio actually audible | `VoiceTtsHarness` |

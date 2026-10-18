@@ -195,11 +195,13 @@ halves of "text start to first sound" that a host can measure honestly:
 
 | component | where | measurement |
 | --- | --- | --- |
+| text normalization (real rule pipeline) | JVM, `KokoroPhonemizerTimingTest` | 1-3 ms per rule-heavy sentence |
 | phonemize (real port: lexicon + OpenNLP POS + chunker) | JVM, `KokoroPhonemizerTimingTest` | 3-4 ms per assistant-shaped sentence (median 3 ms) |
 | one graph call per sentence (real int8 graph, Python ONNX Runtime 1.31.0, CPU) | WSL, `scripts/kokoro-onnx-contract.py` | 111 ms / 140 ms / 177 ms for the three harness sentences, 31-34x realtime |
 
 So the host estimate for text start to first PCM is roughly 115-180 ms per
-sentence, dominated by the graph. The device number differs on both sides: the
+sentence, dominated by the graph; normalization and phonemization together are
+under 10 ms of it. The device number differs on both sides: the
 Pixel's CPU is slower than this host's, and the app pins ONNX Runtime 1.29.0
 rather than 1.31.0, while the audio device's start cost only appears in
 `tts_first_audible`. Treat the table as an order of magnitude, not a claim.

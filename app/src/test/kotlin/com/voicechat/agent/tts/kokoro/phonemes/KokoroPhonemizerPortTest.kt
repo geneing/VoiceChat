@@ -1,5 +1,6 @@
 package com.voicechat.agent.tts.kokoro.phonemes
 
+import com.voicechat.agent.tts.normalization.TextNormalizer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -8,6 +9,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.BeforeClass
 import org.junit.Test
@@ -92,6 +94,11 @@ class KokoroPhonemizerPortTest {
             File("src/main/assets/kokoro/us_gold.json.gz"),
             File("src/main/assets/kokoro/us_silver.json.gz"),
             File("src/main/assets/kokoro/en-pos-perceptron.bin"),
+            // The fixtures are Misaki's output for *raw* sentences, so parity is
+            // measured with the pass-through normalizer. The spoken path — which
+            // normalizes first — is asserted by `DefaultKokoroPhonemizerTest`
+            // (docs/text-normalization.md).
+            normalizer = TextNormalizer.Identity,
         )
 
     private fun vocab(): KokoroVocab = KokoroVocab.load(File("src/main/assets/kokoro/vocab.json").inputStream())
@@ -231,12 +238,23 @@ class EnglishLexiconTest {
 }
 
 class DefaultKokoroPhonemizerTest {
-    private val phonemizer =
+    private val phonemizer = spoken()
+    private val identity =
         DefaultKokoroPhonemizer.fromFiles(
             File("src/main/assets/kokoro/vocab.json"),
             File("src/main/assets/kokoro/us_gold.json.gz"),
             File("src/main/assets/kokoro/us_silver.json.gz"),
             File("src/main/assets/kokoro/en-pos-perceptron.bin"),
+            normalizer = TextNormalizer.Identity,
+        )
+
+    private fun spoken(): DefaultKokoroPhonemizer =
+        DefaultKokoroPhonemizer.fromFiles(
+            File("src/main/assets/kokoro/vocab.json"),
+            File("src/main/assets/kokoro/us_gold.json.gz"),
+            File("src/main/assets/kokoro/us_silver.json.gz"),
+            File("src/main/assets/kokoro/en-pos-perceptron.bin"),
+            normalizer = TextNormalizer.English,
         )
 
     @Test
@@ -281,6 +299,40 @@ class DefaultKokoroPhonemizerTest {
         val chunks = phonemizer.chunks(text)
         assertTrue(chunks.isNotEmpty())
         assertEquals(text, chunks.joinToString("") { it.sourceText })
+    }
+
+    @Test
+    fun theSpokenPathNormalizesBeforePhonemizing() {
+        // Where the phonemizer's own expansion already agrees with the normalizer
+        // ("$1500" is currency in both), the spoken form is exactly the phonemes of
+        // the words the rule emits. Comparing against the pass-through normalizer
+        // keeps this honest without pinning the rule's exact wording.
+        assertEquals(
+            identity.phonemes("one thousand five hundred dollars"),
+            phonemizer.phonemes("\$1500"),
+        )
+
+        // Where it does not agree, normalization is what makes the utterance
+        // readable: the phonemizer reads a comma-grouped integer as one malformed
+        // token, while the normalizer spells it out. The assertion is on the
+        // pipeline contract (the output is the phonemes of the normalized words),
+        // not on the rule's wording, which the ported rule tests cover.
+        val normalized = TextNormalizer.English.normalize("1,234")
+        assertEquals(identity.phonemes(normalized), phonemizer.phonemes("1,234"))
+        assertNotEquals(identity.phonemes("1,234"), phonemizer.phonemes("1,234"))
+    }
+
+    @Test
+    fun normalizationNeverChangesTheTextAccountedForAsDelivered() {
+        val text = "Dr. Smith paid \$1500 on Feb. 13, 2007. He left at 9:30 a.m."
+        val chunks = phonemizer.chunks(text)
+
+        assertTrue("expected more than one sentence chunk", chunks.size > 1)
+        // The delivered-text ledger concatenates these spans, so an expansion
+        // ("$1500" -> "one thousand five hundred dollars") must never leak into
+        // it: an interruption has to report a true prefix of what was said.
+        assertEquals(text, chunks.joinToString(separator = "") { it.sourceText })
+        assertTrue(chunks.none { it.sourceText.contains("thousand") })
     }
 }
 

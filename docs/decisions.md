@@ -289,6 +289,43 @@ Sources checked 2026-10-17:
   fallback, inline IPA overrides, the three VBP corrections) informed this one —
   https://github.com/alexsobolev/kokoro-tts-kotlin/blob/main/README.md
 
+### 2.6 Speech text normalization (M28)
+
+**Decision: rewrite text into its spoken form with the rule pipeline ported from
+the neighboring EpubReader project, applied per sentence immediately before
+phonemization.**
+
+The distilled voice was trained on prose read by the teacher, so it expects
+dates, amounts, units and abbreviations as words. Neither the ported Misaki G2P
+nor the platform engine handles all of those (measured: see
+[text-normalization.md](./text-normalization.md) §Relationship), and a
+mis-read abbreviation is the kind of defect a user hears immediately.
+
+| Decision | Value | Basis |
+| --- | --- | --- |
+| Source | EpubReader's `playback/normalization` package (same author's neighboring project) | A tested, documented pipeline with 22 rules and ~30 KB of table-driven tests, already written for on-device speech. |
+| Scope | the source's full English rule set, unmodified | Faithfulness is the point: every rule and every test is ported, so the port's behavior is the source's behavior. The only API change is Readium's `Language` → a BCP-47 tag (`forLanguageTag`). |
+| Placement | per sentence, inside `DefaultKokoroPhonemizer`, between the sentence split and the G2P | The chunker keeps the original sentence as the chunk's source text, so normalization cannot change what the app accounts for as delivered (an interruption still reports a true prefix of the reply). |
+| Default | English pipeline on the spoken path; `TextNormalizer.Identity` for reference work | The phonemizer's parity fixtures are Misaki's output for **raw** sentences, so fidelity to the reference is asserted with the pass-through and the spoken path is asserted separately. |
+| Dependencies | none | The source package imports only `org.readium.r2.shared.util.Language`, which the port drops. Pure Kotlin/JDK, host-JVM testable. |
+
+Cost is 1-3 ms per sentence on the host JVM, measured by
+`KokoroPhonemizerTimingTest`; the device figure belongs with the rest of the M28
+latency run.
+
+Deliberate limits, recorded rather than hidden:
+
+- **Book prose, not chat.** The rules were written for EPUB text. The risk is a
+  false expansion on assistant output (R-0269), not a missing one.
+- **English only.** Non-English tags pass through untouched; only the English
+  voice is wired.
+- **Cosmetic punctuation.** An abbreviation that ends a clause can leave the
+  source period beside existing punctuation (`inches.,`). Inaudible — the
+  phonemizer drops punctuation it does not know — and the source behaves the
+  same way, so the port does not diverge.
+- **No user lexicon yet.** `LexiconNormalizer` takes a pronunciation map; the
+  Settings editor for it is the intended extension point and does not exist.
+
 ## 3. Model runtime and model allow-list
 
 ### 3.1 Runtime allow-list

@@ -8,6 +8,7 @@ import com.voicechat.agent.diagnostics.MonotonicClock
 import com.voicechat.agent.diagnostics.SystemMonotonicClock
 import com.voicechat.agent.tts.EngineTextToSpeech
 import com.voicechat.agent.tts.kokoro.phonemes.DefaultKokoroPhonemizer
+import com.voicechat.agent.tts.normalization.TextNormalizer
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import java.io.File
@@ -77,7 +78,16 @@ object KokoroTts {
                 null
             }
         val stateReader = modelStateReader ?: KokoroModelStateReader(requireNotNull(modelStore)::state)
-        val resolvedPhonemizer = phonemizer ?: DefaultKokoroPhonemizer.fromAssets(appContext.assets)
+        val resolvedPhonemizer =
+            phonemizer
+                ?: DefaultKokoroPhonemizer.fromAssets(
+                    appContext.assets,
+                    // The spoken path normalizes: dates, currency, units,
+                    // abbreviations and initialisms become words before the G2P
+                    // sees them (docs/text-normalization.md). The gate keeps a
+                    // language this app cannot phonemize untouched.
+                    TextNormalizer.forLanguageTag(locale.toLanguageTag()),
+                )
         val resolvedSink = audioSink ?: AudioTrackKokoroSink()
         val loadGraph = synthesizerLoader ?: OnnxKokoroEngine::load
         val engine =
