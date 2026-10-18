@@ -253,6 +253,7 @@ bash scripts/push-models.sh kokoro-af-heart
 | Offline | After install, run in airplane mode. | Playback still works: the graph, the vocabulary, and the lexicon are all on-device. |
 | Airplane/empty path | Speak empty text and punctuation-only text. | No playback, no `Started`, a normal completion — not a failure and not fabricated audio. |
 | Phonemizer parity | `bash scripts/kokoro-phoneme-parity.sh` (WSL) or the JVM parity test. | The measured sentence-exact agreement with the Python reference (`docs/tts.md`), with the categories that differ. |
+| Text normalization | Run the JVM `tts.normalization` tests; speak a reply containing a date, a currency amount, a unit, an abbreviation, and an all-caps initialism. | Each form is spoken as words, not letters or digits; nothing is double-expanded (idempotence); the delivered-text prefix in the transcript still matches what was heard (`docs/text-normalization.md`). |
 
 ### Kokoro latency run (Pixel 10)
 

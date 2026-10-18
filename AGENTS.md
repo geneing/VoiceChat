@@ -206,6 +206,8 @@ app/                        the only application module
     tts/kokoro/             distilled Kokoro student: pinned artifacts, app-private model
                             store, ONNX engine, chunked playback, and the TTS factory (M28)
     tts/kokoro/phonemes/    Kotlin port of titl/phonemes.py + Misaki 0.9.4 English G2P (M28)
+    tts/normalization/      rule-based text normalization for speech, ported from the
+                            neighboring EpubReader project (M28)
     turn/                   Smart Turn v3.2 ONNX detector + model lifecycle (M10)
     ui/                     Compose conversation + settings UI (M06/M22)
     vad/                    measured-audio VAD/onset + endpointing (M09)
@@ -226,6 +228,7 @@ app/                        the only application module
     turn/                   JVM Smart Turn config/adapter/lifecycle/endpoint tests
     vad/, voice/            JVM VAD and voice-session tests
     tts/kokoro/             JVM Kokoro store/engine/phonemizer tests (M28)
+    tts/normalization/      JVM text-normalization rule and pipeline tests (M28)
     fake/                   deterministic contract fakes
   src/test/resources/kokoro/          frozen Python-generated phoneme fixtures (M28)
   src/test/resources/replay/                 frozen replay fixture bytes
