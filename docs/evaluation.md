@@ -181,30 +181,44 @@ first-audio time still needs the manual route/echo checks (R-0254).
 | --- | --- | --- | --- | --- | --- |
 | *(speech end → first text / barge-in rows: no run recorded — R-0043, R-0047)* | | | | | |
 
-**Kokoro TTS stage** — `scripts/run-kokoro-tts-latency.ps1 -Repeats 3`, 2026-10-17,
+**Kokoro TTS stage** — `scripts/run-kokoro-tts-latency.ps1 -Repeats 5`, 2026-10-17,
 Pixel 10 (`frankel`), Android 17 / API 37, build `CP3A.261005.005`, graph
-`af_heart@115a6c04…`, locale `en-US`, built-in speaker, 3 attempts per text
-(n=9). Every attempt delivered. Both halves come from one pass, measured from the
+`af_heart@115a6c04…`, locale `en-US`, built-in speaker, 5 attempts per text
+(n=15). Every attempt delivered. Both halves come from one pass, measured from the
 start of the text:
 
 | metric | n | p50 ms | p90 ms | p95 ms | max ms |
 | --- | --- | --- | --- | --- | --- |
-| tts_phonemize | 9 | 10.0 | 12.0 | 12.0 | 12.0 |
-| tts_first_pcm | 9 | 403.0 | 482.0 | 482.0 | 482.0 |
-| tts_first_audible | 9 | 654.0 | 1778.0 | 1778.0 | 1778.0 |
-| tts_synthesis_complete | 9 | 404.0 | 483.0 | 483.0 | 483.0 |
-| tts_completion | 9 | 5463.0 | 6665.0 | 6665.0 | 6665.0 |
+| tts_phonemize | 15 | 10.0 | 11.0 | 121.0 | 121.0 |
+| tts_first_pcm | 15 | 395.0 | 480.0 | 516.0 | 516.0 |
+| tts_first_audible | 15 | 650.0 | 781.0 | 1838.0 | 1838.0 |
+| tts_synthesis_complete | 15 | 396.0 | 481.0 | 517.0 | 517.0 |
+| tts_completion | 15 | 5491.0 | 6631.0 | 6661.0 | 6661.0 |
 
 Read it as a breakdown: text normalization plus phonemization is 10 ms, one graph
-call is ~400 ms, and the audio device adds ~250 ms to first sound. Warm
-first-audible attempts were 439-787 ms and scale with sentence length; the
-1778 ms p90 is the cold first attempt (graph load plus the first `AudioTrack`).
-One graph call per sentence runs at about **12x realtime** on the Pixel against
+call is ~400 ms and scales with sentence length, and the audio device adds
+~250 ms to first sound. Warm first-audible attempts were 439-787 ms; the p95
+outlier is the cold first attempt (graph load plus the first `AudioTrack`). One
+graph call per sentence runs at about **12x realtime** on the Pixel against
 31-34x on the host, so the device is roughly 2.5x slower per second of audio.
 `tts_completion` is full playback time, not a start delay. This is one device,
 one voice, one moment, on one route; inter-sentence gaps, peak memory, and
 underruns were not measured (R-0271), and nobody has judged how it sounds
 (R-0265).
+
+**Retained platform engine, for comparison** — same device, route and texts,
+`scripts/run-tts-harness-device.ps1 -Repeats 5`, voice `en-us-x-tpf-local`:
+
+| metric | distilled Kokoro | platform `android.speech.tts` |
+| --- | --- | --- |
+| tts_first_audible p50 | 650 ms | 26 ms |
+| tts_completion p50 | 5491 ms | 4984 ms |
+
+The platform engine reaches audible audio ~25x sooner because a formant
+synthesizer has nothing to infer, while the distilled voice pays one graph call
+before its first sample. Total playback time is comparable, so the difference is
+start latency only, and it is the graph call that a smaller synthesis chunk would
+cut (R-0272).
 
 **Kokoro TTS stage, host components** — measured 2026-10-17 on the development
 machine, kept because they attribute the device number to its parts:

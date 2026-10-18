@@ -257,24 +257,42 @@ bash scripts/push-models.sh kokoro-af-heart
 
 ### Kokoro latency run (Pixel 10, 2026-10-17)
 
-`.\\scripts\\run-kokoro-tts-latency.ps1 -Repeats 3` on the Pixel 10 (`frankel`,
+`.\\scripts\\run-kokoro-tts-latency.ps1 -Repeats 5` on the Pixel 10 (`frankel`,
 Android 17 / API 37, build `CP3A.261005.005`, debug), graph
-`af_heart@115a6c04…`, locale `en-US`, built-in speaker, 3 attempts per text
-(n=9). Every attempt delivered. **Text start to first sound:**
+`af_heart@115a6c04…`, locale `en-US`, built-in speaker, 5 attempts per text
+(n=15). Every attempt delivered. **Text start to first sound:**
 
-| metric | n | p50 ms | p90 ms | max ms |
-| --- | --- | --- | --- | --- |
-| tts_phonemize | 9 | 10 | 12 | 12 |
-| tts_first_pcm | 9 | 403 | 482 | 482 |
-| tts_first_audible | 9 | 654 | 1778 | 1778 |
-| tts_synthesis_complete | 9 | 404 | 483 | 483 |
-| tts_completion | 9 | 5463 | 6665 | 6665 |
+| metric | n | p50 ms | p90 ms | p95 ms | max ms |
+| --- | --- | --- | --- | --- | --- |
+| tts_phonemize | 15 | 10 | 11 | 121 | 121 |
+| tts_first_pcm | 15 | 395 | 480 | 516 | 516 |
+| tts_first_audible | 15 | 650 | 781 | 1838 | 1838 |
+| tts_synthesis_complete | 15 | 396 | 481 | 517 | 517 |
+| tts_completion | 15 | 5491 | 6631 | 6661 | 6661 |
 
-Warm first-audible attempts were 439-787 ms and scale with length; the 1778 ms
-`p90` is the **first** attempt of the first text, which pays the graph load and
-the first `AudioTrack` creation. One graph call per sentence is 290-483 ms, about
-**12x realtime** against the host's 31-34x (R-0267), and the phonemizer plus text
-normalization cost 10 ms of the total, so the graph dominates first sound.
+Per text (median of 5): first audible 627 / 622 / 739 ms and full playback
+4164 / 5491 / 6629 ms for 51 / 76 / 94 characters. The `p95` outliers are the
+first attempt after install, which pays the graph load and the first
+`AudioTrack` creation; warm attempts stay inside 439-787 ms.
+
+Read as a breakdown: text normalization plus phonemization is 10 ms, one graph
+call is ~400 ms and scales with sentence length, and the audio device adds
+~250 ms to first sound. One graph call per sentence runs at about **12x
+realtime** on the Pixel against 31-34x on the host (R-0267).
+
+**Comparison with the retained platform engine**, same device and route, same
+texts, 5 attempts each (`scripts/run-tts-harness-device.ps1`, voice
+`en-us-x-tpf-local`):
+
+| metric | distilled Kokoro | platform `android.speech.tts` |
+| --- | --- | --- |
+| tts_first_audible p50 | 650 ms | 26 ms |
+| tts_completion p50 | 5491 ms | 4984 ms |
+
+The platform engine starts audio ~25x sooner because it is a formant synthesizer
+with nothing to infer, while the distilled voice pays one graph call before the
+first sample. That is the price of the neural voice, not a defect: the number to
+watch is the graph call, and it is what sub-sentence chunking would cut (R-0272).
 
 The first run of this harness measured 3.9-6.5 s instead, and that was a real
 bug rather than a slow device: `AudioTrack.write(WRITE_BLOCKING)` with a whole
@@ -282,6 +300,27 @@ piece blocks until the piece has finished playing, so the sink's first-audible
 callback fired near the end of playback. `AudioTrackKokoroSink` now writes in
 buffer-sized chunks. Inter-sentence gaps, peak memory, and underrun counts were
 **not** measured (R-0271), and audible naturalness is still unjudged (R-0265).
+
+### Full on-device suite run (Pixel 10, 2026-10-17)
+
+`.\\gradlew.bat :app:connectedDebugAndroidTest` ran 40 cases on the Pixel 10:
+**31 passed**, and the 9 the task reported as failures were all *not run* rather
+than wrong:
+
+- 8 are the documented opt-in probes, which `Assume` their way out unless their
+  instrumentation argument is passed (`-e echoProbe=1`, `micLoopbackRunId`,
+  `llmHarnessRunId`, `kokoroHarnessRunId`, `ttsHarnessRunId`, `sttReplayRunId`
+  twice, `sttHarnessRunId`);
+- 1 is `eval.litert.LiteRtParakeetFeatureParityInstrumentedTest`, which asserts
+  that the LiteRT ASR fixtures are staged (`scripts/stage-litert-asr-inputs.sh`)
+  and they are not on this machine.
+
+`AndroidJUnitRunner` reports an `Assume` violation as a failure in the AGP result
+XML, so `connectedDebugAndroidTest` is **red by default** on this project even
+when nothing is wrong. The probes themselves were run individually with their
+arguments (see the M28 rows above); the rest of the suite — capture, VAD,
+credentials, settings, orchestration, Smart Turn, ML Kit STT, platform TTS,
+AICore, and the LiteRT spike classes whose inputs are staged — passed.
 
 ## M09 — VAD, fast onset, and bounded endpointing
 

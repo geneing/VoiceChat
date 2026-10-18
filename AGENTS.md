@@ -25,7 +25,7 @@ TTS engine with a speech-engine/voice picker and a most-natural-voice default
 Misaki 0.9.4's English G2P, rule-based text normalization ported from the
 neighboring EpubReader project, graph downloaded app-privately and verified; the
 platform engine stays in the tree but is no longer wired. It has run on the
-Pixel 10: text start to first sound p50 654 ms, ~12x realtime per sentence, all
+Pixel 10: text start to first sound p50 650 ms, ~12x realtime per sentence, all
 attempts delivered; inter-sentence gaps, memory, and audible naturalness are not
 measured), a
 provider-independent LLM streaming contract with a deterministic fake

@@ -9,12 +9,14 @@ and [validation.md](./validation.md).
 > Status: M28 wires the pinned `af_heart` student through the existing TTS
 > contract. Kokoro engine behavior is tested on the JVM with fake state, graph,
 > and sink; no graph/native runtime or audio device is needed for those tests.
-> The engine has been run on the Pixel 10 (2026-10-17): **text start to first
-> sound p50 654 ms** (warm 439-787 ms, cold 1778 ms), one graph call per sentence
-> at ~12x realtime, all attempts delivered. The M11 platform figures later in
-> this document do not measure Kokoro. Inter-sentence gaps, peak memory, and
-> underruns were not measured (R-0271); audible naturalness is unjudged (R-0265);
-> only the built-in speaker was used.
+> The engine has been run on the Pixel 10 (2026-10-17, 5 attempts per text):
+> **text start to first sound p50 650 ms** (p90 781 ms; warm 439-787 ms, cold
+> 1838 ms), one graph call per sentence at ~12x realtime, all attempts delivered.
+> The retained platform engine reaches audible audio in 26 ms p50 on the same
+> device and texts, so first sound is graph-bound (R-0272). The M11 platform
+> figures later in this document do not measure Kokoro. Inter-sentence gaps, peak
+> memory, and underruns were not measured (R-0271); audible naturalness is
+> unjudged (R-0265); only the built-in speaker was used.
 
 ## Engine and decision
 
@@ -354,13 +356,15 @@ proof — are **not** run; no claim is made for them.
 
 ## Known limitations and open risks
 
-- **Kokoro device validation (R-0264 resolved; R-0271 open).** The engine ran on
-  the Pixel 10 on 2026-10-17: text start to first sound p50 654 ms, one graph call
+- **Kokoro device validation (R-0264 resolved; R-0271, R-0272 open).** The engine ran on
+  the Pixel 10 on 2026-10-17: text start to first sound p50 650 ms, one graph call
   per sentence 290-483 ms (~12x realtime), every attempt delivered. What the run
   did **not** cover: inter-sentence gaps (the engine synthesizes piece N+1 only
   after piece N finished playing, so a multi-sentence reply can insert one graph
   call at each boundary), peak memory, `AudioTrack` underrun counts, and any route
-  other than the built-in speaker.
+  other than the built-in speaker. First sound is graph-bound: the retained
+  platform engine starts audio in 26 ms p50 on the same device, and chunk
+  granularity is the lever that has not been swept.
 - **Android runtime pin (R-0267 resolved).** OpenNLP 2.5.x cannot run on Android
   — `BaseModel`'s static initializer needs `java.io.ObjectInputFilter` — so the
   catalog pins 2.3.0, which the device run proved loads and tags. Re-check that
