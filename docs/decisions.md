@@ -212,16 +212,38 @@ M00:
 
 **Decision: the app's speech path is the distilled "Teacher in the Loop"
 Kokoro-82M student (`MithrilMan/teacher-in-the-loop`), run on-device through ONNX
-Runtime. The platform `android.speech.tts` engine stays in the tree
-(`AndroidTtsEngine`, §2.2) but is no longer what the voice loop speaks through.**
+Runtime, **bundled in the APK** and the app's default engine; the platform
+`android.speech.tts` engine stays in the tree (`AndroidTtsEngine`, §2.2) and is
+selectable in Settings as a visible alternative, never a silent fallback.**
 
 The platform engine was the M00 choice because no on-device neural TTS was
 available: there is no AICore/ML Kit TTS API. A published, permissively licensed,
-small enough to ship-as-a-download neural voice changes that: the student is
-8.07M parameters, 9.17 MB as an int8 graph, one graph per voice from phoneme ids
-to 24 kHz audio, and the publisher measures it at 24-26x real time on one CPU
-thread (model card, accessed 2026-10-17). That is the first option that can both
-sound like a modern TTS voice and stay on-device, which `AGENTS.md` requires.
+small enough to ship neural voice changes that: the student is 8.07M parameters,
+9.17 MB as an int8 graph, one graph per voice from phoneme ids to 24 kHz audio,
+and the publisher measures it at 24-26x real time on one CPU thread (model card,
+accessed 2026-10-17). That is the first option that can both sound like a modern
+TTS voice and stay on-device, which `AGENTS.md` requires.
+
+**Bundled, not downloaded.** The graph ships in the APK
+(`assets/kokoro/af_heart/model_int8.onnx`, 8.95 MB raw / ~7.7 MB packaged) because
+it is the default voice: a voice agent whose core promise is on-device speech
+should speak on a fresh install, offline, with no install step. It is fetched by
+`scripts/fetch-models.sh` into the gitignored `models/kokoro-assets/` asset source
+directory that `app/build.gradle.kts` registers, so the bytes are still the
+verified pinned artifact and the repository does not carry a model file
+(`AGENTS.md`). A build without that directory — a clean checkout — still builds and
+reports the voice as installable, which is the app-private path below. An
+app-private install **overrides** the bundled graph, which is how a newer or
+different graph can be installed without rebuilding.
+
+**Engine selection.** `TtsEngineChoice` (`DISTILLED_KOKORO` default, `PLATFORM`)
+is a persisted, capability-checked setting: the picker offers an engine only when
+the snapshot says it is available (the graph is present; the platform reports an
+embedded voice for the locale), and validation falls back to the default with an
+invalid-selection notice rather than letting the app claim an engine it cannot
+use. The two engines' own settings stay separate: `ttsVoiceId` names a Kokoro
+voice and `ttsEngineId` names a platform speech API, and neither is handed to the
+other engine.
 
 Verified facts, all from the pinned revision
 `MithrilMan/teacher-in-the-loop@115a6c0469632a84fbcc6c8ed0ad7b1e06154b92`
@@ -230,7 +252,7 @@ Verified facts, all from the pinned revision
 | Decision | Value | Basis |
 | --- | --- | --- |
 | Engine | ONNX Runtime (Android) CPU execution provider | Same runtime the M10 Smart Turn artifact is allow-listed on (§3.1); the graph is exported for it and the publisher ships an int8 CPU variant. |
-| Artifact | `af_heart/model_int8.onnx`, 9,168,506 bytes, SHA-256 `f3daed94…` | `SHA256SUMS` of the pinned revision; downloaded app-privately, never packaged (R-0262). |
+| Artifact | `af_heart/model_int8.onnx`, 9,168,506 bytes, SHA-256 `f3daed94…` | `SHA256SUMS` of the pinned revision; **bundled in the APK** as `assets/kokoro/af_heart/model_int8.onnx`, with a verified app-private install as an override (§2.4). |
 | Graph contract | `input_ids` int64 `[1,T]`, `speed` float32 `[1]` → `waveform` float32 `[1,N]` at 24 kHz | Model card "ONNX contract"; re-measured by `scripts/kokoro-onnx-contract.py`. |
 | Phonemes | Kokoro-82M's `vocab.json` (1,147 bytes, SHA-256 `c985ed32…`), padding id `0` at both ends, at most 510 phonemes per call | Publisher's `titl/phonemes.py`; the text side has 512 positions, two of which are padding. |
 | English G2P | A Kotlin port of Misaki 0.9.4's English pipeline, with Misaki's US gold+silver lexicon | This is what Kokoro's own pipeline and the publisher's `Phonemizer("en")` use; the port is `tts/kokoro/phonemes/`. |
@@ -430,9 +452,12 @@ addition to the ONNX Runtime allow-list, not general ONNX model support.
 | Input / output | `input_ids` int64 `[1,T]` with padding 0 at both ends and `T <= 512`; `speed` float32 `[1]`; `waveform` float32 `[1,N]` at 24 kHz |
 
 The model card describes this as a single-voice distilled Kokoro-82M student.
-The graph is fetched by `scripts/fetch-models.sh`, installed only after exact
-size + SHA-256 verification in app-private storage, and never bundled in the
-APK. The graph's excitation is random, so repeated inference is not
+The graph is fetched by `scripts/fetch-models.sh` into the gitignored
+`models/kokoro-assets/` asset source directory, so it is **built into the APK**
+as `assets/kokoro/af_heart/model_int8.onnx` and verified by exact size + SHA-256
+when it is read (§2.4). An app-private install, verified and installed atomically
+by the settings action or `scripts/push-models.sh`, overrides the bundled copy.
+The graph's excitation is random, so repeated inference is not
 bit-identical. `scripts/kokoro-onnx-contract.py` downloads the graph and pinned
 vocabulary to temporary storage, reports actual tensor metadata, and exercises
 real CPU inference. The WSL run with Python ONNX Runtime 1.31.0 verified the

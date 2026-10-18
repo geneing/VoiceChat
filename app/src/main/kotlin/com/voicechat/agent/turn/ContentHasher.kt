@@ -14,7 +14,24 @@ import java.security.MessageDigest
 fun interface ContentHasher {
     /** @return the lowercase hex SHA-256 of [file], or `null` if it cannot be read. */
     fun sha256(file: File): String?
+
+    /**
+     * @return the lowercase hex SHA-256 of [bytes], or `null` when [bytes] is empty.
+     *
+     * A bundled model lives in the APK's assets rather than in a file, so the
+     * same identity check has to work on bytes. The default implementation is
+     * the streaming one, so an implementation only has to provide the file form.
+     */
+    fun sha256(bytes: ByteArray): String? {
+        if (bytes.isEmpty()) return null
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(bytes)
+        return digest.digest().toHex()
+    }
 }
+
+/** Lowercase hex, the form every pinned checksum in this project is written in. */
+internal fun ByteArray.toHex(): String = joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xFF) }
 
 /** [ContentHasher] backed by `MessageDigest`, streamed so memory stays bounded. */
 object Sha256ContentHasher : ContentHasher {
@@ -31,7 +48,7 @@ object Sha256ContentHasher : ContentHasher {
                     digest.update(buffer, 0, read)
                 }
             }
-            digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xFF) }
+            digest.digest().toHex()
         } catch (failure: IOException) {
             null
         }

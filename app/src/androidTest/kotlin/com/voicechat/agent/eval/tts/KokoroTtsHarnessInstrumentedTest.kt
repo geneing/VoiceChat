@@ -9,6 +9,7 @@ import com.voicechat.agent.log.AndroidLogging
 import com.voicechat.agent.log.LogLevel
 import com.voicechat.agent.settings.PreferencesSettingsStore
 import com.voicechat.agent.tts.kokoro.KokoroArtifact
+import com.voicechat.agent.tts.kokoro.KokoroGraphSource
 import com.voicechat.agent.tts.kokoro.KokoroModelState
 import com.voicechat.agent.tts.kokoro.KokoroModelStore
 import com.voicechat.agent.tts.kokoro.KokoroTts
@@ -87,16 +88,26 @@ class KokoroTtsHarnessInstrumentedTest {
             val locale = settings.locale()
             val voice = KokoroArtifact.voice(settings.ttsVoiceId.orEmpty()) ?: KokoroArtifact.DEFAULT
 
-            val store = KokoroModelStore(File(context.filesDir, KokoroArtifact.DIRECTORY_NAME))
+            val store =
+                KokoroModelStore(
+                    File(context.filesDir, KokoroArtifact.DIRECTORY_NAME),
+                    // The graph is bundled, so the harness works on a fresh install;
+                    // an app-private install still overrides it.
+                    openAsset = { path -> context.assets.open(path) },
+                )
             val state = store.state(voice)
             assumeTrue(
-                "the ${voice.id} graph is not installed; fetch and push it before measuring (state=$state)",
+                "the ${voice.id} graph is neither bundled nor installed; fetch it with scripts/fetch-models.sh (state=$state)",
                 state is KokoroModelState.Installed,
             )
             val installed = state as KokoroModelState.Installed
 
             val phonemizer = DefaultKokoroPhonemizer.fromAssets(context.assets)
-            val synthesizer = OnnxKokoroEngine.load(installed.file)
+            val synthesizer =
+                when (val source = installed.source) {
+                    is KokoroGraphSource.Installed -> OnnxKokoroEngine.load(source.file)
+                    is KokoroGraphSource.Bundled -> OnnxKokoroEngine.load(store.read(source))
+                }
             val conditions =
                 MeasurementConditions(
                     device = "${Build.MODEL} (Android ${Build.VERSION.RELEASE}, API ${Build.VERSION.SDK_INT})",
@@ -106,6 +117,7 @@ class KokoroTtsHarnessInstrumentedTest {
                     model = "${voice.id} (${KokoroArtifact.UPSTREAM_REPOSITORY}@${KokoroArtifact.UPSTREAM_REVISION})",
                     notes =
                         "speed=${KokoroArtifact.DEFAULT_SPEED}, sampleRate=${KokoroArtifact.SAMPLE_RATE_HZ}, " +
+                            "graphSource=${installed.source::class.simpleName}, " +
                             "selectedVoice=${settings.ttsVoiceId ?: voice.id}, fingerprint=${Build.FINGERPRINT}",
                 )
             val runDir = File(File(context.cacheDir, STAGE_DIRECTORY), runId)

@@ -77,11 +77,14 @@ The artifact is an 8.07M-parameter, int8-weight, one-voice distillation of
 Kokoro-82M, pinned at revision `115a6c0469632a84fbcc6c8ed0ad7b1e06154b92`, under
 Apache-2.0. Its 9,168,506 bytes and SHA-256
 `f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7` are recorded in
-`KokoroArtifact` and `models/manifest.json`. The app downloads it into
-app-private storage, verifies the pinned identity before loading the native
-session, and never packages it in the APK. A missing, corrupt, or unloadable
-graph is reported as a typed state instead of falling back to platform TTS. See
-[decision record §3.4](./decisions.md).
+`KokoroArtifact` and `models/manifest.json`. It is **bundled in the APK** as
+`assets/kokoro/af_heart/model_int8.onnx` — the app's default voice, so a fresh
+install speaks with no download — with a verified app-private install overriding
+it when one is present. The pinned identity is checked before the native session
+is opened, whichever source the bytes come from. A missing, corrupt, or unloadable
+graph is reported as a typed state instead of falling back to platform TTS, and
+the platform engine is only used when the user selects it
+(`TtsEngineChoice`). See [decision record §2.4](./decisions.md) and §3.4.
 
 The graph contract is `input_ids` int64 `[1, T]` with padding id 0 at each end
 and at most 510 phonemes, `speed` float32 `[1]`, and `waveform` float32 `[1, N]`
@@ -91,8 +94,9 @@ closed by the engine, not ONNX Runtime's shared environment. The
 `scripts/kokoro-onnx-contract.py` check verifies the actual graph metadata and
 real CPU inference. Its random excitation means repeated outputs for identical
 inputs are not expected to be bit-identical. Piece-wise synthesis and playback
-preserve first-audible timing and delivered-text accounting; device load, memory,
-latency, and audible quality remain unmeasured (R-0264, R-0267).
+preserve first-audible timing and delivered-text accounting; text start to first
+sound measured 650 ms p50 on the Pixel 10 (R-0264), with inter-sentence gaps,
+memory, and underruns still open (R-0271).
 
 Only `af_heart` is wired. The upstream Italian students (`if_sara`, `im_nicola`)
 are not selectable because the app does not include their required Italian

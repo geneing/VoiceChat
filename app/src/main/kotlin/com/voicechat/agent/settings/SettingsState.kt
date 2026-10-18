@@ -95,8 +95,12 @@ data class SttDownloadProgress(
         get() = if (bytesToDownload > 0L) (bytesDownloaded.toDouble() / bytesToDownload.toDouble()).toFloat().coerceIn(0f, 1f) else null
 }
 
-/** TTS section: installed on-device voices; engine fields remain for M11 settings compatibility. */
+/** TTS section: the app engine choice plus the installed on-device voices. */
 data class TtsSettingsSection(
+    /** The app engines (distilled Kokoro, platform) with their real availability. */
+    val engineChoices: List<SelectableOption<TtsEngineChoice>> = emptyList(),
+    /** The engine the app will actually speak through, after validation. */
+    val selectedEngine: TtsEngineChoice = TtsEngineChoice.DEFAULT,
     /** Legacy platform TTS engines; the active Kokoro path reports none. */
     val engines: List<SelectableOption<TtsEngineInfo>> = emptyList(),
     /** Legacy platform engine id; `null` for Kokoro. */
@@ -109,6 +113,13 @@ data class TtsSettingsSection(
 
     /** True when more than one speech engine is installed, so the choice is real. */
     val hasEngineChoices: Boolean get() = engines.size > 1
+
+    /**
+     * The reason the selected engine cannot be used, or `null` when it can. The
+     * picker shows it so an unavailable choice is explained rather than hidden.
+     */
+    val selectedEngineUnavailableReason: String?
+        get() = (engineChoices.firstOrNull { it.value == selectedEngine }?.state as? OptionState.Unavailable)?.reason
 
     /**
      * The engine row shown as the current selection: the explicitly chosen engine,
@@ -236,6 +247,9 @@ interface SettingsActions {
 
     /** Selects an installed on-device voice. */
     fun onSelectTtsVoice(voiceId: String)
+
+    /** Selects the app engine that speaks replies (distilled Kokoro or platform). */
+    fun onSelectTtsEngineChoice(choice: TtsEngineChoice)
 
     /** Legacy platform TTS selection; the Kokoro settings surface does not expose this action. */
     fun onSelectTtsEngine(engineId: String)

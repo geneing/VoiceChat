@@ -59,10 +59,14 @@ graph, not a generic Kokoro runtime or model bundle. See
 [`docs/model-runtime.md`](../docs/model-runtime.md) and
 [`docs/decisions.md`](../docs/decisions.md) §3.4 for the selection and contract.
 
-The graph is fetched to `models/` only for development/device staging. The app
-downloads it into app-private storage, verifies its exact size and SHA-256,
-installs it atomically, and can remove it; the graph is never packaged in the
-APK. The phoneme vocabulary and Misaki English lexicon are separate app assets
+The graph is fetched by `scripts/fetch-models.sh` into the gitignored
+`models/kokoro-assets/` asset source directory, which the app module registers as
+an asset source, so it is **built into the APK** as
+`assets/kokoro/af_heart/model_int8.onnx` (8.95 MB raw, ~7.7 MB packaged) — that
+is how the app speaks on a fresh install with no download. The bytes are verified
+by exact size and SHA-256 when read, and an app-private install (the settings
+action, or `scripts/push-models.sh`) overrides the bundled copy and can be
+removed. The phoneme vocabulary and Misaki English lexicon are separate app assets
 fetched by `scripts/fetch-kokoro-phoneme-data.sh`. Italian student graphs
 (`if_sara`, `im_nicola`) are published upstream but are not wired: this app has
 no Italian phonemizer.

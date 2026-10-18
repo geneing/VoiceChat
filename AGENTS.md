@@ -23,8 +23,11 @@ TTS engine with a speech-engine/voice picker and a most-natural-voice default
 "Teacher in the Loop" Kokoro-82M student on ONNX Runtime — English voice
 `af_heart`, Kotlin phonemizer ported from the publisher's `titl/phonemes.py` and
 Misaki 0.9.4's English G2P, rule-based text normalization ported from the
-neighboring EpubReader project, graph downloaded app-privately and verified; the
-platform engine stays in the tree but is no longer wired. It has run on the
+neighboring EpubReader project, and the pinned graph bundled in the APK (fetched
+into a gitignored asset source directory, so the repository carries no model
+file) with a verified app-private install overriding it. The platform engine
+stays in the tree and is selectable in Settings; the distilled engine is the
+default. It has run on the
 Pixel 10: text start to first sound p50 650 ms, ~12x realtime per sentence, all
 attempts delivered; inter-sentence gaps, memory, and audible naturalness are not
 measured), a
@@ -244,6 +247,8 @@ app/                        the only application module
 scripts/                    fetch/push helpers (pinned models, Kokoro phoneme data,
                             debug credentials) + harness runners
 models/                     downloaded model artifacts (gitignored; README/manifest tracked)
+                            models/kokoro-assets/ is registered as an asset source, so the
+                            fetched Kokoro graph is built into the APK
 secrets/                    local secrets for debug runs (gitignored; README tracked)
 test_data/                  speech sound files usable to simulate STT
                             input in tests

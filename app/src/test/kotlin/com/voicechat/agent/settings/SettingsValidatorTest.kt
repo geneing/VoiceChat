@@ -56,14 +56,22 @@ class SettingsValidatorTest {
         engines: List<TtsEngineInfo> = listOf(systemEngine()),
         smartTurn: SmartTurnState = SmartTurnState.Available,
         kokoro: KokoroState = KokoroState.Installed,
+        engineChoices: List<TtsEngineOption> = bothEnginesAvailable(),
     ) = SettingsCapabilities(
         sttAvailability = stt,
         ttsVoices = voices,
         ttsEngines = engines,
         smartTurn = smartTurn,
         kokoro = kokoro,
+        ttsEngineChoices = engineChoices,
         models = models,
     )
+
+    private fun bothEnginesAvailable(): List<TtsEngineOption> =
+        listOf(
+            TtsEngineOption(TtsEngineChoice.DISTILLED_KOKORO, available = true),
+            TtsEngineOption(TtsEngineChoice.PLATFORM, available = true),
+        )
 
     @Test
     fun aFullyValidSelectionIsPreserved() {
@@ -217,6 +225,54 @@ class SettingsValidatorTest {
 
         assertEquals(listOf(InvalidSelection.TTS_ENGINE), validation.invalid)
         assertNull(validation.settings.ttsEngineId)
+    }
+
+    @Test
+    fun theDefaultEngineChoiceIsKeptWhenItIsAvailable() {
+        val settings = VoiceSettings(ttsEngine = TtsEngineChoice.DISTILLED_KOKORO)
+
+        val validation = SettingsValidator.validate(settings, registry, capabilities(), modelCatalog)
+
+        assertTrue(validation.isValid)
+        assertEquals(TtsEngineChoice.DISTILLED_KOKORO, validation.settings.ttsEngine)
+    }
+
+    @Test
+    fun thePlatformEngineChoiceIsKeptWhenTheDeviceReportsAnEmbeddedVoice() {
+        val settings = VoiceSettings(ttsEngine = TtsEngineChoice.PLATFORM)
+
+        val validation = SettingsValidator.validate(settings, registry, capabilities(), modelCatalog)
+
+        assertTrue(validation.isValid)
+        assertEquals(TtsEngineChoice.PLATFORM, validation.settings.ttsEngine)
+    }
+
+    @Test
+    fun anUnavailableEngineChoiceFallsBackToTheDefaultAndIsReported() {
+        // No embedded platform voice on this device, so the platform engine cannot
+        // be honoured: the app must say so and speak with the distilled engine
+        // rather than pretending to use the one the user picked.
+        val settings = VoiceSettings(ttsEngine = TtsEngineChoice.PLATFORM)
+        val choices =
+            listOf(
+                TtsEngineOption(TtsEngineChoice.DISTILLED_KOKORO, available = true),
+                TtsEngineOption(TtsEngineChoice.PLATFORM, available = false, reason = "No embedded system voice."),
+            )
+
+        val validation = SettingsValidator.validate(settings, registry, capabilities(engineChoices = choices), modelCatalog)
+
+        assertEquals(listOf(InvalidSelection.TTS_ENGINE_CHOICE), validation.invalid)
+        assertEquals(TtsEngineChoice.DEFAULT, validation.settings.ttsEngine)
+    }
+
+    @Test
+    fun anEngineChoiceIsKeptWhileTheSnapshotIsUnread() {
+        val settings = VoiceSettings(ttsEngine = TtsEngineChoice.PLATFORM)
+        val unread = capabilities().copy(isUnread = true)
+
+        val validation = SettingsValidator.validate(settings, registry, unread, modelCatalog)
+
+        assertEquals(TtsEngineChoice.PLATFORM, validation.settings.ttsEngine)
     }
 
     @Test

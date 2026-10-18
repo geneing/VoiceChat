@@ -48,6 +48,7 @@ import com.voicechat.agent.settings.SmartTurnSettingsSection
 import com.voicechat.agent.settings.SmartTurnState
 import com.voicechat.agent.settings.SttDownloadProgress
 import com.voicechat.agent.settings.SttSettingsSection
+import com.voicechat.agent.settings.TtsEngineChoice
 import com.voicechat.agent.settings.TtsSettingsSection
 import com.voicechat.agent.settings.UnimplementedProviderAuthFlow
 import com.voicechat.agent.settings.VoiceSettings
@@ -239,6 +240,10 @@ class SettingsViewModel(
 
     override fun onSelectTtsVoice(voiceId: String) {
         update(current.copy(ttsVoiceId = voiceId))
+    }
+
+    override fun onSelectTtsEngineChoice(choice: TtsEngineChoice) {
+        update(current.copy(ttsEngine = choice))
     }
 
     override fun onSelectTtsEngine(engineId: String) {
@@ -602,6 +607,8 @@ class SettingsViewModel(
 
         val tts =
             TtsSettingsSection(
+                engineChoices = SettingsOptions.ttsEngineChoices(capabilities.ttsEngineChoices, current.ttsEngine),
+                selectedEngine = current.ttsEngine,
                 engines = SettingsOptions.ttsEngines(capabilities.ttsEngines, current.ttsEngineId),
                 selectedEngineId = current.ttsEngineId,
                 options = SettingsOptions.ttsVoices(capabilities.ttsVoices, current.ttsVoiceId),

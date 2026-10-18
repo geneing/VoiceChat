@@ -49,6 +49,13 @@ data class VoiceSettings(
      * engines the device reports; never a fabricated id.
      */
     val ttsEngineId: String? = null,
+    /**
+     * Which app engine speaks replies (M28). Defaults to the distilled Kokoro
+     * student, whose graph ships in the APK; the retained platform engine is the
+     * visible alternative (`docs/decisions.md` §2.4). Validation clears a choice
+     * the device cannot honour, so this is never a promise the app breaks.
+     */
+    val ttsEngine: TtsEngineChoice = TtsEngineChoice.DEFAULT,
     /** Smart Turn is on by default when the detector is installed (decisions §3.3). */
     val smartTurnEnabled: Boolean = true,
     /**

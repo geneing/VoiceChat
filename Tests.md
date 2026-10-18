@@ -239,14 +239,18 @@ deterministic clock). Nothing here loads ONNX Runtime or the 9 MB graph.
 Install the artifact before a device run:
 
 ```bash
-# WSL, repo root
+# WSL, repo root — the graph is built into the APK, so a device run needs no push
 bash scripts/fetch-models.sh kokoro-af-heart
-bash scripts/push-models.sh kokoro-af-heart
 ```
+
+`scripts/push-models.sh kokoro-af-heart` is only needed to install a graph
+app-privately on a build that has no bundled copy (a clean checkout), or to
+override the bundled one.
 
 | Check | How | Record |
 | --- | --- | --- |
-| Graph integrity | `scripts/push-models.sh kokoro-af-heart`, then open Settings. | The section reports the voice installed; a truncated/wrong-hash file reports `DownloadRequired`/corrupt with a reason instead of speaking. |
+| Graph integrity | Open Settings with a fresh install (nothing pushed), then speak. | The section reports the voice installed and the session speaks from the bundled asset (`graphSource=Bundled` in the harness record). A truncated or wrong-hash graph reports `DownloadRequired`/corrupt with a reason instead of speaking. |
+| Engine selection | Settings → Engine: choose each engine and speak a reply. | The picker lists both; the distilled engine is selected by default; choosing the platform engine speaks through it and hides the Kokoro model/voice rows; an engine this device cannot honour is listed with its reason and validation falls back to the default. |
 | Time to first sound | `.\\scripts\\run-kokoro-tts-latency.ps1` (opt-in). | `synthesis-record.md`: text start → phonemes → first PCM → all PCM per text, plus the realtime factor; `audible-record.md`: `tts_first_audible` through real playback. The gap between the two is the audio device's start cost. |
 | Interruption | Start a long reply, then speak over it. | Playback stops promptly; the interrupted utterance reports only the text that was actually audible (the ported chunker's source-text spans), never more. |
 | Route | Play through the built-in speaker, a wired headset, and Bluetooth. | Audio is audible on the expected route; the recorded `AUDIO_ROUTE` kind changes; no crash on a route change. |

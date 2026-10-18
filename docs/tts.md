@@ -89,12 +89,37 @@ via `toDelivery(...) -> AssistantDelivery`.
 
 ## Kokoro model discovery and policy
 
+The pinned graph **ships in the APK** (`assets/kokoro/af_heart/model_int8.onnx`),
+so the app speaks on a fresh install with no download; an app-private install
+overrides it when one is present, which is how a graph can be replaced without
+rebuilding. `KokoroModelStore` resolves whichever exists, verifies exact size and
+SHA-256 before the bytes reach ONNX Runtime, and caches the bundled check because
+an asset cannot change while the process lives.
+
 `KokoroTtsEngine.initialize()` resolves the persisted voice id or pinned default,
 asks `KokoroModelStore` for its integrity-checked state, and loads the native
 session only for `Installed`. `installedVoices()` contains only voices whose
 store state was `Installed`; `installedEngines()` is empty because Kokoro is one
 fixed speech API, not a platform engine picker. Settings offers the user-approved
 model install and reports the missing/corrupt state directly.
+
+## Engine selection (M28)
+
+The app has two engines and the user picks one. `TtsEngineChoice` is persisted
+(`tts.engineChoice`) and defaults to the distilled engine:
+
+| choice | engine | availability is read from |
+| --- | --- | --- |
+| `DISTILLED_KOKORO` (default) | the pinned graph through ONNX Runtime | the bundled asset or an app-private install, verified |
+| `PLATFORM` | the retained `android.speech.tts` engine | the platform's embedded voice list for the locale |
+
+The picker lists both and marks an engine this device cannot honour with its
+reason; `SettingsValidator` falls back to the default with an
+invalid-selection notice rather than letting the app claim an engine it cannot
+use. The two engines' settings stay separate: `ttsVoiceId` names a Kokoro voice
+and is passed only to the distilled engine, while `ttsEngineId` names a platform
+speech API and is passed only to the platform engine — handing either to the
+other would make it refuse to speak.
 
 The synthesis pipeline maps text to graph-sized phoneme chunks and synthesizes
 only the next piece before playback. The 24 kHz mono float output is streamed to

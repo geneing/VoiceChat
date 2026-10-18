@@ -137,6 +137,22 @@ if (litertTokenizerJniDir.isDirectory) {
         .add(litertTokenizerJniDir.absolutePath)
 }
 
+// The pinned distilled-Kokoro TTS graph is built INTO the app: it is the voice the
+// app speaks with by default, and shipping it means a fresh install speaks with
+// no download and no network (docs/decisions.md §2.4). scripts/fetch-models.sh
+// writes it to models/kokoro-assets/kokoro/af_heart/model_int8.onnx, and the
+// directory is registered as an asset source so it packages as
+// assets/kokoro/af_heart/model_int8.onnx. Like the other local artifacts it is
+// gitignored: a clean checkout still builds, and that build falls back to the
+// verified app-private download the settings action installs (R-0262).
+val kokoroAssetsDir = rootProject.file("models/kokoro-assets")
+if (kokoroAssetsDir.isDirectory) {
+    android.sourceSets
+        .getByName("main")
+        .assets.directories
+        .add(kokoroAssetsDir.absolutePath)
+}
+
 // Export the Room schema so migrations have a checked-in contract to review.
 // The app has a single schema version today (see docs/persistence.md); the
 // schema-export test asserts the JSON is produced and matches version 1.

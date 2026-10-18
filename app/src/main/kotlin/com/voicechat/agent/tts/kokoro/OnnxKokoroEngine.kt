@@ -95,6 +95,9 @@ class OnnxKokoroEngine private constructor(
         /**
          * Loads the graph at [modelFile]. Callers must verify it with KokoroModelStore
          * first and invoke this blocking load away from the main thread.
+         *
+         * The file form is preferred when a file exists: ONNX Runtime can map it
+         * instead of holding a second copy of the weights in the heap.
          */
         fun load(modelFile: File): OnnxKokoroEngine {
             val environment = OrtEnvironment.getEnvironment()
@@ -102,6 +105,25 @@ class OnnxKokoroEngine private constructor(
             try {
                 options.setIntraOpNumThreads(INTRA_OP_THREADS)
                 val session = environment.createSession(modelFile.absolutePath, options)
+                return OnnxKokoroEngine(environment, session)
+            } finally {
+                options.close()
+            }
+        }
+
+        /**
+         * Loads the graph from [modelBytes], the form a **bundled** asset takes:
+         * an APK asset has no filesystem path, so the bytes are handed to ONNX
+         * Runtime directly. Callers must verify them with KokoroModelStore first
+         * and invoke this blocking load away from the main thread.
+         */
+        fun load(modelBytes: ByteArray): OnnxKokoroEngine {
+            require(modelBytes.isNotEmpty()) { "Kokoro graph bytes must not be empty" }
+            val environment = OrtEnvironment.getEnvironment()
+            val options = OrtSession.SessionOptions()
+            try {
+                options.setIntraOpNumThreads(INTRA_OP_THREADS)
+                val session = environment.createSession(modelBytes, options)
                 return OnnxKokoroEngine(environment, session)
             } finally {
                 options.close()

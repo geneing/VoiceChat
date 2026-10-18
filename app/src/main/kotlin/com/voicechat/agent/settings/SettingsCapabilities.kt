@@ -58,6 +58,12 @@ data class SettingsCapabilities(
     val ttsEngines: List<TtsEngineInfo> = emptyList(),
     /** Integrity-checked availability of the selected distilled Kokoro voice. */
     val kokoro: KokoroState = KokoroState.Unavailable("Kokoro model availability has not been checked."),
+    /**
+     * The app engines this device can actually speak through, with the reason an
+     * unavailable one is not offered. Read from the installed model and the
+     * platform's voice list, never assumed (`TtsEngineChoice`).
+     */
+    val ttsEngineChoices: List<TtsEngineOption> = emptyList(),
     /** Smart Turn availability; default unavailable until M10. */
     val smartTurn: SmartTurnState =
         SmartTurnState.Unavailable("Smart Turn is not installed; the bounded VAD endpoint is used."),

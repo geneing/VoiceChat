@@ -45,11 +45,16 @@ class FakeSmartTurnInferenceEngine(
 class FakeContentHasher(
     var sha256: String? = null,
 ) : ContentHasher {
-    /** Number of [sha256] calls. */
+    /** Number of hash calls, across both the file and the byte form. */
     var hashCount: Int = 0
         private set
 
     override fun sha256(file: File): String? {
+        hashCount++
+        return sha256
+    }
+
+    override fun sha256(bytes: ByteArray): String? {
         hashCount++
         return sha256
     }

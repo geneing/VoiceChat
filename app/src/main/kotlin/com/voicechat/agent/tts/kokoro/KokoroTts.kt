@@ -60,7 +60,7 @@ object KokoroTts {
         dispatcher: CoroutineDispatcher = Dispatchers.IO,
         modelStateReader: KokoroModelStateReader? = null,
         phonemizer: KokoroPhonemizer? = null,
-        synthesizerLoader: ((File) -> KokoroSynthesizer)? = null,
+        synthesizerLoader: (suspend (KokoroGraphSource) -> KokoroSynthesizer)? = null,
         audioSink: KokoroAudioSink? = null,
         modelStoreFactory: ((File) -> KokoroModelStore)? = null,
     ): TextToSpeech {
@@ -73,7 +73,14 @@ object KokoroTts {
         val modelStore =
             if (modelStateReader == null) {
                 val root = File(appContext.filesDir, KokoroArtifact.DIRECTORY_NAME)
-                (modelStoreFactory ?: { directory -> KokoroModelStore(directory) }).invoke(root)
+                // The asset opener is what lets a bundled graph be used at all: it
+                // is the only Android touch point in the store.
+                val assets = appContext.assets
+                (
+                    modelStoreFactory ?: { directory ->
+                        KokoroModelStore(directory, openAsset = { path -> assets.open(path) })
+                    }
+                ).invoke(root)
             } else {
                 null
             }
@@ -89,7 +96,21 @@ object KokoroTts {
                     TextNormalizer.forLanguageTag(locale.toLanguageTag()),
                 )
         val resolvedSink = audioSink ?: AudioTrackKokoroSink()
-        val loadGraph = synthesizerLoader ?: OnnxKokoroEngine::load
+        val store = modelStore
+        val loadGraph: suspend (KokoroGraphSource) -> KokoroSynthesizer =
+            synthesizerLoader ?: { source ->
+                when (source) {
+                    // An installed graph keeps its path so ONNX Runtime can map it.
+                    is KokoroGraphSource.Installed -> {
+                        OnnxKokoroEngine.load(source.file)
+                    }
+
+                    // A bundled asset has no path; hand its bytes to the runtime.
+                    is KokoroGraphSource.Bundled -> {
+                        OnnxKokoroEngine.load(requireNotNull(store).read(source))
+                    }
+                }
+            }
         val engine =
             KokoroTtsEngine(
                 locale = locale,

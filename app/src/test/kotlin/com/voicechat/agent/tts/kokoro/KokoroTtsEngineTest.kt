@@ -265,7 +265,11 @@ class KokoroTtsEngineTest {
         }
 
     private fun installedState(): KokoroModelState.Installed =
-        KokoroModelState.Installed(File("fake-verified-model.onnx"), KokoroArtifact.DEFAULT, KokoroArtifact.DEFAULT.sizeBytes)
+        KokoroModelState.Installed(
+            KokoroGraphSource.Installed(File("fake-verified-model.onnx")),
+            KokoroArtifact.DEFAULT,
+            KokoroArtifact.DEFAULT.sizeBytes,
+        )
 
     private fun corruptState(): KokoroModelState.Corrupt =
         KokoroModelState.Corrupt(

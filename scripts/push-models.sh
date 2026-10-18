@@ -31,8 +31,10 @@ adb_run() { "$ADB_BIN" "${ADB_ARGS[@]}" "$@" </dev/null; }
 
 # --- catalog: id | local filename | app-private destination (relative to files/) ---
 # TAB-separated. Kept as a here-doc read through a process substitution so the
-# final line is never dropped for lack of a trailing newline.
-CATALOG=$'smart-turn\tsmart-turn-v3.2-int8.onnx\tsmart-turn/smart-turn-v3.2-int8.onnx\nkokoro-af-heart\tkokoro-af-heart-model_int8.onnx\tkokoro/af_heart/model_int8.onnx'
+# final line is never dropped for lack of a trailing newline. The Kokoro local
+# path is the same file that is bundled as an asset (models/kokoro-assets/...),
+# so one download serves both the bundled and the pushed path.
+CATALOG=$'smart-turn\tsmart-turn-v3.2-int8.onnx\tsmart-turn/smart-turn-v3.2-int8.onnx\nkokoro-af-heart\tkokoro-assets/kokoro/af_heart/model_int8.onnx\tkokoro/af_heart/model_int8.onnx'
 
 want=""
 if [[ $# -gt 0 ]]; then want="$1"; fi

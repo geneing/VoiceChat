@@ -24,6 +24,7 @@ class KokoroArtifactPinningTest {
         val expectedSource = "${KokoroArtifact.UPSTREAM_REPOSITORY}@$revision"
 
         assertEquals("af_heart/model_int8.onnx", artifact.upstreamPath)
+        assertEquals("kokoro/af_heart/model_int8.onnx", KokoroArtifact.bundledAssetPath(artifact))
         assertEquals(9_168_506L, artifact.sizeBytes)
         assertEquals(
             "f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7",
@@ -40,7 +41,9 @@ class KokoroArtifactPinningTest {
         assertEquals(
             listOf(
                 "kokoro-af-heart",
-                "kokoro-af-heart-model_int8.onnx",
+                // The fetched file IS the bundled asset: it lands under the asset
+                // source directory the app module registers.
+                "kokoro-assets/kokoro/af_heart/model_int8.onnx",
                 expectedUrl,
                 "9168506",
                 artifact.sha256,
@@ -59,8 +62,9 @@ class KokoroArtifactPinningTest {
         assertTrue("manifest must contain the Kokoro artifact", manifestArtifact != null)
         val block = requireNotNull(manifestArtifact)
         listOf(
-            "\"filename\": \"kokoro-af-heart-model_int8.onnx\"",
+            "\"filename\": \"kokoro-assets/kokoro/af_heart/model_int8.onnx\"",
             "\"destination\": \"kokoro/af_heart/model_int8.onnx\"",
+            "\"bundledInApk\": true",
             "\"url\": \"$expectedUrl\"",
             "\"sizeBytes\": 9168506",
             "\"sha256\": \"${artifact.sha256}\"",
@@ -73,8 +77,16 @@ class KokoroArtifactPinningTest {
         assertTrue(
             "push catalog must install the voice graph under its per-voice path",
             push.contains(
-                "kokoro-af-heart\\tkokoro-af-heart-model_int8.onnx\\tkokoro/af_heart/model_int8.onnx",
+                "kokoro-af-heart\\tkokoro-assets/kokoro/af_heart/model_int8.onnx\\tkokoro/af_heart/model_int8.onnx",
             ),
+        )
+
+        // The build is what actually puts the graph in the APK, so the wiring is
+        // part of the pin: without it the fetched file is never packaged.
+        val build = File(root, "app/build.gradle.kts").readText()
+        assertTrue(
+            "the app module must register the fetched graph directory as an asset source",
+            build.contains("models/kokoro-assets") && build.contains("assets.directories.add"),
         )
     }
 

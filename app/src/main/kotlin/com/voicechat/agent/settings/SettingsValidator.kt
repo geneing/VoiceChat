@@ -33,6 +33,9 @@ enum class InvalidSelection {
 
     /** The TTS engine (speech API) is not one the device reports. */
     TTS_ENGINE,
+
+    /** The chosen app TTS engine (distilled Kokoro or platform) is unavailable. */
+    TTS_ENGINE_CHOICE,
 }
 
 /**
@@ -160,6 +163,17 @@ object SettingsValidator {
             if (!installed) {
                 result = result.copy(ttsEngineId = null)
                 invalid += InvalidSelection.TTS_ENGINE
+            }
+        }
+        // The app engine choice (M28). It is dropped only when the snapshot says
+        // the chosen engine is unavailable, and then it falls back to the
+        // documented default so the app still speaks; the user sees the change
+        // through the invalid-selection notice and the picker's own state.
+        if (!capabilities.isUnread && capabilities.ttsEngineChoices.isNotEmpty()) {
+            val chosen = capabilities.ttsEngineChoices.firstOrNull { it.choice == result.ttsEngine }
+            if (chosen == null || !chosen.available) {
+                result = result.copy(ttsEngine = TtsEngineChoice.DEFAULT)
+                invalid += InvalidSelection.TTS_ENGINE_CHOICE
             }
         }
 

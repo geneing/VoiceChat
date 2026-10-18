@@ -27,6 +27,7 @@ private object SettingsKeys {
     val LLM_LOCAL_MODEL = stringPreferencesKey("llm.localModel")
     val TTS_VOICE = stringPreferencesKey("tts.voice")
     val TTS_ENGINE = stringPreferencesKey("tts.engine")
+    val TTS_ENGINE_CHOICE = stringPreferencesKey("tts.engineChoice")
     val SMART_TURN = booleanPreferencesKey("smartTurn.enabled")
 }
 
@@ -56,6 +57,7 @@ class PreferencesSettingsStore(
             preferences.putOrRemove(SettingsKeys.LLM_LOCAL_MODEL, settings.llmLocalModelId?.value)
             preferences.putOrRemove(SettingsKeys.TTS_VOICE, settings.ttsVoiceId)
             preferences.putOrRemove(SettingsKeys.TTS_ENGINE, settings.ttsEngineId)
+            preferences[SettingsKeys.TTS_ENGINE_CHOICE] = settings.ttsEngine.id
             preferences[SettingsKeys.SMART_TURN] = settings.smartTurnEnabled
         }
     }
@@ -109,6 +111,10 @@ private fun Preferences.toStoredVoiceSettings(): VoiceSettings =
         llmServerUrl = this[SettingsKeys.LLM_SERVER_URL],
         ttsVoiceId = this[SettingsKeys.TTS_VOICE],
         ttsEngineId = this[SettingsKeys.TTS_ENGINE],
+        // An unknown or absent id is the documented default rather than a null:
+        // the app always speaks through some engine, and validation clears a
+        // choice the device cannot honour.
+        ttsEngine = TtsEngineChoice.fromId(this[SettingsKeys.TTS_ENGINE_CHOICE]) ?: TtsEngineChoice.DEFAULT,
         smartTurnEnabled = this[SettingsKeys.SMART_TURN] ?: true,
         llmLocalModelId = this[SettingsKeys.LLM_LOCAL_MODEL]?.let(::ModelId),
     )

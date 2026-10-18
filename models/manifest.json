@@ -1,10 +1,11 @@
 {
-  "$comment": "Machine-readable mirror of pinned artifacts. Keep checksums and revisions aligned with scripts/fetch-models.sh. Candidate evaluation artifacts remain gitignored and are not bundled in release APKs. The sherpa-onnx Parakeet TDT-CTC 110M candidate lane was retired with the app-managed Parakeet engine (M27); the LiteRT ASR benchmark lane uses its own litert-asr inputs (scripts/stage-litert-asr-inputs.sh).",
+  "$comment": "Machine-readable mirror of pinned artifacts. Keep checksums and revisions aligned with scripts/fetch-models.sh. Candidate evaluation artifacts remain gitignored and are not bundled in release APKs. The sherpa-onnx Parakeet TDT-CTC 110M candidate lane was retired with the app-managed Parakeet engine (M27); the LiteRT ASR benchmark lane uses its own litert-asr inputs (scripts/stage-litert-asr-inputs.sh). The Kokoro TTS graph is the one model that IS built into the app: its file lands under the models/kokoro-assets asset source directory and app/build.gradle.kts registers that directory as an asset source, so it is packaged as assets/kokoro/af_heart/model_int8.onnx (docs/decisions.md §2.4).",
   "artifacts": [
     {
       "id": "smart-turn",
       "filename": "smart-turn-v3.2-int8.onnx",
       "destination": "smart-turn/smart-turn-v3.2-int8.onnx",
+      "bundledInApk": false,
       "url": "https://huggingface.co/soniqo/Smart-Turn-v3.2-ONNX/resolve/b48fdbe20772bcec1fef02f4a1a355236ef6359e/smart-turn-v3.2-int8.onnx",
       "sizeBytes": 11123370,
       "sha256": "00cd131551e8d1e9011f31345edb632a26116dd83e159782c4ddff610718ea31",
@@ -14,8 +15,9 @@
     },
     {
       "id": "kokoro-af-heart",
-      "filename": "kokoro-af-heart-model_int8.onnx",
+      "filename": "kokoro-assets/kokoro/af_heart/model_int8.onnx",
       "destination": "kokoro/af_heart/model_int8.onnx",
+      "bundledInApk": true,
       "url": "https://huggingface.co/MithrilMan/teacher-in-the-loop/resolve/115a6c0469632a84fbcc6c8ed0ad7b1e06154b92/af_heart/model_int8.onnx",
       "sizeBytes": 9168506,
       "sha256": "f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7",

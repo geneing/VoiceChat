@@ -27,7 +27,29 @@ sealed interface KokoroIntegrity {
 }
 
 /**
- * The resolved state of one app-private Kokoro voice graph.
+ * Where a verified voice graph's bytes live.
+ *
+ * The pinned graph is normally **bundled** in the APK's assets, because it is the
+ * app's default voice and a fresh install must be able to speak with no download
+ * (`docs/decisions.md` §2.4). A build without the bundled asset — a clean
+ * checkout, before `scripts/fetch-models.sh` — reports the voice as installable
+ * and uses an **installed** graph in app-private storage instead, which is what
+ * the settings action and `scripts/push-models.sh` produce.
+ */
+sealed interface KokoroGraphSource {
+    /** The graph packaged at [assetPath] inside the APK. */
+    data class Bundled(
+        val assetPath: String,
+    ) : KokoroGraphSource
+
+    /** A verified graph in app-private storage, which overrides the bundled one. */
+    data class Installed(
+        val file: File,
+    ) : KokoroGraphSource
+}
+
+/**
+ * The resolved state of one Kokoro voice graph.
  *
  * [Corrupt] carries a typed [VoiceAgentError] and a safe [reason]; a missing or
  * corrupt graph is a first-class result, never a success-shaped fallback, so the
@@ -35,17 +57,17 @@ sealed interface KokoroIntegrity {
  * (`docs/decisions.md` §2.2).
  */
 sealed interface KokoroModelState {
-    /** The verified graph file, ready to load. */
+    /** The verified graph, ready to load, and where it came from. */
     data class Installed(
-        val file: File,
+        val source: KokoroGraphSource,
         val voice: KokoroVoiceArtifact,
         val sizeBytes: Long,
     ) : KokoroModelState
 
-    /** No graph file is present for this voice; it can be downloaded app-privately. */
+    /** No graph is present for this voice; the app can install one app-privately. */
     data object Missing : KokoroModelState
 
-    /** A graph file is present but fails the integrity check. */
+    /** A graph is present but fails the integrity check. */
     data class Corrupt(
         val reason: String,
         val error: VoiceAgentError,

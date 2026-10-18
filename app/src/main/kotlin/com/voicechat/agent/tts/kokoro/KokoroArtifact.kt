@@ -92,6 +92,21 @@ object KokoroArtifact {
     /** The pinned vocabulary's SHA-256 (`SHA256SUMS` of the model repository). */
     const val VOCAB_SHA256: String = "c985ed32b1007e0d52c8e86dd3f54e3ec62b74d14212bb5718348f7e9d734acf"
 
+    /**
+     * The app asset the pinned English graph is packaged at, when this build
+     * bundles it.
+     *
+     * The graph is the app's default voice, so it ships in the APK rather than
+     * waiting for a download (`docs/decisions.md` §2.4). A build without the
+     * asset (a clean checkout, before `scripts/fetch-models.sh`) still runs and
+     * reports the voice as installable, which is what the settings action and
+     * `scripts/push-models.sh` are for.
+     */
+    const val BUNDLED_ASSET_DIRECTORY: String = "kokoro"
+
+    /** The asset path for one voice's graph: `kokoro/<voice>/<file>`. */
+    fun bundledAssetPath(voice: KokoroVoiceArtifact): String = "$BUNDLED_ASSET_DIRECTORY/${voice.id}/${voice.fileName}"
+
     /** The repository revision every artifact below is pinned to. */
     const val UPSTREAM_REVISION: String = "115a6c0469632a84fbcc6c8ed0ad7b1e06154b92"
 

@@ -201,6 +201,30 @@ object SettingsOptions {
             )
         }
 
+    /**
+     * The app engines this device can speak through, for the picker. An engine
+     * whose capability snapshot says it is unavailable is still listed, with the
+     * reason, so the choice is explained rather than hidden — but it is not
+     * selectable (`OptionState.Unavailable`).
+     */
+    fun ttsEngineChoices(
+        choices: List<TtsEngineOption>,
+        selected: TtsEngineChoice,
+    ): List<SelectableOption<TtsEngineChoice>> =
+        choices.map { option ->
+            SelectableOption(
+                value = option.choice,
+                label = option.choice.label,
+                state =
+                    if (option.available) {
+                        OptionState.Available
+                    } else {
+                        OptionState.Unavailable(option.reason ?: "Unavailable on this device")
+                    },
+                selected = option.choice == selected,
+            )
+        }
+
     /** Maps a model availability to its option state; a download is actionable but not selected. */
     private fun ModelAvailability.toOptionState(): OptionState =
         when (this) {

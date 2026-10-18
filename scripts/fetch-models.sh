@@ -31,9 +31,16 @@ FORCE="${FORCE:-0}"
 # Smart Turn is semantic end-of-turn detection; Kokoro is the pinned English
 # TTS graph. No local LLM (.litertlm) is shipped (docs/decisions.md,
 # docs/local-models.md). Platform `SpeechRecognizer` STT needs no app artifact.
+#
+# The Kokoro filename is the path the *asset* takes inside the APK
+# (`kokoro/af_heart/model_int8.onnx`) under the asset source directory
+# `models/kokoro-assets`, which `app/build.gradle.kts` registers when it exists.
+# That is how the pinned graph is built into the app; the same file is what
+# `scripts/push-models.sh` copies into app-private storage for a build that has
+# no bundled copy (docs/decisions.md §2.4).
 CATALOG=$(cat <<'EOF'
 smart-turn	smart-turn-v3.2-int8.onnx	https://huggingface.co/soniqo/Smart-Turn-v3.2-ONNX/resolve/b48fdbe20772bcec1fef02f4a1a355236ef6359e/smart-turn-v3.2-int8.onnx	11123370	00cd131551e8d1e9011f31345edb632a26116dd83e159782c4ddff610718ea31	BSD-2-Clause	soniqo/Smart-Turn-v3.2-ONNX@b48fdbe20772bcec1fef02f4a1a355236ef6359e
-kokoro-af-heart	kokoro-af-heart-model_int8.onnx	https://huggingface.co/MithrilMan/teacher-in-the-loop/resolve/115a6c0469632a84fbcc6c8ed0ad7b1e06154b92/af_heart/model_int8.onnx	9168506	f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7	Apache-2.0	MithrilMan/teacher-in-the-loop@115a6c0469632a84fbcc6c8ed0ad7b1e06154b92
+kokoro-af-heart	kokoro-assets/kokoro/af_heart/model_int8.onnx	https://huggingface.co/MithrilMan/teacher-in-the-loop/resolve/115a6c0469632a84fbcc6c8ed0ad7b1e06154b92/af_heart/model_int8.onnx	9168506	f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7	Apache-2.0	MithrilMan/teacher-in-the-loop@115a6c0469632a84fbcc6c8ed0ad7b1e06154b92
 EOF
 )
 
@@ -77,6 +84,10 @@ while IFS=$'\t' read -r id filename url size sha license source; do
 
   dest="$MODELS_DIR/$filename"
   printf '== %s\n   %s (%s bytes, %s)\n' "$id" "$filename" "$size" "$license"
+
+  # A catalog entry may name a nested path (the bundled asset layout), so create
+  # its parent before curl writes to it.
+  mkdir -p "$(dirname "$dest")"
 
   if [[ "$FORCE" != "1" ]] && verify "$dest" "$size" "$sha" 2>/dev/null; then
     echo "   already verified; skipping (FORCE=1 to re-download)"

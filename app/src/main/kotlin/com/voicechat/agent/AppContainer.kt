@@ -18,6 +18,8 @@ import com.voicechat.agent.providers.opencodego.OpenCodeGoModelCatalog
 import com.voicechat.agent.remote.OkHttpStreamingEngine
 import com.voicechat.agent.remote.RemoteTransport
 import com.voicechat.agent.settings.PreferencesSettingsStore
+import com.voicechat.agent.settings.TtsEngineChoice
+import com.voicechat.agent.tts.OnDeviceTts
 import com.voicechat.agent.tts.kokoro.KokoroTts
 import com.voicechat.agent.turn.OnnxSmartTurnEngine
 import com.voicechat.agent.turn.SmartTurnDetectorFactory
@@ -169,13 +171,34 @@ class AppContainer(
             return null
         }
         val speech =
-            KokoroTts.create(
-                context = appContext,
-                locale = settings.locale(),
-                voiceId = settings.ttsVoiceId,
-                engineId = settings.ttsEngineId,
-                diagnostics = diagnosticsSink,
-            )
+            when (settings.ttsEngine) {
+                // The distilled engine speaks through its own graph, so the
+                // platform speech-API id means nothing to it.
+                TtsEngineChoice.DISTILLED_KOKORO -> {
+                    KokoroTts.create(
+                        context = appContext,
+                        locale = settings.locale(),
+                        voiceId = settings.ttsVoiceId,
+                        engineId = null,
+                        diagnostics = diagnosticsSink,
+                    )
+                }
+
+                // The platform engine has no use for a Kokoro voice id, and
+                // handing it one would make it refuse to speak
+                // (`SelectedVoiceUnavailable`); it picks its own embedded voice
+                // for the locale instead.
+                TtsEngineChoice.PLATFORM -> {
+                    OnDeviceTts.create(
+                        context = appContext,
+                        locale = settings.locale(),
+                        voiceId = null,
+                        engineId = settings.ttsEngineId,
+                        diagnostics = diagnosticsSink,
+                    )
+                }
+            }
+        AppLog.d { "voice: tts engine=${settings.ttsEngine.id}" }
         return OrchestratingVoiceAssistant(
             orchestrator =
                 TurnOrchestrator(

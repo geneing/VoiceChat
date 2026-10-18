@@ -71,6 +71,7 @@ class PreferencesSettingsStoreTest {
                     llmServerUrl = "https://hermes.example.com/v1",
                     ttsVoiceId = "voice-on-device",
                     ttsEngineId = "com.google.android.tts",
+                    ttsEngine = TtsEngineChoice.PLATFORM,
                     smartTurnEnabled = false,
                 )
 

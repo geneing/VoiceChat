@@ -4,14 +4,19 @@ import android.content.Context
 import com.voicechat.agent.log.AppLog
 import com.voicechat.agent.providers.DocumentedModelCatalog
 import com.voicechat.agent.settings.KokoroState
+import com.voicechat.agent.settings.PreferencesSettingsStore
 import com.voicechat.agent.settings.SettingsCapabilities
 import com.voicechat.agent.settings.SettingsCapabilityProvider
+import com.voicechat.agent.settings.TtsEngineChoice
+import com.voicechat.agent.settings.TtsEngineOption
 import com.voicechat.agent.stt.AndroidSpeechSttStatus
 import com.voicechat.agent.stt.MlKitSttStatus
 import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttEngine
 import com.voicechat.agent.stt.SttEngines
 import com.voicechat.agent.stt.SttMode
+import com.voicechat.agent.tts.AndroidTtsEngine
+import com.voicechat.agent.tts.TtsEngineAvailability
 import com.voicechat.agent.tts.TtsVoice
 import com.voicechat.agent.tts.kokoro.KokoroArtifact
 import com.voicechat.agent.tts.kokoro.KokoroModelState
@@ -21,6 +26,7 @@ import com.voicechat.agent.tts.kokoro.KokoroVoiceArtifact
 import com.voicechat.agent.turn.SmartTurnCatalog
 import com.voicechat.agent.turn.SmartTurnModelStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
 import java.io.File
 import java.util.Locale
 
@@ -51,10 +57,16 @@ class AndroidSettingsCapabilityProvider(
 
     // One store per provider instance so repeated snapshots reuse the same
     // app-private directory; verification runs off the main thread inside state().
+    // The asset opener is what makes a bundled graph visible here: without it the
+    // settings surface would report a download as required even though the pinned
+    // graph is packaged in the APK (docs/decisions.md §2.4).
     private val smartTurnStore: SmartTurnModelStore =
         SmartTurnModelStore(File(appContext.filesDir, SmartTurnModelStore.DIRECTORY_NAME))
     private val kokoroStore: KokoroModelStore =
-        KokoroModelStore(File(appContext.filesDir, KokoroArtifact.DIRECTORY_NAME))
+        KokoroModelStore(
+            File(appContext.filesDir, KokoroArtifact.DIRECTORY_NAME),
+            openAsset = { path -> appContext.assets.open(path) },
+        )
 
     override suspend fun snapshot(): SettingsCapabilities {
         val tts = readTts()
@@ -62,6 +74,7 @@ class AndroidSettingsCapabilityProvider(
             sttAvailability = readSttAvailability(),
             ttsVoices = tts.voices,
             ttsEngines = emptyList(),
+            ttsEngineChoices = tts.engineChoices,
             kokoro = tts.state,
             smartTurn = SmartTurnCatalog.settingsState(smartTurnStore.state()),
             models = DocumentedModelCatalog.availableModels(),
@@ -111,16 +124,80 @@ class AndroidSettingsCapabilityProvider(
                     is KokoroModelState.Corrupt -> KokoroState.Unavailable(defaultState.reason)
                     null -> KokoroState.Unavailable("Kokoro model availability could not be checked.")
                 }
-            TtsSnapshot(voices, kokoroState)
+            TtsSnapshot(voices, kokoroState, engineChoices(kokoroState, readPlatformEngineAvailability()))
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Throwable) {
             AppLog.w(failure) { "settings: Kokoro model discovery failed" }
-            TtsSnapshot(emptyList(), KokoroState.Unavailable("Kokoro model availability could not be checked."))
+            TtsSnapshot(emptyList(), KokoroState.Unavailable("Kokoro model availability could not be checked."), emptyList())
         }
+
+    /**
+     * The app engines this device can speak through, each with a reason when it
+     * cannot.
+     *
+     * The distilled engine is available exactly when its graph is (bundled in the
+     * APK or installed app-privately), and the platform engine exactly when the
+     * platform reports an embedded voice for the locale — read from the device,
+     * never assumed (`docs/decisions.md` §2.2).
+     */
+    private fun engineChoices(
+        kokoro: KokoroState,
+        platform: String?,
+    ): List<TtsEngineOption> =
+        listOf(
+            TtsEngineOption(
+                choice = TtsEngineChoice.DISTILLED_KOKORO,
+                available = kokoro is KokoroState.Installed,
+                reason =
+                    (kokoro as? KokoroState.Unavailable)?.reason
+                        ?: if (kokoro is KokoroState.DownloadRequired) "The voice model is not installed." else null,
+            ),
+            TtsEngineOption(
+                choice = TtsEngineChoice.PLATFORM,
+                available = platform == null,
+                reason = platform,
+            ),
+        )
+
+    /**
+     * The reason the platform engine cannot be used, or `null` when it can.
+     *
+     * It is only usable with an **embedded** voice for the app's locale: the app
+     * never speaks through a network voice (`docs/decisions.md` §2.2).
+     */
+    private suspend fun readPlatformEngineAvailability(): String? {
+        val locale =
+            runCatching {
+                PreferencesSettingsStore
+                    .create(appContext)
+                    .observe()
+                    .first()
+                    .locale()
+            }.getOrElse { Locale.getDefault() }
+        val engine = AndroidTtsEngine(appContext, locale)
+        return try {
+            val availability = engine.initialize()
+            when (availability) {
+                is TtsEngineAvailability.Ready -> null
+                is TtsEngineAvailability.NoOnDeviceVoice -> "No embedded system voice is installed for ${locale.toLanguageTag()}."
+                is TtsEngineAvailability.SelectedVoiceUnavailable -> "The selected system voice is not installed."
+                is TtsEngineAvailability.SelectedEngineUnavailable -> "The selected system speech engine is not installed."
+                is TtsEngineAvailability.Unavailable -> availability.error.detail ?: "The system speech engine could not be initialized."
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Throwable) {
+            AppLog.w(failure) { "settings: platform TTS availability check failed" }
+            "The system speech engine could not be initialized."
+        } finally {
+            runCatching { engine.close() }
+        }
+    }
 
     private data class TtsSnapshot(
         val voices: List<TtsVoice>,
         val state: KokoroState,
+        val engineChoices: List<TtsEngineOption>,
     )
 }

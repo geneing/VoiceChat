@@ -66,7 +66,7 @@ class KokoroTtsEngine(
     private val modelStateReader: KokoroModelStateReader,
     private val phonemizer: KokoroPhonemizer,
     private val sink: KokoroAudioSink,
-    private val synthesizerLoader: (File) -> KokoroSynthesizer,
+    private val synthesizerLoader: suspend (KokoroGraphSource) -> KokoroSynthesizer,
     private val diagnostics: DiagnosticsSink = NoOpDiagnosticsSink,
     private val clock: MonotonicClock = SystemMonotonicClock,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -152,7 +152,7 @@ class KokoroTtsEngine(
             when (val state = states[selected]) {
                 is KokoroModelState.Installed -> {
                     try {
-                        loadVerifiedGraph(selected, state.file)
+                        loadVerifiedGraph(selected, state)
                     } catch (cancellation: CancellationException) {
                         throw cancellation
                     } catch (_: Throwable) {
@@ -202,7 +202,7 @@ class KokoroTtsEngine(
         if (state !is KokoroModelState.Installed) return
 
         if (closed) return
-        loadVerifiedGraph(artifact, state.file)
+        loadVerifiedGraph(artifact, state)
     }
 
     override fun speak(
@@ -425,7 +425,7 @@ class KokoroTtsEngine(
 
     private suspend fun loadVerifiedGraph(
         voice: KokoroVoiceArtifact,
-        file: File,
+        state: KokoroModelState.Installed,
     ): TtsEngineAvailability.Ready =
         utteranceMutex.withLock {
             if (closed) throw IllegalStateException("Kokoro TTS engine is closed")
@@ -439,7 +439,7 @@ class KokoroTtsEngine(
             val startedAt = clock.nanoTime()
             val loaded =
                 try {
-                    withContext(Dispatchers.IO) { synthesizerLoader(file) }
+                    withContext(Dispatchers.IO) { synthesizerLoader(state.source) }
                 } catch (cancellation: CancellationException) {
                     recordGraphLoad(clock.nanoTime() - startedAt, DiagnosticOutcome.CANCELLED, voice.id)
                     throw cancellation

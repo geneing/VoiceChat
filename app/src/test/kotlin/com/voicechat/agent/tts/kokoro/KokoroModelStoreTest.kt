@@ -49,6 +49,123 @@ class KokoroModelStoreTest {
         hasher: FakeContentHasher = FakeContentHasher(pinnedHash),
     ) = KokoroModelStore(rootDirectory = root, hasher = hasher)
 
+    /** A store whose bundled asset source serves [assets] by path, counting opens. */
+    private fun bundledStore(
+        root: File,
+        assets: Map<String, ByteArray>,
+        hasher: FakeContentHasher = FakeContentHasher(pinnedHash),
+        opens: MutableList<String> = mutableListOf(),
+    ): Pair<KokoroModelStore, MutableList<String>> {
+        val store =
+            KokoroModelStore(
+                rootDirectory = root,
+                hasher = hasher,
+                openAsset = { path ->
+                    opens += path
+                    assets[path]?.inputStream() ?: throw java.io.FileNotFoundException(path)
+                },
+            )
+        return store to opens
+    }
+
+    @Test
+    fun aBundledGraphIsInstalledWithoutAnyAppPrivateFile() =
+        runTest {
+            val path = KokoroArtifact.bundledAssetPath(artifact)
+            val (store, _) = bundledStore(root(), mapOf(path to ByteArray(4)))
+
+            assertEquals(
+                KokoroModelState.Installed(KokoroGraphSource.Bundled(path), artifact, 4),
+                store.state(artifact),
+            )
+            // Nothing was written app-privately: the bundled graph is read, not copied.
+            assertFalse(store.modelFile(artifact).exists())
+        }
+
+    @Test
+    fun anAppPrivateInstallOverridesTheBundledGraph() =
+        runTest {
+            val path = KokoroArtifact.bundledAssetPath(artifact)
+            val (store, _) = bundledStore(root(), mapOf(path to ByteArray(4)))
+            store.modelFile(artifact).apply {
+                parentFile?.mkdirs()
+                writeBytes(ByteArray(4))
+            }
+
+            assertEquals(
+                KokoroModelState.Installed(KokoroGraphSource.Installed(store.modelFile(artifact)), artifact, 4),
+                store.state(artifact),
+            )
+        }
+
+    @Test
+    fun aBundledGraphThatIsTheWrongSizeIsCorrupt() =
+        runTest {
+            val path = KokoroArtifact.bundledAssetPath(artifact)
+            val (store, _) = bundledStore(root(), mapOf(path to ByteArray(5)))
+
+            val state = store.state(artifact)
+            assertTrue("expected Corrupt, was $state", state is KokoroModelState.Corrupt)
+        }
+
+    @Test
+    fun aBundledGraphWithTheWrongHashIsCorrupt() =
+        runTest {
+            val path = KokoroArtifact.bundledAssetPath(artifact)
+            val (store, _) = bundledStore(root(), mapOf(path to ByteArray(4)), hasher = FakeContentHasher("b".repeat(64)))
+
+            val state = store.state(artifact)
+            assertTrue("expected Corrupt, was $state", state is KokoroModelState.Corrupt)
+        }
+
+    @Test
+    fun anAbsentBundledGraphIsMissing() =
+        runTest {
+            val (store, _) = bundledStore(root(), emptyMap())
+            assertEquals(KokoroModelState.Missing, store.state(artifact))
+        }
+
+    @Test
+    fun aBuildWithoutAnAssetSourceReportsMissing() =
+        runTest {
+            // A clean checkout has neither the asset directory nor a pushed file.
+            assertEquals(KokoroModelState.Missing, store(root()).state(artifact))
+        }
+
+    @Test
+    fun bundledVerificationIsCachedBecauseAssetsCannotChange() =
+        runTest {
+            val path = KokoroArtifact.bundledAssetPath(artifact)
+            val (store, opens) = bundledStore(root(), mapOf(path to ByteArray(4)))
+
+            repeat(3) { store.state(artifact) }
+
+            assertEquals("the immutable asset must be read and hashed once", 1, opens.size)
+        }
+
+    @Test
+    fun readingABundledSourceReturnsItsBytes() =
+        runTest {
+            val path = KokoroArtifact.bundledAssetPath(artifact)
+            val bytes = byteArrayOf(1, 2, 3, 4)
+            val (store, _) = bundledStore(root(), mapOf(path to bytes))
+
+            assertTrue(bytes.contentEquals(store.read(KokoroGraphSource.Bundled(path))))
+        }
+
+    @Test
+    fun readingAnInstalledSourceReturnsItsFileBytes() =
+        runTest {
+            val store = store(root())
+            val file =
+                store.modelFile(artifact).apply {
+                    parentFile?.mkdirs()
+                    writeBytes(byteArrayOf(9, 8, 7, 6))
+                }
+
+            assertTrue(byteArrayOf(9, 8, 7, 6).contentEquals(store.read(KokoroGraphSource.Installed(file))))
+        }
+
     @Test
     fun anAbsentFileIsMissing() =
         runTest {
@@ -100,7 +217,7 @@ class KokoroModelStoreTest {
             }
 
             assertEquals(
-                KokoroModelState.Installed(store.modelFile(artifact), artifact, 4),
+                KokoroModelState.Installed(KokoroGraphSource.Installed(store.modelFile(artifact)), artifact, 4),
                 store.state(artifact),
             )
         }

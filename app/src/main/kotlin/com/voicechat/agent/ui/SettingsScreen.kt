@@ -54,6 +54,7 @@ import com.voicechat.agent.settings.SelectableOption
 import com.voicechat.agent.settings.SettingsActions
 import com.voicechat.agent.settings.SettingsNotice
 import com.voicechat.agent.settings.SettingsUiState
+import com.voicechat.agent.settings.TtsEngineChoice
 
 /**
  * Test tags for the settings surface, so UI tests locate controls by a stable
@@ -108,7 +109,7 @@ object SettingsTestTags {
     /** The selectable dropdown for a TTS voice. */
     const val TTS_DROPDOWN = "settings-tts-voice-dropdown"
 
-    /** The selectable dropdown for a TTS engine (speech API). */
+    /** The selectable dropdown for the app TTS engine (distilled Kokoro or platform). */
     const val TTS_ENGINE_DROPDOWN = "settings-tts-engine-dropdown"
 
     /** The catalog-level notice shown when no model is listed (M27, R-0102). */
@@ -404,9 +405,43 @@ private fun TtsSection(
 ) {
     SettingsHeading("On-device speech")
     Text(
-        "Distilled Kokoro voice model; speech stays on-device with no platform or network fallback.",
+        "Speech stays on-device with no network voice: either the distilled Kokoro voice or the system speech engine.",
         style = MaterialTheme.typography.bodySmall,
     )
+
+    // The app engine choice. An engine this device cannot honour is still listed,
+    // with its reason, so the choice is explained instead of silently missing
+    // (docs/decisions.md §2.4).
+    if (state.tts.engineChoices.isNotEmpty()) {
+        OptionDropdown(
+            label = "Engine",
+            options = state.tts.engineChoices,
+            selected = state.tts.engineChoices.firstOrNull { it.isSelected },
+            tag = SettingsTestTags.TTS_ENGINE_DROPDOWN,
+            optionTag = { SettingsTestTags.menuOption(it.value.id) },
+            onSelect = { actions.onSelectTtsEngineChoice(it.value) },
+        )
+        state.tts.selectedEngineUnavailableReason?.let { reason ->
+            Text(
+                text = reason,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag(SettingsTestTags.KOKORO_MODEL_REASON),
+            )
+        }
+    }
+
+    val usingDistilledEngine = state.tts.selectedEngine == TtsEngineChoice.DISTILLED_KOKORO
+    if (!usingDistilledEngine) {
+        // The platform engine picks its own voice for the locale, so the Kokoro
+        // model and voice rows below do not apply to it.
+        Text(
+            text = "The system speech engine chooses its own voice for this locale.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        return
+    }
 
     when {
         state.kokoro.installing -> {

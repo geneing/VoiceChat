@@ -44,6 +44,7 @@ import com.voicechat.agent.settings.SmartTurnSettingsSection
 import com.voicechat.agent.settings.SmartTurnState
 import com.voicechat.agent.settings.StaticSettingsCapabilityProvider
 import com.voicechat.agent.settings.SttSettingsSection
+import com.voicechat.agent.settings.TtsEngineChoice
 import com.voicechat.agent.settings.TtsSettingsSection
 import com.voicechat.agent.settings.VoiceSettings
 import com.voicechat.agent.stt.SttAvailability
@@ -277,6 +278,58 @@ class SettingsScreenUiTest {
     }
 
     @Test
+    fun theEnginePickerOffersBothEnginesAndSelectsThePlatformOne() {
+        val actions = RecordingSettingsActions()
+        render(baseState(), actions)
+
+        composeRule.onNodeWithTag(SettingsTestTags.TTS_ENGINE_DROPDOWN).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTestTags.menuOption(TtsEngineChoice.PLATFORM.id)).performClick()
+
+        assertEquals(TtsEngineChoice.PLATFORM, actions.lastEngineChoice)
+    }
+
+    @Test
+    fun thePlatformEngineHidesTheKokoroModelAndVoiceRows() {
+        // The platform engine chooses its own voice for the locale, so the Kokoro
+        // model state and voice rows would be misleading next to it.
+        render(
+            baseState().copy(
+                tts = baseState().tts.copy(selectedEngine = TtsEngineChoice.PLATFORM),
+            ),
+        )
+
+        composeRule.onNodeWithTag(SettingsTestTags.TTS_ENGINE_DROPDOWN).performScrollTo().assertExists()
+        composeRule.onNodeWithTag(SettingsTestTags.KOKORO_MODEL_DOWNLOAD).assertDoesNotExist()
+        composeRule.onNodeWithTag(SettingsTestTags.TTS_DROPDOWN).assertDoesNotExist()
+    }
+
+    @Test
+    fun anUnavailableEngineChoiceIsExplainedRatherThanSelectable() {
+        render(
+            baseState().copy(
+                tts =
+                    baseState().tts.copy(
+                        engineChoices =
+                            baseState().tts.engineChoices.map { option ->
+                                if (option.value == TtsEngineChoice.PLATFORM) {
+                                    option.copy(
+                                        state =
+                                            com.voicechat.agent.settings.OptionState
+                                                .Unavailable("No embedded system voice."),
+                                    )
+                                } else {
+                                    option
+                                }
+                            },
+                    ),
+            ),
+        )
+
+        composeRule.onNodeWithTag(SettingsTestTags.TTS_ENGINE_DROPDOWN).performScrollTo().performClick()
+        composeRule.onNodeWithText("No embedded system voice.").assertExists()
+    }
+
+    @Test
     fun aMissingKokoroModelOffersItsInstallAction() {
         val actions = RecordingSettingsActions()
         render(baseState().copy(kokoro = KokoroSettingsSection(state = KokoroState.DownloadRequired)), actions)
@@ -450,6 +503,22 @@ class SettingsScreenUiTest {
                             ),
                         ),
                     selectedVoiceId = "voice-on-device",
+                    engineChoices =
+                        listOf(
+                            com.voicechat.agent.settings.SelectableOption(
+                                value = TtsEngineChoice.DISTILLED_KOKORO,
+                                label = TtsEngineChoice.DISTILLED_KOKORO.label,
+                                state = com.voicechat.agent.settings.OptionState.Available,
+                                selected = true,
+                            ),
+                            com.voicechat.agent.settings.SelectableOption(
+                                value = TtsEngineChoice.PLATFORM,
+                                label = TtsEngineChoice.PLATFORM.label,
+                                state = com.voicechat.agent.settings.OptionState.Available,
+                                selected = false,
+                            ),
+                        ),
+                    selectedEngine = TtsEngineChoice.DISTILLED_KOKORO,
                 ),
             kokoro = KokoroSettingsSection(state = KokoroState.Installed),
             smartTurn = SmartTurnSettingsSection(enabled = true, state = SmartTurnState.Available),
@@ -484,6 +553,7 @@ private class RecordingSettingsActions : SettingsActions {
     var lastReasoning: ReasoningLevel? = null
     var lastSttMode: SttMode? = null
     var lastVoice: String? = null
+    var lastEngineChoice: TtsEngineChoice? = null
     var lastSmartTurn: Boolean? = null
     var lastDestination: String? = null
     var lastCredential: String? = null
@@ -520,6 +590,10 @@ private class RecordingSettingsActions : SettingsActions {
 
     override fun onSelectTtsVoice(voiceId: String) {
         lastVoice = voiceId
+    }
+
+    override fun onSelectTtsEngineChoice(choice: TtsEngineChoice) {
+        lastEngineChoice = choice
     }
 
     override fun onSelectTtsEngine(engineId: String) = Unit
