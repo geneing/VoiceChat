@@ -86,6 +86,23 @@ enum class LatencyMetric(
 
     /** TTS speak() call → utterance finished playing in full. */
     TTS_COMPLETION("tts_completion"),
+
+    /** TTS text start → phoneme chunks planned (the M28 phonemizer stage). */
+    TTS_PHONEMIZE("tts_phonemize"),
+
+    /**
+     * TTS text start → the first synthesized PCM piece is in memory.
+     *
+     * For the M28 distilled-Kokoro engine this is the synthesis side of "start of
+     * text to first sound": it is everything that must happen before the audio
+     * sink can be handed its first buffer, so it is the number a synthesis
+     * regression moves, with [TTS_FIRST_AUDIBLE] above it only by the
+     * audio-device start.
+     */
+    TTS_FIRST_PCM("tts_first_pcm"),
+
+    /** TTS text start → every PCM piece of the utterance is in memory. */
+    TTS_SYNTHESIS_COMPLETE("tts_synthesis_complete"),
 }
 
 /** One measured duration for one metric. */

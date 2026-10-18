@@ -17,8 +17,17 @@ microphone capture (M07), on-device Android `SpeechRecognizer` speech-to-text
 (M08, `docs/android-speech-recognition.md`) using segmented session mode
 (`EXTRA_SEGMENTED_SESSION` over the piped `EXTRA_AUDIO_SOURCE` PCM) with ML Kit
 GenAI as an alternative,
-measured-audio VAD/onset and bounded endpointing (M09), on-device platform TTS
-with a speech-engine/voice picker and a most-natural-voice default (M11), a
+measured-audio VAD/onset and bounded endpointing (M09), the on-device platform
+TTS engine with a speech-engine/voice picker and a most-natural-voice default
+(M11; **superseded on the voice path by M28**, which speaks through the distilled
+"Teacher in the Loop" Kokoro-82M student on ONNX Runtime — English voice
+`af_heart`, Kotlin phonemizer ported from the publisher's `titl/phonemes.py` and
+Misaki 0.9.4's English G2P, rule-based text normalization ported from the
+neighboring EpubReader project, graph downloaded app-privately and verified; the
+platform engine stays in the tree but is no longer wired. It has run on the
+Pixel 10: text start to first sound p50 654 ms, ~12x realtime per sentence, all
+attempts delivered; inter-sentence gaps, memory, and audible naturalness are not
+measured), a
 provider-independent LLM streaming contract with a deterministic fake
 (M12), Keystore-backed credential storage with a provider capability registry
 (M13), pure-Kotlin turn orchestration with cancellation (M21), the OpenAI (M14),
@@ -198,6 +207,11 @@ app/                        the only application module
     settings/               settings model + DataStore persistence (M22)
     stt/                    Android SpeechRecognizer + ML Kit GenAI STT adapters (M08)
     tts/                    on-device platform TTS engine, voice policy, and engine/voice config (M11)
+    tts/kokoro/             distilled Kokoro student: pinned artifacts, app-private model
+                            store, ONNX engine, chunked playback, and the TTS factory (M28)
+    tts/kokoro/phonemes/    Kotlin port of titl/phonemes.py + Misaki 0.9.4 English G2P (M28)
+    tts/normalization/      rule-based text normalization for speech, ported from the
+                            neighboring EpubReader project (M28)
     turn/                   Smart Turn v3.2 ONNX detector + model lifecycle (M10)
     ui/                     Compose conversation + settings UI (M06/M22)
     vad/                    measured-audio VAD/onset + endpointing (M09)
@@ -217,14 +231,18 @@ app/                        the only application module
     security/, ui/          JVM secret scan and Compose UI tests
     turn/                   JVM Smart Turn config/adapter/lifecycle/endpoint tests
     vad/, voice/            JVM VAD and voice-session tests
+    tts/kokoro/             JVM Kokoro store/engine/phonemizer tests (M28)
+    tts/normalization/      JVM text-normalization rule and pipeline tests (M28)
     fake/                   deterministic contract fakes
+  src/test/resources/kokoro/          frozen Python-generated phoneme fixtures (M28)
   src/test/resources/replay/                 frozen replay fixture bytes
   src/test/resources/llm/                    recorded provider SSE fixtures
   src/androidTest/                           on-device tests (see Tests.md)
   src/debug/                                 debug-only Application + credential import
   src/testDebug/                             debug-variant JVM tests
 .github/workflows/ci.yml    CI running the same fast checks
-scripts/                    fetch/push helpers (pinned models, debug credentials) + harness runners
+scripts/                    fetch/push helpers (pinned models, Kokoro phoneme data,
+                            debug credentials) + harness runners
 models/                     downloaded model artifacts (gitignored; README/manifest tracked)
 secrets/                    local secrets for debug runs (gitignored; README tracked)
 test_data/                  speech sound files usable to simulate STT

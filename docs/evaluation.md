@@ -94,6 +94,30 @@ outcome with no latency sample, so an unmeasured stage is absent rather than zer
   A device with no embedded voice is skipped, never measured against a network
   voice.
 
+### The Kokoro TTS stage (M28)
+
+The distilled-Kokoro engine splits the same question into two measurable halves,
+so a regression is attributable rather than just visible. `KokoroTtsStageHarness`
+drives the real phonemizer and the real ONNX graph — no audio device — and
+records three stages from one instant (the start of the text):
+
+- `tts_phonemize` — text → phoneme chunks planned;
+- `tts_first_pcm` — text → the first synthesized piece is in memory. This is
+  **the synthesis side of time-to-first-sound**: everything that must happen
+  before the audio sink can be handed its first buffer;
+- `tts_synthesis_complete` — text → every piece is in memory, with the
+  synthesized audio duration alongside it so the run reports a realtime factor
+  (audio seconds per synthesis second).
+
+`tts_first_audible` from `VoiceTtsHarness` remains the perceived number, measured
+through real playback; the gap between it and `tts_first_pcm` is the audio
+device's own start cost. Both run in one opt-in pass,
+`KokoroTtsHarnessInstrumentedTest` (`-e kokoroHarnessRunId`), staged by
+`scripts/run-kokoro-tts-latency.ps1`, and both use the same fixed texts so the
+rows are comparable. A run with no installed voice is skipped, never downloaded
+mid-measurement. The host aggregation is proven by `KokoroTtsStageHarnessTest`
+with a deterministic clock, which is not a device claim.
+
 ## Endpoint sweep
 
 `EndpointSweep` runs the production bounded policy over each labeled case for
@@ -156,6 +180,44 @@ first-audio time still needs the manual route/echo checks (R-0254).
 | metric | n | p50 ms | p90 ms | p95 ms | max ms |
 | --- | --- | --- | --- | --- | --- |
 | *(speech end → first text / barge-in rows: no run recorded — R-0043, R-0047)* | | | | | |
+
+**Kokoro TTS stage** — `scripts/run-kokoro-tts-latency.ps1 -Repeats 3`, 2026-10-17,
+Pixel 10 (`frankel`), Android 17 / API 37, build `CP3A.261005.005`, graph
+`af_heart@115a6c04…`, locale `en-US`, built-in speaker, 3 attempts per text
+(n=9). Every attempt delivered. Both halves come from one pass, measured from the
+start of the text:
+
+| metric | n | p50 ms | p90 ms | p95 ms | max ms |
+| --- | --- | --- | --- | --- | --- |
+| tts_phonemize | 9 | 10.0 | 12.0 | 12.0 | 12.0 |
+| tts_first_pcm | 9 | 403.0 | 482.0 | 482.0 | 482.0 |
+| tts_first_audible | 9 | 654.0 | 1778.0 | 1778.0 | 1778.0 |
+| tts_synthesis_complete | 9 | 404.0 | 483.0 | 483.0 | 483.0 |
+| tts_completion | 9 | 5463.0 | 6665.0 | 6665.0 | 6665.0 |
+
+Read it as a breakdown: text normalization plus phonemization is 10 ms, one graph
+call is ~400 ms, and the audio device adds ~250 ms to first sound. Warm
+first-audible attempts were 439-787 ms and scale with sentence length; the
+1778 ms p90 is the cold first attempt (graph load plus the first `AudioTrack`).
+One graph call per sentence runs at about **12x realtime** on the Pixel against
+31-34x on the host, so the device is roughly 2.5x slower per second of audio.
+`tts_completion` is full playback time, not a start delay. This is one device,
+one voice, one moment, on one route; inter-sentence gaps, peak memory, and
+underruns were not measured (R-0271), and nobody has judged how it sounds
+(R-0265).
+
+**Kokoro TTS stage, host components** — measured 2026-10-17 on the development
+machine, kept because they attribute the device number to its parts:
+
+| component | where | measurement |
+| --- | --- | --- |
+| text normalization (real rule pipeline) | JVM, `KokoroPhonemizerTimingTest` | 1-3 ms per rule-heavy sentence |
+| phonemize (real port: lexicon + OpenNLP POS + chunker) | JVM, `KokoroPhonemizerTimingTest` | 3-4 ms per assistant-shaped sentence (median 3 ms) |
+| one graph call per sentence (real int8 graph, Python ONNX Runtime 1.31.0, CPU) | WSL, `scripts/kokoro-onnx-contract.py` | 111 ms / 140 ms / 177 ms for the three harness sentences, 31-34x realtime |
+
+The device figures above are ~2.5x the host's per audio second, which is the
+expected direction; the host numbers remain useful because they are cheaper to
+re-run when a rule or the phonemizer changes.
 
 ### Endpoint sweep (Pixel 10)
 

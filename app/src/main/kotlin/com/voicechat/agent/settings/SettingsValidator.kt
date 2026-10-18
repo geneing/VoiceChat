@@ -9,6 +9,7 @@ import com.voicechat.agent.providers.ProviderCapabilityRegistry
 import com.voicechat.agent.stt.SttAvailability
 import com.voicechat.agent.stt.SttMode
 import com.voicechat.agent.tts.OnDeviceVoiceSelector
+import com.voicechat.agent.tts.kokoro.KokoroArtifact
 
 /** Which stored selection was dropped because it is no longer valid. */
 enum class InvalidSelection {
@@ -146,7 +147,9 @@ object SettingsValidator {
                 OnDeviceVoiceSelector
                     .supportedVoices(capabilities.ttsVoices)
                     .any { it.id == voiceId }
-            if (!installed) {
+            val installable =
+                capabilities.kokoro is KokoroState.DownloadRequired && KokoroArtifact.voice(voiceId) != null
+            if (!installed && !installable) {
                 result = result.copy(ttsVoiceId = null)
                 invalid += InvalidSelection.TTS_VOICE
             }

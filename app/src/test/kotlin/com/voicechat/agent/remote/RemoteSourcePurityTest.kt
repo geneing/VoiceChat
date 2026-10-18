@@ -13,15 +13,15 @@ import java.io.File
  * real adapters appear: the adapter imports `RemoteTransport`/`RemoteJson`, never
  * `okhttp3` or `kotlinx.serialization`.
  *
- * The recognized HTTP boundaries are the LLM streaming engine and the
- * M10 Smart Turn model download (`OkHttpSmartTurnModelSource.kt`), which reuses
- * OkHttp but stays behind the pure `turn.SmartTurnModelSource` interface.
+ * Recognized HTTP boundaries are the LLM streaming engine and the pinned
+ * Smart Turn/Kokoro model downloaders. Model sources stay behind pure interfaces.
  */
 class RemoteSourcePurityTest {
     private val okHttpFiles =
         setOf(
             "OkHttpStreamingEngine.kt",
             "OkHttpSmartTurnModelSource.kt",
+            "OkHttpKokoroModelSource.kt",
         )
     private val jsonFiles = setOf("RemoteJson.kt")
 

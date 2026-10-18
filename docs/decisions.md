@@ -151,14 +151,24 @@ Considered and **not adopted initially**:
 
 ### 2.2 Text-to-speech (TTS)
 
-**Decision: the Android platform `android.speech.tts.TextToSpeech` API is the
-initial TTS engine, restricted at runtime to embedded (non-network) voices.**
-There is no ML Kit GenAI / AICore TTS API: the GenAI overview lists
-Summarization, Proofreading, Rewriting, Image description, Speech recognition,
-and Prompt only (accessed 2026-09-28). TTS therefore cannot be an AICore path.
+**Decision (M28): the voice path uses the pinned, distilled Kokoro `af_heart`
+student on-device through ONNX Runtime.** The graph is downloaded only after user
+action, stored app-privately, verified against its pinned size and SHA-256, and
+loaded only after verification. A missing/corrupt graph is visible and leaves the
+app text-only; it never falls back to platform or network TTS. The Android
+platform `TextToSpeech` adapter remains in the tree as the M11 implementation but
+is no longer wired for voice replies. There is no ML Kit GenAI / AICore TTS API.
 
-Verified contract (`developer.android.com/reference/android/speech/tts/*`,
-accessed 2026-09-28):
+The graph is `MithrilMan/teacher-in-the-loop` `af_heart/model_int8.onnx`, pinned
+at revision `115a6c0469632a84fbcc6c8ed0ad7b1e06154b92`, 9,168,506 bytes,
+SHA-256 `f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7`.
+The upstream model card marks the weights Apache-2.0 and identifies Kokoro-82M
+and the Paradee-derived architecture. The pinned graph, runtime contract, and
+scope are recorded in [model-runtime.md](./model-runtime.md) and
+[`KokoroArtifact.kt`](../app/src/main/kotlin/com/voicechat/agent/tts/kokoro/KokoroArtifact.kt).
+
+The retained M11 platform adapter follows the verified Android contract
+(`developer.android.com/reference/android/speech/tts/*`, accessed 2026-09-28):
 
 - Discover engines with `getEngines()` (API 14) and voices with `getVoices()`
   (API 21); select with `setVoice(Voice)` (API 21).
@@ -169,7 +179,14 @@ accessed 2026-09-28):
 - `synthesizeToFile()` supports producing audio without immediate playback;
   `getMaxSpeechInputLength()` bounds a single utterance.
 
-Fallback/unavailable behavior:
+The active Kokoro path reports `Ready` only after the model store returns a
+verified graph and ONNX session creation succeeds. It emits `Started` only from
+the playback sink's first-audible callback and counts a text piece as delivered
+only after its samples finish playing. These are measured-playback requirements
+from [voice-quality-and-latency.md](./voice-quality-and-latency.md) §Latency
+strategy and §Responsive barge-in.
+
+Retained platform fallback/unavailable behavior (M11, not the active path):
 
 - If no non-network voice is installed for the requested locale, surface an
   explicit "no on-device voice" state and continue text-only. **Do not silently
@@ -182,13 +199,132 @@ Fallback/unavailable behavior:
 **Deferred to M09 with an explicit constraint.** No VAD model is allow-listed at
 M00:
 
-- The project scopes ONNX Runtime narrowly to Smart Turn v3.2, so an ONNX VAD
-  (e.g. Silero) is **out of scope** unless that scope is deliberately changed.
+- The project scopes ONNX Runtime to the pinned Smart Turn v3.2 turn detector
+  and the separately approved M28 Kokoro TTS graph (§3.4); an ONNX VAD
+  (e.g. Silero) remains **out of scope** unless that scope is deliberately changed.
 - No TFLite/LiteRT VAD artifact is verified (§3), so M09 must not assume one.
 - M09 must therefore select and measure a VAD/onset path from the audio itself
   and keep the bounded maximum-silence endpoint working without Smart Turn, as
   the architecture already requires. Barge-in onset stays on the fast acoustic
   path, never on Smart Turn.
+
+### 2.4 Distilled Kokoro TTS engine (`dev/TTS_kokoro`)
+
+**Decision: the app's speech path is the distilled "Teacher in the Loop"
+Kokoro-82M student (`MithrilMan/teacher-in-the-loop`), run on-device through ONNX
+Runtime. The platform `android.speech.tts` engine stays in the tree
+(`AndroidTtsEngine`, §2.2) but is no longer what the voice loop speaks through.**
+
+The platform engine was the M00 choice because no on-device neural TTS was
+available: there is no AICore/ML Kit TTS API. A published, permissively licensed,
+small enough to ship-as-a-download neural voice changes that: the student is
+8.07M parameters, 9.17 MB as an int8 graph, one graph per voice from phoneme ids
+to 24 kHz audio, and the publisher measures it at 24-26x real time on one CPU
+thread (model card, accessed 2026-10-17). That is the first option that can both
+sound like a modern TTS voice and stay on-device, which `AGENTS.md` requires.
+
+Verified facts, all from the pinned revision
+`MithrilMan/teacher-in-the-loop@115a6c0469632a84fbcc6c8ed0ad7b1e06154b92`
+(`SHA256SUMS` + model card + `export-validation.json`, accessed 2026-10-17):
+
+| Decision | Value | Basis |
+| --- | --- | --- |
+| Engine | ONNX Runtime (Android) CPU execution provider | Same runtime the M10 Smart Turn artifact is allow-listed on (§3.1); the graph is exported for it and the publisher ships an int8 CPU variant. |
+| Artifact | `af_heart/model_int8.onnx`, 9,168,506 bytes, SHA-256 `f3daed94…` | `SHA256SUMS` of the pinned revision; downloaded app-privately, never packaged (R-0262). |
+| Graph contract | `input_ids` int64 `[1,T]`, `speed` float32 `[1]` → `waveform` float32 `[1,N]` at 24 kHz | Model card "ONNX contract"; re-measured by `scripts/kokoro-onnx-contract.py`. |
+| Phonemes | Kokoro-82M's `vocab.json` (1,147 bytes, SHA-256 `c985ed32…`), padding id `0` at both ends, at most 510 phonemes per call | Publisher's `titl/phonemes.py`; the text side has 512 positions, two of which are padding. |
+| English G2P | A Kotlin port of Misaki 0.9.4's English pipeline, with Misaki's US gold+silver lexicon | This is what Kokoro's own pipeline and the publisher's `Phonemizer("en")` use; the port is `tts/kokoro/phonemes/`. |
+| Lexicon | Misaki's `us_gold.json` + `us_silver.json`, committed **gzipped** as app assets (~1.4 MB) | Apache-2.0 (misaki 0.9.4 `LICENSE`); fetched by `scripts/fetch-kokoro-phoneme-data.sh`. It is data the phonemizer needs synchronously and offline, not a model, so it is bundled rather than downloaded. |
+| Voice scope | English (`af_heart`) only | The app offers `en-*` and `es-*` speech locales (`OnDeviceVoiceSelector`); the other two published students are Italian and need an eSpeak-NG-derived phonemization this app does not have (R-0261). |
+
+Deliberate limits of the port, recorded rather than hidden:
+
+- **A substitute tagger.** Misaki selects tag-specific lexicon entries with
+  spaCy's `en_core_web_sm` tagger. Shipping spaCy is not proportionate, so the
+  port tags with Apache OpenNLP's offline Penn perceptron instead (§2.5). A tag
+  disagreement can therefore change a pronunciation.
+- **No eSpeak NG, no BART fallback.** The Python falls back to eSpeak NG
+  (GPL-3.0) and, without it, a ~200 MB BART model, for out-of-vocabulary words.
+  Neither is acceptable here (license and size), so the port uses a
+  deterministic offline rule fallback and inline-IPA overrides, and measures how
+  far the whole port agrees with the reference (`docs/tts.md`, R-0263).
+- **The excitation is random.** Two runs of the same input are not
+  bit-identical, by design; tests assert shape, range, and non-silence rather
+  than exact samples.
+
+Fallback/unavailable behavior follows §2.2 unchanged: a missing or corrupt graph
+is a typed, visible "install the voice model" state, never a silent switch to
+another voice or a fabricated success.
+
+### 2.5 Kokoro English phonemizer (M28)
+
+**Decision: use OpenNLP Penn POS tags with Misaki's US English gold/silver
+lexicons, plus a documented letter-rule fallback and inline IPA
+overrides.** This avoids a Python/spaCy runtime and keeps phonemization offline.
+The pinned `org.apache.opennlp:opennlp-tools:2.5.12` is the latest stable release
+in Maven Central metadata checked 2026-10-17 (3.0.0-M6 is a milestone); it is
+Apache-2.0. The offline English Penn perceptron model is bundled at
+`app/src/main/assets/kokoro/en-pos-perceptron.bin` (3,975,786 bytes,
+SHA-256 `0b49b7d9bdb9f888aed85e9f41fbcfd6cab607805ba9cd2370e1e5af4e540db8`),
+from OpenNLP's 1.5 model page under Apache-2.0. The app includes only the US
+Misaki dictionaries supplied for this voice; GB dictionaries and voice support
+remain out of scope. Three VBP corrections (`read`, `reread`, `wound`) are applied
+after dictionary loading.
+
+The JVM fixture suite matches Misaki 0.9.4 on all 203 frozen corpus sentences
+plus 8 edge cases (`scripts/kokoro-phoneme-parity.sh`). That is fixture parity on
+a templated corpus, not a general English accuracy or device latency claim; the
+rule fallback and the 2010-vintage POS model remain best-effort on
+out-of-vocabulary and unusual prose. Cardinal and currency expansion currently
+uses signed-64-bit arithmetic; larger numeric values are outside the validated
+subset. The substitution and its risk are recorded as R-0263.
+
+Sources checked 2026-10-17:
+
+- Apache OpenNLP Maven metadata —
+  https://repo.maven.apache.org/maven2/org/apache/opennlp/opennlp-tools/maven-metadata.xml
+- OpenNLP 1.5 models (model and Apache license header) —
+  https://opennlp.sourceforge.net/models-1.5/
+- A third-party Kotlin Kokoro port whose phonemizer design (offline letter-rule
+  fallback, inline IPA overrides, the three VBP corrections) informed this one —
+  https://github.com/alexsobolev/kokoro-tts-kotlin/blob/main/README.md
+
+### 2.6 Speech text normalization (M28)
+
+**Decision: rewrite text into its spoken form with the rule pipeline ported from
+the neighboring EpubReader project, applied per sentence immediately before
+phonemization.**
+
+The distilled voice was trained on prose read by the teacher, so it expects
+dates, amounts, units and abbreviations as words. Neither the ported Misaki G2P
+nor the platform engine handles all of those (measured: see
+[text-normalization.md](./text-normalization.md) §Relationship), and a
+mis-read abbreviation is the kind of defect a user hears immediately.
+
+| Decision | Value | Basis |
+| --- | --- | --- |
+| Source | EpubReader's `playback/normalization` package (same author's neighboring project) | A tested, documented pipeline with 22 rules and ~30 KB of table-driven tests, already written for on-device speech. |
+| Scope | the source's full English rule set, unmodified | Faithfulness is the point: every rule and every test is ported, so the port's behavior is the source's behavior. The only API change is Readium's `Language` → a BCP-47 tag (`forLanguageTag`). |
+| Placement | per sentence, inside `DefaultKokoroPhonemizer`, between the sentence split and the G2P | The chunker keeps the original sentence as the chunk's source text, so normalization cannot change what the app accounts for as delivered (an interruption still reports a true prefix of the reply). |
+| Default | English pipeline on the spoken path; `TextNormalizer.Identity` for reference work | The phonemizer's parity fixtures are Misaki's output for **raw** sentences, so fidelity to the reference is asserted with the pass-through and the spoken path is asserted separately. |
+| Dependencies | none | The source package imports only `org.readium.r2.shared.util.Language`, which the port drops. Pure Kotlin/JDK, host-JVM testable. |
+
+Cost is 1-3 ms per sentence on the host JVM, measured by
+`KokoroPhonemizerTimingTest`; the device figure belongs with the rest of the M28
+latency run.
+
+Deliberate limits, recorded rather than hidden:
+
+- **Book prose, not chat.** The rules were written for EPUB text. The risk is a
+  false expansion on assistant output (R-0269), not a missing one.
+- **English only.** Non-English tags pass through untouched; only the English
+  voice is wired.
+- **Cosmetic punctuation.** An abbreviation that ends a clause can leave the
+  source period beside existing punctuation (`inches.,`). Inaudible — the
+  phonemizer drops punctuation it does not know — and the source behaves the
+  same way, so the port does not diverge.
+- **No user lexicon yet.** `LexiconNormalizer` takes a pronunciation map; the
+  Settings editor for it is the intended extension point and does not exist.
 
 ## 3. Model runtime and model allow-list
 
@@ -198,14 +334,14 @@ M00:
 | --- | --- | --- |
 | LiteRT (formerly TFLite) | Allow-listed as the app-managed `.tflite` runtime; no model uses it yet | LiteRT v2.2.0 (2026-08-14), min SDK 23, min NDK r26a; Maven `com.google.ai.edge.litert:litert`; code samples Apache-2.0, docs CC-BY-4.0. |
 | LiteRT-LM | Allow-listed only for the optional local-LLM path (M20) | `com.google.ai.edge.litertlm:litertlm-android`; current docs describe v0.16.0; `.litertlm` bundles sourced from the Google AI Edge Hugging Face community. |
-| ONNX Runtime for Android | Allow-listed **only** for the pinned Smart Turn v3.2 artifact | `com.microsoft.onnxruntime:onnxruntime-android` 1.29.0 (2026-08-13), MIT license; Android tested at API 28, "may be compatible with API level 21+"; NNAPI EP requires Android 8.1+; add `-keep class ai.onnxruntime.** { *; }` for R8. |
+| ONNX Runtime for Android | Allow-listed only for the pinned Smart Turn v3.2 and distilled Kokoro `af_heart` graphs | `com.microsoft.onnxruntime:onnxruntime-android` 1.29.0 (2026-08-13), MIT license; Android tested at API 28, "may be compatible with API level 21+"; NNAPI EP requires Android 8.1+; add `-keep class ai.onnxruntime.** { *; }` for R8. |
 | AICore / ML Kit GenAI | Used only through the ML Kit GenAI Speech Recognition API | AICore models are system-managed; never download, copy, inspect, or delete them (ML Kit GenAI docs). |
 
 ### 3.2 Allow-listed speech-task models
 
-**None yet.** No STT, TTS, or VAD `.tflite`/LiteRT artifact with verified
-provenance, license, runtime contract, and device fit is allow-listed for M00.
-This is a deliberate, evidence-backed emptiness, not an omission:
+**Speech-task allow-list:** the pinned Kokoro `af_heart` int8 ONNX graph is the
+active TTS model; no STT or VAD `.tflite`/LiteRT artifact is allow-listed. The
+TTS graph is not a LiteRT model and is not interchangeable with LiteRT:
 
 - There is no first-party Google on-device STT or TTS model published for LiteRT
   that the documentation presents as such. LiteRT-LM supports multimodal **input**
@@ -222,12 +358,12 @@ before adoption:
   neighboring `speech-android` SDK (`ModelManager.kt` points at a LiteRT
   encoder/decoder/joint bundle for its Nemotron-3.5 recognizer). Identity,
   license, and size must be verified from the publisher before use.
-- A TTS model in LiteRT format. The same reference project ships ONNX TTS
-  (Kokoro) and a LiteRT TTS ("Supertonic") path, but none of those artifacts are
-  verified for this app, and adopting ONNX beyond Smart Turn would require an
-  explicit scope change.
+- A TTS model in LiteRT format. The reference project also ships a LiteRT TTS
+  ("Supertonic") path, but it is not verified or allow-listed for this app. The
+  active Kokoro student is supported only by its pinned ONNX Runtime path and
+  does not establish general ONNX or LiteRT TTS support (§3.4).
 
-Rule carried into M20: an artifact may be executed only after its task, source,
+Model allow-list rule: an artifact may be executed only after its task, source,
 license, format/runtime, operators/delegates, ABI, tensor contract, and
 integrity are recorded and it passes device tests. Arbitrary model URLs/files
 remain rejected.
@@ -276,6 +412,39 @@ Rationale and caveats:
   the APK. If the model is missing/corrupt, M09's VAD-only bounded endpoint
   policy applies and the UI reports semantic detection as inactive.
 - Keep Smart Turn **opt-in** (default off) until M25 evidence supports otherwise.
+
+### 3.4 Distilled Kokoro TTS artifact (M28)
+
+**Decision: allow-list the single English `af_heart` student graph** from
+`MithrilMan/teacher-in-the-loop` for on-device TTS. This is a task-specific
+addition to the ONNX Runtime allow-list, not general ONNX model support.
+
+| Property | Pinned value |
+| --- | --- |
+| Publisher / source | `MithrilMan/teacher-in-the-loop` |
+| Revision | `115a6c0469632a84fbcc6c8ed0ad7b1e06154b92` |
+| Paper | Fabio Angela, *Teacher in the Loop: Reliable Distillation of Kokoro-82M into 8M-Parameter Single-Voice Students, in English and Italian* (2026), [Zenodo](https://doi.org/10.5281/zenodo.23400040) |
+| Task / artifact | English `af_heart`, one 8.07M-parameter student graph, int8 weights, `af_heart/model_int8.onnx` |
+| Size / SHA-256 | 9,168,506 bytes / `f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7` |
+| License / runtime | Apache-2.0 / ONNX Runtime Android 1.29.0, CPU, two intra-op threads |
+| Input / output | `input_ids` int64 `[1,T]` with padding 0 at both ends and `T <= 512`; `speed` float32 `[1]`; `waveform` float32 `[1,N]` at 24 kHz |
+
+The model card describes this as a single-voice distilled Kokoro-82M student.
+The graph is fetched by `scripts/fetch-models.sh`, installed only after exact
+size + SHA-256 verification in app-private storage, and never bundled in the
+APK. The graph's excitation is random, so repeated inference is not
+bit-identical. `scripts/kokoro-onnx-contract.py` downloads the graph and pinned
+vocabulary to temporary storage, reports actual tensor metadata, and exercises
+real CPU inference. The WSL run with Python ONNX Runtime 1.31.0 verified the
+graph and vocabulary pins, symbolic input/output metadata, and real waveform
+inference; observed output shape and repeat deltas are recorded in
+`models/README.md` (R-0268). These are contract observations, not Android
+latency or quality claims; Android still pins ONNX Runtime 1.29.0.
+
+Only `af_heart` is wired. The upstream Italian students (`if_sara`, `im_nicola`)
+are not wired because their Italian phonemization path is absent. The shared
+phoneme vocabulary and Misaki English lexicon are separately fetched app assets;
+they are not part of the graph download. See `scripts/fetch-kokoro-phoneme-data.sh`.
 
 ## 4. Provider capability matrix
 

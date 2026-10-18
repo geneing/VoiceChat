@@ -1,9 +1,10 @@
 # Model and Runtime Support
 
-This document defines the intended selection policy. It is not a list of
-currently integrated models; the repository has no model catalog or inference
-runtime yet. The verified runtime versions, the current (empty) speech-model
-allow-list, and the pinned Smart Turn artifact identity are recorded in the
+This document defines the selection policy and the app-managed models currently
+allow-listed: the pinned Smart Turn v3.2 ONNX graph and the distilled Kokoro
+`af_heart` ONNX TTS graph. This does not permit arbitrary ONNX files or model
+URLs. The verified runtime versions, the pinned artifacts, and their
+task-specific contracts are recorded in the
 [decision record](./decisions.md); this document stays the policy the catalog
 must satisfy.
 
@@ -44,19 +45,19 @@ Do not assume that every `.tflite` model is compatible with every TFLite /
 LiteRT runtime or delegate. Validate tokenizer, tensor shapes, input/output
 contracts, quantization, and model-specific preprocessing/postprocessing.
 
-### ONNX Runtime for Smart Turn v3.2
+### ONNX Runtime for Smart Turn v3.2 and Kokoro TTS
 
-Include ONNX Runtime support for the planned optional Smart Turn v3.2 semantic
-end-of-turn model. Scope that runtime path to this model and its
-replaceable turn-detector interface; it does not add open-ended support for
-arbitrary ONNX models. The speech-android reference uses a pinned dynamic-int8
+ONNX Runtime is allow-listed only for the pinned Smart Turn v3.2 semantic
+end-of-turn model and the pinned Kokoro `af_heart` TTS graph below. Smart Turn's
+runtime path stays behind its replaceable turn-detector interface; this does not
+add open-ended support for arbitrary ONNX models. The speech-android reference uses a pinned dynamic-int8
 ONNX graph (`smart-turn-v3.2-int8.onnx`, 11,123,370 bytes) with ONNX Runtime on
 CPU. Its model manager pins source revision
 `b48fdbe20772bcec1fef02f4a1a355236ef6359e`; its README documents a BSD-2-Clause
 license. Verify the exact artifact and license during implementation. Do not
 assume a TFLite runtime can load the ONNX artifact directly.
 
-Keep the model optional, version-pinned, and replaceable. Verify the upstream
+For Smart Turn, keep the model optional, version-pinned, and replaceable. Verify the upstream
 license, artifact integrity, input sample rate/window, preprocessing, and
 probability contract, and account for storage and startup cost. Start with the
 reference CPU path to avoid NNAPI partition/fallback variability; benchmark
@@ -66,6 +67,39 @@ configured VAD-only endpoint policy. See the reference
 [model manifest](https://github.com/soniqo/speech-android/blob/main/sdk/src/main/kotlin/audio/soniqo/speech/ModelManager.kt)
 and [integration test](https://github.com/soniqo/speech-android/blob/main/sdk/src/androidTest/kotlin/audio/soniqo/speech/SmartTurnTest.kt)
 for the pinned artifact and exercised endpoint behavior.
+
+### ONNX Runtime for distilled Kokoro TTS (M28)
+
+ONNX Runtime is also allow-listed for the single pinned English
+`af_heart` student from
+[`MithrilMan/teacher-in-the-loop`](https://huggingface.co/MithrilMan/teacher-in-the-loop).
+The artifact is an 8.07M-parameter, int8-weight, one-voice distillation of
+Kokoro-82M, pinned at revision `115a6c0469632a84fbcc6c8ed0ad7b1e06154b92`, under
+Apache-2.0. Its 9,168,506 bytes and SHA-256
+`f3daed94c8fe1f7a90f14cd7fc8ead55c99a8e57dd0aac669e376882483222c7` are recorded in
+`KokoroArtifact` and `models/manifest.json`. The app downloads it into
+app-private storage, verifies the pinned identity before loading the native
+session, and never packages it in the APK. A missing, corrupt, or unloadable
+graph is reported as a typed state instead of falling back to platform TTS. See
+[decision record §3.4](./decisions.md).
+
+The graph contract is `input_ids` int64 `[1, T]` with padding id 0 at each end
+and at most 510 phonemes, `speed` float32 `[1]`, and `waveform` float32 `[1, N]`
+at 24 kHz. The synthesizer rejects overlong or malformed inputs rather than
+truncating them. The CPU session uses two intra-op threads; only the session is
+closed by the engine, not ONNX Runtime's shared environment. The
+`scripts/kokoro-onnx-contract.py` check verifies the actual graph metadata and
+real CPU inference. Its random excitation means repeated outputs for identical
+inputs are not expected to be bit-identical. Piece-wise synthesis and playback
+preserve first-audible timing and delivered-text accounting; device load, memory,
+latency, and audible quality remain unmeasured (R-0264, R-0267).
+
+Only `af_heart` is wired. The upstream Italian students (`if_sara`, `im_nicola`)
+are not selectable because the app does not include their required Italian
+phonemizer. The shared Kokoro vocabulary and Misaki English lexicon are app
+assets fetched by `scripts/fetch-kokoro-phoneme-data.sh`; the graph itself stays
+an independently managed model download. Upstream throughput and quality figures
+are not this app's device measurements.
 
 ### External LLM API
 

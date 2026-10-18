@@ -1,47 +1,34 @@
-# On-Device Text-to-Speech (M11)
+# On-Device Text-to-Speech (M11/M28)
 
-This document describes the first on-device TTS integration. It records the
-verified engine, how voice availability is discovered and restricted to embedded
-voices, how the engine seam maps onto the M02 `TextToSpeech` contract, what the
-automated tests cover, and the manual Pixel 10 checks that remain to be run. It
-complements [decisions.md](./decisions.md) §2.2 (the decision),
+This document records the original M11 platform TTS integration and the active
+M28 distilled-Kokoro voice path. The platform adapter remains in the tree but
+is not wired for voice replies. It complements [decisions.md](./decisions.md) §2.2,
 [architecture.md](./architecture.md), [voice-quality-and-latency.md](./voice-quality-and-latency.md),
 and [validation.md](./validation.md).
 
-> Status: the engine seam, contract adapter, on-device-only voice policy, and
-> playback accounting are implemented and unit tested on the JVM. The settings
-> screen exposes a **speech engine** picker and a **voice** picker (M22), and the
-> default voice is the most natural embedded one (highest platform quality). A
-> TTS-stage harness (`eval/tts/`) measures time-to-first-audible and full
-> playback on the JVM with a deterministic fake and on the device with the real
-> engine. The device harness **has been run** on the Pixel 10 (2026-10-17):
-> `tts_first_audible` p50 23 ms (cold 305 ms), `tts_completion` p50 4958 ms for
-> 51-94 characters, voice `en-us-x-tpf-local`. Route/echo behavior, audio-focus
-> interaction, immediate-stop latency, and audible naturalness remain manual and
-> unrun ([Tests.md](../Tests.md) M11, R-0057, R-0254, R-0258).
+> Status: M28 wires the pinned `af_heart` student through the existing TTS
+> contract. Kokoro engine behavior is tested on the JVM with fake state, graph,
+> and sink; no graph/native runtime or audio device is needed for those tests.
+> The engine has been run on the Pixel 10 (2026-10-17): **text start to first
+> sound p50 654 ms** (warm 439-787 ms, cold 1778 ms), one graph call per sentence
+> at ~12x realtime, all attempts delivered. The M11 platform figures later in
+> this document do not measure Kokoro. Inter-sentence gaps, peak memory, and
+> underruns were not measured (R-0271); audible naturalness is unjudged (R-0265);
+> only the built-in speaker was used.
 
 ## Engine and decision
 
-- **Engine:** the Android platform `android.speech.tts.TextToSpeech` API — the
-  M00-selected TTS engine ([decisions.md](./decisions.md) §2.2). There is no ML
-  Kit GenAI / AICore TTS API, so TTS cannot be an AICore path.
-- **Speech engine (speech API) choice.** The device may install more than one TTS
-  engine. When it does, the settings screen lists what `TextToSpeech.getEngines()`
-  reports and the user may pick one; `null` (the default) lets the platform choose.
-  A persisted engine id the device no longer reports is cleared by validation and,
-  if it reaches the engine anyway, yields the explicit
-  `TtsEngineAvailability.SelectedEngineUnavailable` rather than a silent fallback
-  to the default engine.
-- **On-device only.** A voice is usable only when the platform reports
-  `Voice.isNetworkConnectionRequired() == false`. Network-required voices are
-  never selected, and there is no silent fallback to one
-  ([decisions.md](./decisions.md) §2.2).
-- **Most natural voice.** When the user has not chosen a voice, the app picks the
-  highest-quality embedded voice for the locale. `Voice.getQuality()`
-  (`QUALITY_VERY_LOW`..`QUALITY_VERY_HIGH`) is the only naturalness signal the
-  platform exposes, so it is the primary rank; lower latency breaks a tie, and an
-  exact locale match still outranks quality. This is `OnDeviceVoiceSelector.mostNatural`
-  (`select` is its alias).
+- **Active engine (M28):** the pinned distilled Kokoro `af_heart` ONNX graph.
+  The app-private store verifies size and SHA-256 before the engine opens a
+  session. There is no platform or network fallback; missing, corrupt, or
+  unloadable models remain unavailable and the text path stays usable.
+- **Voice choice:** only verified Kokoro artifacts are offered. The graph is
+  English (`en-US`); a locale with no Kokoro voice gets an explicit unavailable
+  state. The upstream model card marks the weights Apache-2.0; see
+  [model-runtime.md](./model-runtime.md) for the exact pin.
+- **Retained M11 adapter:** `AndroidTtsEngine` and `OnDeviceTts` still implement
+  the historical platform engine/voice policy below, but AppContainer no longer
+  uses them for voice replies.
 
 ## Implementation map
 
@@ -58,6 +45,10 @@ All engine code lives in `app/src/main/kotlin/com/voicechat/agent/tts/`:
 | `AndroidTtsEngine.kt` | The platform `android.speech.tts.TextToSpeech` implementation (all platform TTS types stay here), including speech-engine selection at construction and `getEngines()` discovery. |
 | `AndroidTtsOutputRoute.kt` | Maps `AudioDeviceInfo` output types to `TtsOutputRoute`. |
 | `OnDeviceTts.kt` | App-boundary factory: `AndroidTtsEngine` wrapped by `EngineTextToSpeech`; takes the persisted engine and voice ids. |
+| `kokoro/KokoroArtifact.kt` | Pinned Kokoro voice identity, ONNX graph contract, sample rate, and phoneme bound. |
+| `kokoro/KokoroTtsEngine.kt` | Verified graph initialization, serialized synthesis/playback, and first-audible/interruption accounting. |
+| `kokoro/AudioTrackKokoroSink.kt` | The only Kokoro playback implementation using `AudioTrack` (24 kHz mono float PCM). |
+| `kokoro/KokoroTts.kt` | App-boundary factory wrapping Kokoro in `EngineTextToSpeech`. |
 
 `TtsSourcePurityTest` enforces that `TtsVoice.kt`, `TtsEngine.kt`,
 `TtsOutputRoute.kt`, `EngineTextToSpeech.kt`, and `TtsPlaybackAccounting.kt`
@@ -94,7 +85,23 @@ each chunk's terminal event. The adapter (`EngineTextToSpeech`):
 the product requires and clamps delivery to a valid prefix of the generated text
 via `toDelivery(...) -> AssistantDelivery`.
 
-## On-device voice discovery and policy
+## Kokoro model discovery and policy
+
+`KokoroTtsEngine.initialize()` resolves the persisted voice id or pinned default,
+asks `KokoroModelStore` for its integrity-checked state, and loads the native
+session only for `Installed`. `installedVoices()` contains only voices whose
+store state was `Installed`; `installedEngines()` is empty because Kokoro is one
+fixed speech API, not a platform engine picker. Settings offers the user-approved
+model install and reports the missing/corrupt state directly.
+
+The synthesis pipeline maps text to graph-sized phoneme chunks and synthesizes
+only the next piece before playback. The 24 kHz mono float output is streamed to
+`AudioTrack`. `Started` comes only from the first piece's `onAudible` callback; a
+source-text piece enters the delivered prefix only after its full sample stream
+finishes. `stop()` interrupts queued work and the active sink without reporting an
+unheard piece. Punctuation-only input completes without playback.
+
+## Retained M11 platform voice discovery and policy
 
 `AndroidTtsEngine.initialize()` awaits `TextToSpeech` init, sets the
 `UtteranceProgressListener`, enumerates `getVoices()`, and calls
@@ -116,7 +123,7 @@ Availability is therefore read from the device at runtime. A "ready" state is
 backed by a voice the platform actually reported; no voice/model is claimed
 available from app state.
 
-## Audio focus and route
+## Retained M11 platform audio focus and route
 
 - The engine holds transient `USAGE_ASSISTANT` audio focus for the span in which
   any utterance is active and abandons it when idle, via the same
@@ -129,6 +136,93 @@ available from app state.
   flow with `Interrupted` (the confirmed prefix, or empty), so a queued
   utterance cannot hang the turn if the engine omits a callback.
 
+## Kokoro graph contract
+
+One graph per voice, phoneme ids in, 24 kHz mono audio out. The publisher's
+contract, re-measured by `scripts/kokoro-onnx-contract.py` (see `models/README.md`):
+
+| direction | name | type | shape | content |
+| --- | --- | --- | --- | --- |
+| input | `input_ids` | int64 | `[1, T]` | Kokoro phoneme ids, padding id `0` at both ends, `T <= 512` |
+| input | `speed` | float32 | `[1]` | `1.0` is the teacher's pace; above `1` speaks faster |
+| output | `waveform` | float32 | `[1, N]` | mono audio at 24 000 Hz |
+
+The excitation is random, so two runs on the same input are not bit-identical.
+Tests therefore assert shape, range, and non-silence rather than exact samples,
+and the latency harness compares durations, never waveforms.
+
+## Kokoro phonemization
+
+The spoken string is normalized first: the rule pipeline ported from the
+neighboring EpubReader project runs per sentence, between the sentence split and
+the G2P, so dates, amounts, units, abbreviations and initialisms become words
+before Misaki sees them. That layer has its own document —
+[text-normalization.md](./text-normalization.md) — and its own decision
+([decisions.md](./decisions.md) §2.6). It rewrites only what is handed to the
+phonemizer: each chunk keeps the **original** sentence as its source text, so
+delivered-text accounting is unaffected.
+
+The port itself is `app/src/main/kotlin/com/voicechat/agent/tts/kokoro/phonemes/`
+and follows two Python sources:
+
+- the publisher's `titl/phonemes.py` — the sentence split, `split_phonemes`'s
+  cut-at-the-last-fitting-space rule, the 510-phoneme bound, the padding tokens,
+  and dropping symbols outside the vocabulary. This part is a **literal port**,
+  proven byte-exact against fixtures generated by the Python original
+  (`scripts/kokoro-phonemes-reference.py`, fixtures under
+  `app/src/test/resources/kokoro/`).
+- Misaki 0.9.4's English G2P (`misaki/en.py`) — the lexicon lookup (US gold +
+  silver), the `-s`/`-ed`/`-ing` stemmers, number/currency expansion, the special
+  cases (`the`, `to`, `a`, `an`, `in`, `by`, `used`, symbols, all-caps), stress
+  handling, the reverse-order resolution that lets `the`/`to` see the next word's
+  vowel, and the final `ɾ`→`T` / `ʔ`→`t` replacement.
+
+**Parts of speech.** Misaki selects tag-specific lexicon entries and drives
+several special cases with spaCy's `en_core_web_sm` tagger. Shipping spaCy is not
+possible here, so the port tags with Apache OpenNLP's offline Penn Treebank
+perceptron instead (`org.apache.opennlp:opennlp-tools`, Apache-2.0, model
+`assets/kokoro/en-pos-perceptron.bin`, 3,975,786 bytes, SHA-256 `0b49b7d9…`). That
+is a *substitute* tagger, not the one the reference uses, so a tag disagreement
+can still change a pronunciation.
+
+**Out-of-vocabulary words.** The Python falls back to eSpeak NG (GPL-3.0) and,
+without it, a ~200 MB BART model. Neither can ship here, so the port uses a
+deterministic offline rule fallback (letter rules, plus lexicon lookup of
+compound parts) and inline-IPA overrides `(word)[phonemes]`.
+
+The vocabulary and the gzipped lexicon are app assets
+(`scripts/fetch-kokoro-phoneme-data.sh`), so phonemization is on-device and
+offline. Note the packager: a `.gz` asset is decompressed and stored under the
+name **without** the suffix, so the APK holds `assets/kokoro/us_gold.json` and
+`AssetManager` has no gzip handling of its own. The loader therefore resolves the
+real entry and detects the gzip magic itself; `KokoroPhonemeAssetsTest` pins both
+the committed and the packaged form, because the committed file is gzipped and
+only a device would otherwise have caught the difference.
+
+**Measured parity.** `scripts/kokoro-phoneme-parity.sh` regenerates the Python
+fixtures and asserts the port against them. On 2026-10-17 the Kotlin port matched
+Misaki 9.4 sentence-for-sentence on **203/203** frozen corpus sentences (100%,
+no differing category) plus all 8 edge cases — numbers, currency, symbols,
+acronyms, a markdown inline-IPA link, punctuation-only text, and a sentence past
+the 510-phoneme cut. Read that as fixture parity, not general English accuracy:
+the corpus is templated, so its vocabulary is bounded, and the residual risk is
+exactly the tagger and the OOV fallback above (R-0263).
+
+One deliberate deviation from the Python chunk list: a chunk whose phonemes carry
+no letter (a punctuation-only fragment such as a bare `.`) is dropped rather than
+handed to the graph, because a graph call for it can only produce noise or
+silence. The engine therefore reports "nothing to play" and completes without
+`Started`, which the publisher's chunker would not distinguish from speech.
+
+## Kokoro playback route
+
+`AudioTrackKokoroSink` writes the graph's native 24 kHz mono `ENCODING_PCM_FLOAT`
+samples in streaming mode with `USAGE_ASSISTANT` / `CONTENT_TYPE_SPEECH`. It
+reports only a `TtsOutputRoute` kind read from the routed device; its name is
+never stored. The sink itself does not request audio focus. Device routing,
+focus interaction, underruns, and interruption latency are not yet verified on
+Pixel 10 (R-0264, R-0267; focus policy also remains under R-0050).
+
 ## Diagnostics
 
 `EngineTextToSpeech` records `TTS_SYNTHESIS` and `TTS_PLAYBACK` events through
@@ -136,6 +230,7 @@ the M04 `DiagnosticsSink`:
 
 - synthesis `STARTED` with `ENGINE_ID`, `MODEL_ID` (selected voice id), and
   `CHARACTER_COUNT`;
+- Kokoro graph load `COMPLETED`/`FAILED` with `ENGINE_ID` and measured duration;
 - playback `first-audible` with `AUDIO_ROUTE` (route kind only);
 - playback `completed` / `interrupted` with `DELIVERED_CHARACTER_COUNT` and
   `TOTAL_CHARACTER_COUNT`;
@@ -166,7 +261,8 @@ The TTS stage is measured in `app/src/main/kotlin/com/voicechat/agent/eval/tts/`
 `TextToSpeech`, proving the aggregation and failure handling. The device run is
 `VoiceTtsHarnessInstrumentedTest` (opt-in via `-e ttsHarnessRunId`), which reads
 the persisted locale/engine/voice from the settings store, speaks through the
-real platform engine, and writes the reports. It **was run** on 2026-10-17 on the
+real M11 platform engine, and writes the reports; it does not exercise Kokoro.
+It **was run** on 2026-10-17 on the
 Pixel 10 (see the status note above and
 [evaluation.md](./evaluation.md#latency-pixel-10));
 `scripts/run-tts-harness-device.ps1` stages, runs, and copies the reports back.
@@ -192,6 +288,11 @@ Pixel 10 (see the status note above and
 - `TtsSourcePurityTest` — the platform-free TTS types import no
   `android.*`/`androidx.*`.
 
+`app/src/test/kotlin/com/voicechat/agent/tts/kokoro/KokoroTtsEngineTest.kt`
+uses fake model state, synthesizer, and audio sink to cover lazy first-piece
+playback, ordering, interruption accounting, typed failures, unavailable models,
+empty phoneme output, and close behavior.
+
 `app/src/test/kotlin/com/voicechat/agent/eval/tts/VoiceTtsHarnessTest.kt` covers
 the harness aggregation, the failure/no-latency path, and the record's
 conditions.
@@ -209,7 +310,36 @@ compiles on the host (`:app:assembleDebugAndroidTest`) and runs only on a device
 `app/src/androidTest/.../eval/tts/VoiceTtsHarnessInstrumentedTest.kt` is the
 opt-in device harness; it was run on 2026-10-17 (see the status note above).
 
-## Pixel 10 test
+### Kokoro latency (M28)
+
+"Start of text to first sound" has two honest halves, measured from the same
+instant (the start of the text), so the rows read as a breakdown rather than
+unrelated numbers:
+
+| metric | what it is | where |
+| --- | --- | --- |
+| `tts_phonemize` | text → phoneme chunks planned (normalization included) | `KokoroTtsStageHarness` |
+| `tts_first_pcm` | text → the first synthesized piece is in memory | `KokoroTtsStageHarness` |
+| `tts_synthesis_complete` | text → every piece is in memory | `KokoroTtsStageHarness` |
+| `tts_first_audible` | text → audio actually audible | `VoiceTtsHarness` |
+
+`tts_first_pcm` is the synthesis side of time-to-first-audio: everything that
+must happen before the audio sink can be handed its first buffer, so it is what a
+phonemizer or graph change moves. The gap to `tts_first_audible` is the audio
+device's own start cost. `KokoroTtsStageHarness` also reports the synthesized
+audio duration per attempt, so a run states its realtime factor (audio seconds
+per synthesis second).
+
+Both halves run in one opt-in pass,
+`eval.tts.KokoroTtsHarnessInstrumentedTest` (`-e kokoroHarnessRunId`), staged by
+`scripts/run-kokoro-tts-latency.ps1`, using the same fixed texts as the M25
+harness so the numbers are comparable. A run with no installed voice is skipped,
+never downloaded mid-measurement. The host-side aggregation is proven with a
+deterministic clock by `KokoroTtsStageHarnessTest`, which is not a device claim;
+the device numbers are recorded in [Tests.md](../Tests.md) M28 and
+[evaluation.md](./evaluation.md) (R-0264).
+
+## Historical M11 platform TTS Pixel 10 test
 
 The TTS-stage harness was run on a Pixel 10 on 2026-10-17
 (`.\\scripts\\run-tts-harness-device.ps1 -Repeats 3`): Android 17 / API 37,
@@ -223,6 +353,37 @@ interaction, immediate-stop latency, audible naturalness, and the airplane-mode
 proof — are **not** run; no claim is made for them.
 
 ## Known limitations and open risks
+
+- **Kokoro device validation (R-0264 resolved; R-0271 open).** The engine ran on
+  the Pixel 10 on 2026-10-17: text start to first sound p50 654 ms, one graph call
+  per sentence 290-483 ms (~12x realtime), every attempt delivered. What the run
+  did **not** cover: inter-sentence gaps (the engine synthesizes piece N+1 only
+  after piece N finished playing, so a multi-sentence reply can insert one graph
+  call at each boundary), peak memory, `AudioTrack` underrun counts, and any route
+  other than the built-in speaker.
+- **Android runtime pin (R-0267 resolved).** OpenNLP 2.5.x cannot run on Android
+  — `BaseModel`'s static initializer needs `java.io.ObjectInputFilter` — so the
+  catalog pins 2.3.0, which the device run proved loads and tags. Re-check that
+  constraint before ever bumping OpenNLP.
+- **English only (R-0261).** The publisher's other two students are Italian and
+  need eSpeak-NG-derived phonemization this app does not have. A second language
+  is a new `KokoroVoiceArtifact` plus a phonemizer, not an engine change.
+- **Model is a download (R-0262).** The graph is never in the APK, so a fresh
+  install has no voice until the user installs it from Settings (or a developer
+  pushes it with `scripts/push-models.sh`). The state is visible and typed.
+- **G2P fidelity (R-0263).** The port substitutes OpenNLP's Penn tagger for
+  spaCy's and a rule fallback for eSpeak NG, so it is not byte-identical to the
+  Python reference by construction; the residual is pronunciation quality for
+  heteronyms and unknown words. The measured parity (203/203 on a templated
+  corpus, plus 8 edge cases) is on a bounded vocabulary and is not general
+  English accuracy.
+- **Voice quality (R-0265).** The students carry the publisher's own known
+  defects — a faint metallic ring, 2–4 kHz harmonic contrast partly filled with
+  noise, and the teacher's mispronunciations — and no human MOS exists for them.
+- **Interruption attribution (R-0266).** A sentence longer than 510 phonemes is
+  cut across chunks and its text is attributed to its first piece, so an
+  interruption inside such a sentence under-reports the audible prefix
+  (conservative, never over-reports).
 
 - **On-device validation (R-0057, partial).** The TTS-stage harness now measures
   voice enumeration and first-audible/playback time on the Pixel 10 (2026-10-17).

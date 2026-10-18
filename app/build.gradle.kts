@@ -72,6 +72,19 @@ android {
             isIncludeAndroidResources = true
         }
     }
+
+    // The M28 Kokoro phoneme data ships as assets: Kokoro's `vocab.json`, the
+    // OpenNLP Penn tagger model, and Misaki's English lexicon, which is committed
+    // gzipped (`*.json.gz`, ~1.4 MB) because it is 6 MB of JSON.
+    //
+    // The packager does NOT keep that name: it decompresses a `.gz` asset and
+    // stores it under the name without the suffix, so the APK contains
+    // `assets/kokoro/us_gold.json` and an `open("…us_gold.json.gz")` would fail
+    // on a device (verified by listing the built APK; `AssetManager` has no gzip
+    // handling). `KokoroPhonemizer` therefore resolves the real entry and detects
+    // the gzip magic itself — see `KokoroPhonemeAssetsTest`. No `noCompress` rule
+    // is needed for this: the entry is ordinary JSON by the time it is packaged,
+    // and the packager's own deflate is what keeps the APK small.
 }
 
 // The pinned ONNX Runtime native libraries, extracted from the
@@ -145,6 +158,9 @@ dependencies {
 
     // Bounded event-stream contracts in the domain/contracts packages.
     implementation(libs.kotlinx.coroutines.core)
+
+    // OpenNLP Penn Treebank tags drive Misaki's English pronunciation variants (M28).
+    implementation(libs.opennlp.tools)
 
     // Shared remote LLM transport (M14): streaming HTTP + JSON. These types stay
     // inside `com.voicechat.agent.remote` and provider adapters; the app-facing
