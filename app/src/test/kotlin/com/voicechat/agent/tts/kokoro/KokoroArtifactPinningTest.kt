@@ -82,11 +82,14 @@ class KokoroArtifactPinningTest {
         )
 
         // The build is what actually puts the graph in the APK, so the wiring is
-        // part of the pin: without it the fetched file is never packaged.
-        val build = File(root, "app/build.gradle.kts").readText()
+        // part of the pin: without it the fetched file is never packaged. The
+        // check strips whitespace first, so ktlint's line wrapping cannot make a
+        // correct build script look wrong.
+        val build = File(root, "app/build.gradle.kts").readText().replace(Regex("\\s+"), "")
         assertTrue(
             "the app module must register the fetched graph directory as an asset source",
-            build.contains("models/kokoro-assets") && build.contains("assets.directories.add"),
+            build.contains("models/kokoro-assets") &&
+                build.contains("assets.directories.add(kokoroAssetsDir"),
         )
     }
 
