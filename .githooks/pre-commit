@@ -1,0 +1,16 @@
+#!/bin/sh
+# Reject commits that contain what looks like a DashScope API key.
+# Enable with: git config core.hooksPath .githooks
+status=0
+for file in $(git diff --cached --name-only --diff-filter=ACM); do
+  case "$file" in
+    secrets/*|*.jks|*.keystore|*.aar|*.so|*.jar|*.png|*.jpg|*.jpeg|*.webp|*.zip|*.apk)
+      continue
+      ;;
+  esac
+  if git show ":$file" 2>/dev/null | grep -Eq 'sk-[A-Za-z0-9]{20,}'; then
+    echo "pre-commit: possible API key in $file - remove it and use secrets/ instead." >&2
+    status=1
+  fi
+done
+exit $status

@@ -1,9 +1,23 @@
 # Gradle files
 .gradle/
 build/
+app/build/
+app/schemas/
 
 # Local configuration file (sdk path, etc)
 local.properties
+
+# Secrets — NEVER commit. The app reads these at build time only.
+secrets/
+*.key
+*.jks
+*.keystore
+
+# Local model/audio experiments and generated results
+.codegraph/
+models/
+test_data/
+results/
 
 # Log/OS Files
 *.log
