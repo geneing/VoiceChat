@@ -207,7 +207,7 @@ object RealtimeDefaults {
             transcriptionModel = "qwen3-asr-flash-realtime",
             supportedTransports = TransportKind.entries.toSet(),
             supportsSpeechRate = true,
-            defaultSpeechRate = 1.15,
+            defaultSpeechRate = 1.25,
         ),
         ModelInfo(
             id = AUDIO_MODEL,
@@ -225,7 +225,7 @@ object RealtimeDefaults {
             // WebRTC signalling endpoint answers HTTP 500; WebSocket works.
             supportedTransports = setOf(TransportKind.WEBSOCKET),
             supportsSpeechRate = true,
-            defaultSpeechRate = 1.15,
+            defaultSpeechRate = 1.25,
         ),
     )
 

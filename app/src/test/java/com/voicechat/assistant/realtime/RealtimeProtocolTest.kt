@@ -161,7 +161,7 @@ class SessionPayloadsTest {
             config.copy(
                 model = "qwen-audio-3.1-realtime-flash",
                 turnDetection = "smart_turn_v2",
-                speechRate = 1.15,
+                speechRate = 1.25,
             ),
         )
         assertTrue(json.contains("\"type\":\"smart_turn_v2\""))
