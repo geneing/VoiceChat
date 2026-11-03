@@ -29,6 +29,12 @@ object Formatters {
         else -> String.format(Locale.US, "$%.2f", usd)
     }
 
+    fun bytes(count: Long): String = when {
+        count < 1_024 -> "$count B"
+        count < 1_048_576 -> String.format(Locale.US, "%.1f KB", count / 1_024.0)
+        else -> String.format(Locale.US, "%.2f MB", count / 1_048_576.0)
+    }
+
     fun relativeTime(timestamp: Long, now: Long = System.currentTimeMillis()): String {
         val diff = (now - timestamp).coerceAtLeast(0)
         return when {

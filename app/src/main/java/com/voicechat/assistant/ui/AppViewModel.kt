@@ -122,17 +122,30 @@ class AppViewModel(application: Application) :
                     TransportKind.WEBSOCKET
                 }
                 val voice = info.resolveVoice(current.voice)
-                if (transport != current.transport || voice != current.voice) {
+                val turnDetection = if (current.turnDetection in info.turnDetectionOptions) {
+                    current.turnDetection
+                } else {
+                    info.defaultTurnDetection
+                }
+                if (transport != current.transport ||
+                    voice != current.voice ||
+                    turnDetection != current.turnDetection
+                ) {
                     AppLog.info(
                         LogCategory.SESSION,
                         "Normalising model settings",
-                        "transport ${current.transport}->$transport voice ${current.voice}->$voice",
+                        "transport ${current.transport}->$transport voice ${current.voice}->$voice " +
+                            "turn ${current.turnDetection}->$turnDetection",
                     )
                     container.settings.update {
-                        it.copy(transport = transport, voice = voice)
+                        it.copy(
+                            transport = transport,
+                            voice = voice,
+                            turnDetection = turnDetection,
+                        )
                     }
                     _uiEvents.tryEmit(
-                        "${info.label}: adjusted transport/voice to $transport / $voice.",
+                        "${info.label}: adjusted transport/voice/turn detection.",
                     )
                 }
                 AppLog.configure(
@@ -339,10 +352,22 @@ class AppViewModel(application: Application) :
                 TransportKind.WEBSOCKET
             }
             val voice = info.resolveVoice(after.voice)
-            if (transport != after.transport || voice != after.voice) {
-                after = after.copy(transport = transport, voice = voice)
+            val turnDetection = if (after.turnDetection in info.turnDetectionOptions) {
+                after.turnDetection
+            } else {
+                info.defaultTurnDetection
+            }
+            if (transport != after.transport ||
+                voice != after.voice ||
+                turnDetection != after.turnDetection
+            ) {
+                after = after.copy(
+                    transport = transport,
+                    voice = voice,
+                    turnDetection = turnDetection,
+                )
                 _uiEvents.tryEmit(
-                    "${info.label}: adjusted to $transport / voice $voice.",
+                    "${info.label}: adjusted transport/voice/turn detection.",
                 )
             }
             container.settings.update { after }
@@ -525,13 +550,14 @@ class AppViewModel(application: Application) :
             host = current.host,
             workspaceId = current.workspaceId,
             aoqTokenUrl = current.aoqTokenUrl.trim(),
-            turnDetection = if (modelInfo.supportsSemanticVad) {
-                current.turnDetection.ifBlank { "semantic_vad" }
+            turnDetection = if (current.turnDetection in modelInfo.turnDetectionOptions) {
+                current.turnDetection
             } else {
-                "server_vad"
+                modelInfo.defaultTurnDetection
             },
             vadThreshold = current.vadThreshold,
             silenceMs = current.silenceMs,
+            speechRate = if (modelInfo.supportsSpeechRate) modelInfo.defaultSpeechRate else 0.0,
             inputTranscription = current.inputTranscription,
             transcriptionModel = modelInfo.transcriptionModel,
             toolsJson = if (toolsEnabled) container.tools.definitionsJson else null,

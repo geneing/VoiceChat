@@ -22,6 +22,10 @@ object SessionPayloads {
     fun sessionUpdate(config: SessionConfig): String {
         val instructions = buildString {
             append(config.instructions.trim())
+            append(
+                "\n\nDelivery: speak at a brisk, natural pace, slightly faster " +
+                    "than average, without sounding rushed.",
+            )
             if (config.languageHint.isNotBlank()) {
                 append("\n\nPreferred language: ")
                 append(config.languageHint.trim())
@@ -33,6 +37,9 @@ object SessionPayloads {
                 add(JsonPrimitive("audio"))
             })
             put("voice", config.voice)
+            if (config.speechRate > 0.0) {
+                put("speech_rate", config.speechRate)
+            }
             put("instructions", instructions)
             put("audio", buildJsonObject {
                 put("input", buildJsonObject {
@@ -56,8 +63,14 @@ object SessionPayloads {
             if (config.turnDetection.isNotBlank()) {
                 put("turn_detection", buildJsonObject {
                     put("type", config.turnDetection)
-                    put("threshold", config.vadThreshold.toDouble())
-                    put("silence_duration_ms", config.silenceMs)
+                    // smart_turn/smart_turn_v2 are semantic; the vendor rejects
+                    // acoustic tuning fields for them (or ignores them).
+                    if (config.turnDetection != "smart_turn" &&
+                        config.turnDetection != "smart_turn_v2"
+                    ) {
+                        put("threshold", config.vadThreshold.toDouble())
+                        put("silence_duration_ms", config.silenceMs)
+                    }
                 })
             } else {
                 put("turn_detection", kotlinx.serialization.json.JsonNull)

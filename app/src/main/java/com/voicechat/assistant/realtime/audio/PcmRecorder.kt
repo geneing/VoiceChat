@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
 import kotlin.math.sqrt
@@ -52,6 +54,8 @@ class PcmRecorder(
         )
         val bufferSize = maxOf(minBuffer * 2, 16_384)
         var record: AudioRecord? = null
+        var aec: AcousticEchoCanceler? = null
+        var noiseSuppressor: NoiseSuppressor? = null
         try {
             record = AudioRecord.Builder()
                 .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
@@ -68,6 +72,20 @@ class PcmRecorder(
                 onError("Microphone could not be initialised.")
                 return
             }
+            // VOICE_COMMUNICATION plus these effects is the platform echo path.
+            // Some devices only have software AEC; the effect is null then.
+            val sessionId = record.audioSessionId
+            if (AcousticEchoCanceler.isAvailable()) {
+                aec = AcousticEchoCanceler.create(sessionId)?.apply { enabled = true }
+            }
+            if (NoiseSuppressor.isAvailable()) {
+                noiseSuppressor = NoiseSuppressor.create(sessionId)?.apply { enabled = true }
+            }
+            AppLog.info(
+                LogCategory.AUDIO,
+                "PCM capture effects",
+                "aec=${aec?.enabled == true} ns=${noiseSuppressor?.enabled == true}",
+            )
             record.startRecording()
             AppLog.info(LogCategory.AUDIO, "PCM capture started")
             val buffer = ByteArray(CHUNK_BYTES)
@@ -92,6 +110,8 @@ class PcmRecorder(
                 record?.stop()
                 record?.release()
             }
+            runCatching { aec?.release() }
+            runCatching { noiseSuppressor?.release() }
             AppLog.info(LogCategory.AUDIO, "PCM capture stopped")
             onLevel(0f)
         }

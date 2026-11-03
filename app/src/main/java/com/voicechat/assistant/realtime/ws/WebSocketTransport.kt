@@ -5,6 +5,8 @@ import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.realtime.ApiEndpoints
+import com.voicechat.assistant.realtime.AudioTraffic
+import com.voicechat.assistant.realtime.AudioTrafficMeter
 import com.voicechat.assistant.realtime.RealtimeEvent
 import com.voicechat.assistant.realtime.RealtimeEventParser
 import com.voicechat.assistant.realtime.RealtimeTransport
@@ -57,6 +59,9 @@ class WebSocketTransport(
 
     private val _micLevel = MutableStateFlow(0f)
     override val micLevel: StateFlow<Float> = _micLevel.asStateFlow()
+
+    private val traffic = AudioTrafficMeter()
+    override val audioTraffic: StateFlow<AudioTraffic> = traffic.state
 
     private val player = PcmPlayer(SAMPLE_RATE_OUT)
     private val focus = AudioFocus(context.applicationContext)
@@ -127,7 +132,9 @@ class WebSocketTransport(
     override fun sendAudio(pcm: ByteArray) {
         if (_state.value != TransportState.CONNECTED || socket == null) return
         val base64 = Base64.getEncoder().encodeToString(pcm)
-        socket?.send(SessionPayloads.audioAppend(base64))
+        if (socket?.send(SessionPayloads.audioAppend(base64)) == true) {
+            traffic.addSent(pcm.size)
+        }
     }
 
     override fun setMicEnabled(enabled: Boolean) {
@@ -135,11 +142,13 @@ class WebSocketTransport(
         onAudioThread {
             if (enabled) {
                 if (_state.value == TransportState.CONNECTED) {
+                    focus.enterVoiceMode()
                     recorder.start()
                     focus.acquire()
                 }
             } else {
                 recorder.stop()
+                focus.exitVoiceMode()
             }
         }
     }
@@ -178,7 +187,11 @@ class WebSocketTransport(
             logIncoming(text)
             val event = RealtimeEventParser.parse(text) ?: return
             when (event) {
-                is RealtimeEvent.AssistantAudioDelta -> player.enqueue(event.audio)
+                is RealtimeEvent.AssistantAudioDelta -> {
+                    traffic.addReceived(event.audio.size)
+                    player.enqueue(event.audio)
+                }
+
                 is RealtimeEvent.ResponseCreated -> player.setMuted(false)
                 else -> Unit
             }

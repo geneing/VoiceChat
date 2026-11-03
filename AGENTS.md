@@ -32,13 +32,17 @@ The goal specification lives in `GOAL.md`. Treat it as the product contract.
 5. **Barge-in must stay instant.** On `input_audio_buffer.speech_started` stop
    local playback immediately (clear the PCM queue / mute the remote track) and
    cancel the in-flight response. Never wait for the server round trip to mute.
-6. **No blocking work on the main thread.** Audio I/O, sockets, Room writes and
+6. **Voice mode starts only from the sound-wave button.** Sending a typed
+   message while live stops the microphone first (`applyLiveMode(false)`), so
+   text turns never leave a hot mic. Do not start capture from the composer's
+   send action.
+7. **No blocking work on the main thread.** Audio I/O, sockets, Room writes and
    tool execution go through coroutines or dedicated threads.
-7. **Never change turn detection on a live session.** The server rejects
+8. **Never change turn detection on a live session.** The server rejects
    `session.update` that modifies `turn_detection`. Open every session with the
    configured VAD; live mode toggles capture only. In AOQ text mode, also pause
    AOQ audio publishing so the microphone is not transmitted.
-8. **Logs are opt-in and redacted.** See "Logging" below.
+9. **Logs are opt-in and redacted.** See "Logging" below.
 
 ## Build and run (Windows host)
 
@@ -146,7 +150,15 @@ committed, `conversation.item.input_audio_transcription.*`,
 
 Session defaults (see `RealtimeDefaults.kt` / `SessionConfig`): 16 kHz s16le
 mono input, 24 kHz PCM output, server-side turn detection, input audio
-transcription model `qwen3-asr-flash-realtime`.
+transcription model `qwen3-asr-flash-realtime`. Qwen Audio 3.1 defaults to
+`smart_turn_v2` (semantic + acoustic, much less self-interruption) and
+`speech_rate: 1.15`; Omni also sends `speech_rate: 1.15`. Every system prompt
+gets a delivery line asking for a brisk, slightly faster pace.
+
+WebSocket voice mode puts Android into `MODE_IN_COMMUNICATION` with the
+loudspeaker, uses `VOICE_COMMUNICATION` capture/playback attributes and enables
+`AcousticEchoCanceler` + `NoiseSuppressor` when available. Keep that path intact:
+it is what stops the assistant from hearing its own audio and barging in.
 
 Two vendor quirks this code compensates for:
 
@@ -257,8 +269,13 @@ Function calling: tool results go back as
 - Chat: reverse `LazyColumn`, user right / assistant left, streaming text
   updates in place, audio answers show a small waveform badge.
 - Composer: `+` (photo / camera / document), expanding text field, send,
-  sound-wave button for live mode. Live card above the composer shows state,
-  mic level, partial user transcript and streaming answer.
+  sound-wave button for live mode. Send and sound-wave are separate 42 dp
+  targets with a gap; never let IconButton's 48 dp touch target overlap them.
+  Typing and sending stops live mode; capture only starts from the sound wave.
+- Audio traffic strip above the composer shows media sent/received (B/KB/MB)
+  and "speaking"/"receiving"/"VAD idle"/"text mode". The top-bar dot is green
+  when audio is received, blue while VAD detects the user speaking, amber when
+  connected but silent, gray when disconnected.
 - Settings: connection (transport, model, voice, workspace host, API key),
   conversation (system prompt + presets, VAD, transcription, tools vs search),
   metrics/cost rates, debug categories + log viewer.

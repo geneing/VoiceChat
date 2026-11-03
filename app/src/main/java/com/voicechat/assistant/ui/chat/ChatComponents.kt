@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
@@ -508,6 +509,7 @@ fun Composer(
                     },
                 )
                 val canSend = (value.isNotBlank() || pendingAttachments.isNotEmpty()) && enabled
+                Spacer(Modifier.width(4.dp))
                 Box(
                     modifier = Modifier
                         .size(42.dp)
@@ -515,18 +517,21 @@ fun Composer(
                         .background(
                             if (canSend) MaterialTheme.colorScheme.primary
                             else Color.Transparent,
-                        ),
+                        )
+                        // A plain clickable box avoids IconButton's 48dp touch
+                        // target bleeding into the adjacent voice button.
+                        .clickable(enabled = canSend, onClick = onSend),
                     contentAlignment = Alignment.Center,
                 ) {
-                    IconButton(onClick = onSend, enabled = canSend) {
-                        Icon(
-                            Icons.Default.ArrowUpward,
-                            contentDescription = "Send",
-                            tint = if (canSend) MaterialTheme.colorScheme.onPrimary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Icon(
+                        Icons.Default.ArrowUpward,
+                        contentDescription = "Send",
+                        modifier = Modifier.size(20.dp),
+                        tint = if (canSend) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
+                Spacer(Modifier.width(6.dp))
                 Box(
                     modifier = Modifier
                         .size(42.dp)
@@ -544,17 +549,17 @@ fun Composer(
                                     listOf(Color.Transparent, Color.Transparent),
                                 )
                             },
-                        ),
+                        )
+                        .clickable(enabled = enabled, onClick = onToggleLive),
                     contentAlignment = Alignment.Center,
                 ) {
-                    IconButton(onClick = onToggleLive, enabled = enabled) {
-                        Icon(
-                            Icons.Default.GraphicEq,
-                            contentDescription = if (liveEnabled) "Stop voice mode" else "Start voice mode",
-                            tint = if (liveEnabled) MaterialTheme.colorScheme.onPrimary
-                            else MaterialTheme.colorScheme.primary,
-                        )
-                    }
+                    Icon(
+                        Icons.Default.GraphicEq,
+                        contentDescription = if (liveEnabled) "Stop voice mode" else "Start voice mode",
+                        modifier = Modifier.size(20.dp),
+                        tint = if (liveEnabled) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.primary,
+                    )
                 }
             }
         }
@@ -562,10 +567,18 @@ fun Composer(
 }
 
 @Composable
-fun ConnectionDot(connected: Boolean, active: Boolean) {
+fun ConnectionDot(
+    connected: Boolean,
+    active: Boolean,
+    sendingVoice: Boolean,
+    receivingAudio: Boolean,
+) {
     val color = when {
-        connected -> Color(0xFF45C486)
-        active -> MaterialTheme.colorScheme.secondary
+        !connected -> MaterialTheme.colorScheme.outlineVariant
+        receivingAudio && sendingVoice -> Color(0xFF23C6C0)
+        receivingAudio -> Color(0xFF45C486)
+        sendingVoice -> Color(0xFF5B8DEF)
+        active -> Color(0xFFE0A64A)
         else -> MaterialTheme.colorScheme.outlineVariant
     }
     Box(
@@ -574,6 +587,69 @@ fun ConnectionDot(connected: Boolean, active: Boolean) {
             .clip(CircleShape)
             .background(color),
     )
+}
+
+/** Live audio byte counters for the current chat/session. */
+@Composable
+fun AudioTrafficStrip(state: SessionUiState) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Audio",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(10.dp))
+        Icon(
+            Icons.Default.ArrowUpward,
+            contentDescription = "Audio sent",
+            modifier = Modifier.size(12.dp),
+            tint = if (state.speechActive) Color(0xFF5B8DEF)
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(2.dp))
+        Text(
+            Formatters.bytes(state.audioSentBytes),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (state.speechActive) Color(0xFF5B8DEF)
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(14.dp))
+        Icon(
+            Icons.Default.ArrowDownward,
+            contentDescription = "Audio received",
+            modifier = Modifier.size(12.dp),
+            tint = if (state.receivingAudio) Color(0xFF45C486)
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(2.dp))
+        Text(
+            Formatters.bytes(state.audioReceivedBytes),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (state.receivingAudio) Color(0xFF45C486)
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.weight(1f))
+        val label = when {
+            state.receivingAudio -> "receiving"
+            state.speechActive -> "speaking"
+            state.liveEnabled -> "VAD idle"
+            else -> "text mode"
+        }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = when {
+                state.receivingAudio -> Color(0xFF45C486)
+                state.speechActive -> Color(0xFF5B8DEF)
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
 }
 
 @Composable

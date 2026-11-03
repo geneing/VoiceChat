@@ -164,14 +164,17 @@ fun ChatScreen(
             }
         }
 
-        val showLive = session.active &&
-            (session.liveEnabled || session.isBusy || session.status == LiveStatus.CONNECTING)
+        val showLive = session.active && session.liveEnabled
         if (showLive) {
             LiveCard(
                 state = session,
                 onInterrupt = viewModel::interrupt,
                 onStopLive = viewModel::stopLive,
             )
+        }
+
+        if (session.active) {
+            AudioTrafficStrip(state = session)
         }
 
         Composer(

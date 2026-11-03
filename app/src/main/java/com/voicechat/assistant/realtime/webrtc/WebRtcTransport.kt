@@ -5,6 +5,8 @@ import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.realtime.ApiEndpoints
+import com.voicechat.assistant.realtime.AudioTraffic
+import com.voicechat.assistant.realtime.AudioTrafficMeter
 import com.voicechat.assistant.realtime.RealtimeEvent
 import com.voicechat.assistant.realtime.RealtimeEventParser
 import com.voicechat.assistant.realtime.RealtimeTransport
@@ -13,8 +15,11 @@ import com.voicechat.assistant.realtime.TransportState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -37,6 +42,8 @@ import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RTCStatsCollectorCallback
+import org.webrtc.RTCStatsReport
 import org.webrtc.RtpReceiver
 import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
@@ -72,6 +79,11 @@ class WebRtcTransport(
     private val _micLevel = MutableStateFlow(0f)
     override val micLevel: StateFlow<Float> = _micLevel.asStateFlow()
 
+    private val traffic = AudioTrafficMeter()
+    override val audioTraffic: StateFlow<AudioTraffic> = traffic.state
+
+    private var statsJob: Job? = null
+
     private var factory: PeerConnectionFactory? = null
     private var audioModule: JavaAudioDeviceModule? = null
     private var peerConnection: PeerConnection? = null
@@ -101,6 +113,7 @@ class WebRtcTransport(
         connecting = false
         if (result.isSuccess) {
             _state.value = TransportState.CONNECTED
+            startStatsPolling()
             AppLog.info(LogCategory.TRANSPORT, "WebRTC connected")
         } else {
             _state.value = TransportState.ERROR
@@ -231,12 +244,49 @@ class WebRtcTransport(
     override fun close() {
         connecting = false
         _state.value = TransportState.DISCONNECTED
+        statsJob?.cancel()
+        statsJob = null
         runCatching { clientChannel?.close() }
         clientChannel = null
         runCatching { peerConnection?.close() }
         cleanupScope.launch {
             teardown()
             cleanupScope.cancel()
+        }
+    }
+
+    private fun startStatsPolling() {
+        statsJob?.cancel()
+        statsJob = cleanupScope.launch {
+            while (isActive) {
+                peerConnection?.let(::requestStats)
+                delay(1_000)
+            }
+        }
+    }
+
+    private fun requestStats(pc: PeerConnection) {
+        runCatching {
+            pc.getStats(object : RTCStatsCollectorCallback {
+                override fun onStatsDelivered(report: RTCStatsReport?) {
+                    val statsMap = report?.statsMap ?: return
+                    var sent: Long? = null
+                    var received: Long? = null
+                    statsMap.values.forEach { stat ->
+                        val members = stat.members
+                        val kind = members["kind"] ?: members["mediaType"]
+                        if (kind != "audio") return@forEach
+                        when (stat.type) {
+                            "outbound-rtp" ->
+                                sent = (members["bytesSent"] as? Number)?.toLong()
+
+                            "inbound-rtp" ->
+                                received = (members["bytesReceived"] as? Number)?.toLong()
+                        }
+                    }
+                    traffic.updateTotals(sent, received)
+                }
+            })
         }
     }
 

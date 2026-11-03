@@ -173,6 +173,8 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                             ConnectionDot(
                                 connected = session.connected,
                                 active = session.active,
+                                sendingVoice = session.liveEnabled && session.speechActive,
+                                receivingAudio = session.receivingAudio,
                             )
                             Spacer(Modifier.width(4.dp))
                             IconButton(onClick = { routeName = Route.SETTINGS.name }) {

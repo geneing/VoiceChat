@@ -156,6 +156,21 @@ class SessionPayloadsTest {
     }
 
     @Test
+    fun `smart turn and speech rate are sent for audio model`() {
+        val json = SessionPayloads.sessionUpdate(
+            config.copy(
+                model = "qwen-audio-3.1-realtime-flash",
+                turnDetection = "smart_turn_v2",
+                speechRate = 1.15,
+            ),
+        )
+        assertTrue(json.contains("\"type\":\"smart_turn_v2\""))
+        assertTrue(json.contains("\"speech_rate\":1.15"))
+        assertTrue(!json.contains("\"silence_duration_ms\""))
+        assertTrue(json.contains("slightly faster"))
+    }
+
+    @Test
     fun `text turn asks for text modality only`() {
         val events = SessionPayloads.textTurn("hello")
         assertEquals(2, events.size)

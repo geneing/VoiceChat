@@ -9,10 +9,13 @@ data class ModelInfo(
     val description: String,
     val voices: List<String>,
     val defaultVoice: String,
-    val supportsSemanticVad: Boolean,
+    val turnDetectionOptions: List<String>,
+    val defaultTurnDetection: String,
     val supportsTools: Boolean,
     val transcriptionModel: String,
     val supportedTransports: Set<TransportKind>,
+    val supportsSpeechRate: Boolean = false,
+    val defaultSpeechRate: Double = 0.0,
 ) {
     /**
      * System voices come from the vendor's per-model voice list. Cloned voices
@@ -198,10 +201,13 @@ object RealtimeDefaults {
             description = "Full-duplex audio + vision, tool calling, semantic turn detection.",
             voices = OMNI_VOICES,
             defaultVoice = "Tina",
-            supportsSemanticVad = true,
+            turnDetectionOptions = listOf("semantic_vad", "semantic_vad_ec", "server_vad"),
+            defaultTurnDetection = "semantic_vad",
             supportsTools = true,
             transcriptionModel = "qwen3-asr-flash-realtime",
             supportedTransports = TransportKind.entries.toSet(),
+            supportsSpeechRate = true,
+            defaultSpeechRate = 1.15,
         ),
         ModelInfo(
             id = AUDIO_MODEL,
@@ -209,12 +215,17 @@ object RealtimeDefaults {
             description = "Low-latency voice conversation. WebSocket only; tools + web search.",
             voices = AUDIO_31_VOICES,
             defaultVoice = "longanqian_v3.1",
-            supportsSemanticVad = false,
+            // smart_turn_v2 fuses acoustics with semantics and is much less
+            // likely to mistake the assistant's own playback for a barge-in.
+            turnDetectionOptions = listOf("smart_turn_v2", "smart_turn"),
+            defaultTurnDetection = "smart_turn_v2",
             supportsTools = true,
             transcriptionModel = "fun-asr",
             // The AOQ gateway returns no credentials for this model and the
             // WebRTC signalling endpoint answers HTTP 500; WebSocket works.
             supportedTransports = setOf(TransportKind.WEBSOCKET),
+            supportsSpeechRate = true,
+            defaultSpeechRate = 1.15,
         ),
     )
 
@@ -227,8 +238,8 @@ object RealtimeDefaults {
     const val ASR_MODEL = "qwen3-asr-flash-realtime"
 
     const val DEFAULT_INSTRUCTIONS = """You are VoiceChat, a concise, friendly personal assistant.
-Answer in the language the user speaks. Prefer short, spoken-friendly answers
-(2-4 sentences) unless the user asks for detail. When you use a tool, say what
+Answer in the language the user speaks. Prefer concise, spoken-friendly answers
+ unless the user asks for detail. When you use a tool, say what
 you are doing in one short sentence. Never invent tool results or current
 information; if a tool fails, say so plainly."""
     val TURN_DETECTION_OPTIONS = listOf("semantic_vad", "semantic_vad_ec", "server_vad")

@@ -17,6 +17,8 @@ interface RealtimeTransport {
 
     val micLevel: StateFlow<Float>
 
+    val audioTraffic: StateFlow<AudioTraffic>
+
     suspend fun connect(config: SessionConfig): Result<Unit>
 
     fun send(eventJson: String): Boolean

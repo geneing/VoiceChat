@@ -66,6 +66,7 @@ data class SessionConfig(
     val turnDetection: String = "semantic_vad",
     val vadThreshold: Float = 0.5f,
     val silenceMs: Int = 600,
+    val speechRate: Double = 0.0,
     val inputTranscription: Boolean = true,
     val transcriptionModel: String = "qwen3-asr-flash-realtime",
     val toolsJson: String? = null,

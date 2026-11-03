@@ -20,6 +20,8 @@ import com.alibaba.aoq.clientsdk.AoqClientListener
 import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.data.model.TransportKind
+import com.voicechat.assistant.realtime.AudioTraffic
+import com.voicechat.assistant.realtime.AudioTrafficMeter
 import com.voicechat.assistant.realtime.RealtimeEvent
 import com.voicechat.assistant.realtime.RealtimeEventParser
 import com.voicechat.assistant.realtime.RealtimeTransport
@@ -71,6 +73,9 @@ class AoqTransport(
 
     private val _micLevel = MutableStateFlow(0f)
     override val micLevel: StateFlow<Float> = _micLevel.asStateFlow()
+
+    private val traffic = AudioTrafficMeter()
+    override val audioTraffic: StateFlow<AudioTraffic> = traffic.state
 
     @Volatile
     private var engine: AoqClientEngine? = null
@@ -494,6 +499,9 @@ class AoqTransport(
             val subscribed = stats.audioSubscribeStats?.firstOrNull()
             val published = stats.audioPublishStats?.firstOrNull()
             val network = stats.networkStats
+            val sentBytes = stats.audioPublishStats?.sumOf { it.bytes }
+            val receivedBytes = stats.audioSubscribeStats?.sumOf { it.bytes }
+            traffic.updateTotals(sentBytes, receivedBytes)
             AppLog.debug(
                 LogCategory.AUDIO,
                 "AOQ stats",

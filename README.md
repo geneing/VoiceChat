@@ -15,11 +15,17 @@ Voice input ──► Qwen realtime session ──► spoken answer + live trans
 ## Features
 
 - **Live voice mode** — continuous listening, server VAD (`semantic_vad` /
-  `semantic_vad_ec` / `server_vad`), streaming playback, tap or just talk to
-  interrupt. Playback is flushed locally the moment the server reports speech.
-  AOQ mode uses Alibaba's native SDK for Opus media and QUIC relay.
-- **Text mode** — type in the same session; answers are requested as text and
-  audio is suppressed even if the server streams it.
+  `smart_turn_v2` / `server_vad`), platform echo cancellation, streaming
+  playback, tap or just talk to interrupt. Qwen Audio 3.1 defaults to
+  `smart_turn_v2` so its own playback does not trigger a barge-in.
+- **Audio traffic indicator** — media sent/received per current session in
+  B/KB/MB, plus a top-bar dot that is green while receiving audio, blue while
+  the user is speaking, amber during VAD silence and gray when disconnected.
+- **Faster speech** — a delivery instruction is appended to every prompt and
+  both realtime models receive `speech_rate: 1.15`.
+- **Text mode** — type in the same session; sending stops the microphone,
+  answers are requested as text and audio is suppressed even if the server
+  streams it. Voice only resumes from the sound-wave button.
 - **Seamless switching** — the session stays open between modalities; context is
   never rebuilt.
 - **Chat history** — drawer with day grouping, long-press to rename or delete.

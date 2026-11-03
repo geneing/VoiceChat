@@ -10,10 +10,12 @@ import com.voicechat.assistant.data.model.TurnMetrics
 import com.voicechat.assistant.realtime.tools.ToolRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -36,6 +38,11 @@ data class SessionUiState(
     val ttftMs: Long = -1,
     val error: String? = null,
     val turnCount: Int = 0,
+    val audioSentBytes: Long = 0,
+    val audioReceivedBytes: Long = 0,
+    val sendingAudio: Boolean = false,
+    val receivingAudio: Boolean = false,
+    val speechActive: Boolean = false,
 ) {
     val isBusy: Boolean
         get() = status == LiveStatus.THINKING || status == LiveStatus.RESPONDING
@@ -70,6 +77,7 @@ class RealtimeSession(
     private var transport: RealtimeTransport? = null
     private var eventsJob: Job? = null
     private var levelJob: Job? = null
+    private var trafficJob: Job? = null
     private var config: SessionConfig? = null
 
     private var responding = false
@@ -116,6 +124,22 @@ class RealtimeSession(
                 _state.update { if (it.liveEnabled) it.copy(micLevel = level) else it.copy(micLevel = 0f) }
             }
         }
+        trafficJob = scope.launch {
+            while (isActive) {
+                val traffic = newTransport.audioTraffic.value
+                val now = System.nanoTime() / 1_000_000
+                _state.update {
+                    it.copy(
+                        audioSentBytes = traffic.sentBytes,
+                        audioReceivedBytes = traffic.receivedBytes,
+                        sendingAudio = traffic.lastSentAtMs > 0 && now - traffic.lastSentAtMs < 600,
+                        receivingAudio = traffic.lastReceivedAtMs > 0 &&
+                            now - traffic.lastReceivedAtMs < 600,
+                    )
+                }
+                delay(200)
+            }
+        }
         val result = newTransport.connect(config)
         if (result.isSuccess) {
             newTransport.setMicEnabled(live)
@@ -160,16 +184,20 @@ class RealtimeSession(
                 activeTransport.send(SessionPayloads.cancelResponse())
                 finishTurn(partial = true)
             }
-            if (images.isNotEmpty() && liveEnabled) {
-                // Image uploads need the input buffer to be committed; stop
-                // listening for this turn without touching turn_detection.
-                liveEnabled = false
-                activeTransport.setMicEnabled(false)
-                _state.update { it.copy(liveEnabled = false, status = LiveStatus.IDLE) }
+            if (liveEnabled) {
+                // Typing is an explicit switch to text mode. Voice input must
+                // only start from the sound-wave button, so stop listening
+                // (and AOQ mic publishing) for this turn.
+                applyLiveMode(false)
             }
             beginTurn(voice = false)
             _state.update {
-                it.copy(status = LiveStatus.THINKING, assistantPartial = "", userPartial = "")
+                it.copy(
+                    status = LiveStatus.THINKING,
+                    assistantPartial = "",
+                    userPartial = "",
+                    speechActive = false,
+                )
             }
             SessionPayloads.textTurn(text, images).forEach { event ->
                 if (!activeTransport.send(event)) {
@@ -211,6 +239,8 @@ class RealtimeSession(
         eventsJob = null
         levelJob?.cancel()
         levelJob = null
+        trafficJob?.cancel()
+        trafficJob = null
         runCatching { transport?.close() }
         transport = null
         config = null
@@ -249,6 +279,7 @@ class RealtimeSession(
                     else -> it.status
                 },
                 micLevel = if (enabled) it.micLevel else 0f,
+                speechActive = false,
             )
         }
         AppLog.info(LogCategory.SESSION, "Live mode ${if (enabled) "on" else "off"}")
@@ -260,6 +291,8 @@ class RealtimeSession(
         eventsJob = null
         levelJob?.cancel()
         levelJob = null
+        trafficJob?.cancel()
+        trafficJob = null
         transport?.close()
         transport = null
         config = null
@@ -307,6 +340,7 @@ class RealtimeSession(
                         userPartial = "",
                         assistantPartial = "",
                         speaking = false,
+                        speechActive = true,
                     )
                 }
             }
@@ -314,7 +348,9 @@ class RealtimeSession(
             is RealtimeEvent.SpeechStopped -> {
                 AppLog.debug(LogCategory.SESSION, "Speech stopped")
                 beginTurn(voice = true)
-                _state.update { it.copy(status = LiveStatus.THINKING, speaking = false) }
+                _state.update {
+                    it.copy(status = LiveStatus.THINKING, speaking = false, speechActive = false)
+                }
             }
 
             is RealtimeEvent.UserTranscriptDelta -> {
@@ -337,7 +373,7 @@ class RealtimeSession(
                 responding = true
                 transport?.setSpeakerMuted(!currentTurnVoice)
                 _state.update {
-                    it.copy(status = LiveStatus.THINKING, speaking = false, error = null)
+                    it.copy(status = LiveStatus.THINKING, speaking = false, speechActive = false, error = null)
                 }
                 AppLog.debug(LogCategory.SESSION, "Response created", event.responseId)
             }
@@ -398,6 +434,7 @@ class RealtimeSession(
                         it.copy(
                             status = LiveStatus.THINKING,
                             speaking = false,
+                            speechActive = false,
                             ttftMs = metrics.ttftMs,
                             turnCount = it.turnCount + 1,
                         )
@@ -407,6 +444,7 @@ class RealtimeSession(
                         it.copy(
                             status = if (liveEnabled) LiveStatus.LISTENING else LiveStatus.IDLE,
                             speaking = false,
+                            speechActive = false,
                             ttftMs = metrics.ttftMs,
                             turnCount = it.turnCount + 1,
                         )
@@ -425,7 +463,7 @@ class RealtimeSession(
                 AppLog.debug(LogCategory.SESSION, "Response cancelled", event.reason)
                 finishTurn(partial = true)
                 _state.update {
-                    it.copy(status = if (liveEnabled) LiveStatus.LISTENING else LiveStatus.IDLE)
+                    it.copy(status = if (liveEnabled) LiveStatus.LISTENING else LiveStatus.IDLE, speechActive = false)
                 }
             }
 
@@ -442,6 +480,7 @@ class RealtimeSession(
                         status = LiveStatus.ERROR,
                         connected = false,
                         error = event.message,
+                        speechActive = false,
                     )
                 }
                 listener.onError(event.message)
@@ -456,6 +495,7 @@ class RealtimeSession(
                             connected = false,
                             active = false,
                             liveEnabled = false,
+                            speechActive = false,
                         )
                     }
                     if (!responding) {

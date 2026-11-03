@@ -173,11 +173,8 @@ fun SettingsScreen(
                             current.copy(
                                 model = id,
                                 voice = info?.defaultVoice ?: current.voice,
-                                turnDetection = if (info?.supportsSemanticVad == true) {
-                                    current.turnDetection
-                                } else {
-                                    "server_vad"
-                                },
+                                turnDetection = info?.defaultTurnDetection
+                                    ?: current.turnDetection,
                                 toolsEnabled = current.toolsEnabled && supportsTools,
                                 nativeSearch = current.nativeSearch && supportsTools,
                             )
@@ -307,16 +304,18 @@ fun SettingsScreen(
                 DropdownSetting(
                     label = "Turn detection",
                     value = settings.turnDetection,
-                    options = if (settings.modelInfo.supportsSemanticVad) {
-                        RealtimeDefaults.TURN_DETECTION_OPTIONS.map { it to it }
-                    } else {
-                        listOf("server_vad" to "server_vad")
-                    },
+                    options = settings.modelInfo.turnDetectionOptions.map { it to it },
                     onSelect = { value -> viewModel.updateSettings { it.copy(turnDetection = value) } },
                 )
                 Text(
-                    "semantic_vad filters filler sounds. semantic_vad_ec also makes barge-in " +
-                        "easier. WebRTC and audio-only models use VAD turns.",
+                    if (settings.modelInfo.id == RealtimeDefaults.AUDIO_MODEL) {
+                        "smart_turn_v2 is recommended for Qwen Audio: it combines " +
+                            "acoustics with semantics and ignores filler and echo. " +
+                            "The app also runs the platform echo canceller in voice mode."
+                    } else {
+                        "semantic_vad filters filler sounds. semantic_vad_ec also makes " +
+                            "barge-in easier."
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -329,15 +328,26 @@ fun SettingsScreen(
                     step = 0.05f,
                     onCommit = { value -> viewModel.updateSettings { it.copy(vadThreshold = value) } },
                 )
-                SliderSetting(
-                    label = "Silence before reply",
-                    valueText = "${settings.silenceMs} ms",
-                    value = settings.silenceMs.toFloat(),
-                    min = 200f,
-                    max = 2000f,
-                    step = 100f,
-                    onCommit = { value -> viewModel.updateSettings { it.copy(silenceMs = value.toInt()) } },
-                )
+                if (!settings.turnDetection.startsWith("smart_turn")) {
+                    SliderSetting(
+                        label = "Silence before reply",
+                        valueText = "${settings.silenceMs} ms",
+                        value = settings.silenceMs.toFloat(),
+                        min = 200f,
+                        max = 2000f,
+                        step = 100f,
+                        onCommit = { value ->
+                            viewModel.updateSettings { it.copy(silenceMs = value.toInt()) }
+                        },
+                    )
+                } else {
+                    Text(
+                        "Smart turn detection decides when you have finished speaking; " +
+                            "no fixed silence timer is used.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 SwitchSetting(
                     title = "Transcribe my voice",
                     subtitle = "Shows your speech as text in the chat.",
