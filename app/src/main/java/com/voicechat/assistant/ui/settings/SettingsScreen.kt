@@ -349,6 +349,40 @@ fun SettingsScreen(
                     )
                 }
                 SwitchSetting(
+                    title = "On-device voice gate",
+                    subtitle = "Streams audio only while you speak, so silence and room " +
+                        "noise never leave the phone. WebSocket only; keeps 1 s of audio " +
+                        "from before you started talking and 1.5 s of silence after you stop.",
+                    checked = settings.onDeviceVad,
+                    onCheckedChange = { value ->
+                        viewModel.updateSettings { it.copy(onDeviceVad = value) }
+                    },
+                )
+                if (settings.onDeviceVad) {
+                    SliderSetting(
+                        label = "Voice gate trigger above noise",
+                        valueText = String.format(
+                            java.util.Locale.US,
+                            "%.0f dB",
+                            settings.vadSensitivityDb,
+                        ),
+                        value = settings.vadSensitivityDb,
+                        min = 3f,
+                        max = 18f,
+                        step = 1f,
+                        onCommit = { value ->
+                            viewModel.updateSettings { it.copy(vadSensitivityDb = value) }
+                        },
+                    )
+                    Text(
+                        "The trigger follows the measured ambient noise, so it adapts " +
+                            "when you move to a quieter or louder room. Lower is more " +
+                            "sensitive; raise it if background noise keeps opening the gate.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                SwitchSetting(
                     title = "Transcribe my voice",
                     subtitle = "Shows your speech as text in the chat.",
                     checked = settings.inputTranscription,

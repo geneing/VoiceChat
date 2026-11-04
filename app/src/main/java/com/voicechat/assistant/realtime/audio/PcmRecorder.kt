@@ -13,12 +13,22 @@ import kotlin.math.sqrt
 /**
  * 16 kHz / mono / 16-bit PCM capture for the WebSocket transport. Chunks are
  * ~50 ms so barge-in and VAD latency stay low without flooding the socket.
+ *
+ * Capture is continuous, but [onChunk] only receives audio that belongs to a
+ * spoken turn: [SpeechGate] drops silence and room noise so the server is not
+ * billed for it. [onLevel] still fires for every chunk so the waveform keeps
+ * moving while the gate is closed.
  */
 class PcmRecorder(
     private val onChunk: (ByteArray) -> Unit,
     private val onLevel: (Float) -> Unit,
     private val onError: (String) -> Unit,
 ) {
+
+    /** Applied when capture starts; changing it while running has no effect. */
+    @Volatile
+    var vadConfig: VadConfig = VadConfig()
+
 
     private var thread: Thread? = null
 
@@ -53,9 +63,14 @@ class PcmRecorder(
             AudioFormat.ENCODING_PCM_16BIT,
         )
         val bufferSize = maxOf(minBuffer * 2, 16_384)
+        val gate = SpeechGate(vadConfig, SAMPLE_RATE * BYTES_PER_SAMPLE)
         var record: AudioRecord? = null
         var aec: AcousticEchoCanceler? = null
         var noiseSuppressor: NoiseSuppressor? = null
+        var lastLoggedThreshold = gate.thresholdDb
+        var chunksSinceLevelLog = 0
+        var gateState = gate.state
+
         try {
             record = AudioRecord.Builder()
                 .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
@@ -92,8 +107,32 @@ class PcmRecorder(
             while (running) {
                 val read = record.read(buffer, 0, buffer.size)
                 if (read > 0) {
-                    onChunk(buffer.copyOf(read))
-                    onLevel(levelOf(buffer, read))
+                    val chunk = buffer.copyOf(read)
+                    onLevel(levelOf(chunk))
+                    gate.process(chunk).forEach(onChunk)
+                    if (gate.state != gateState) {
+                        gateState = gate.state
+                        AppLog.debug(
+                            LogCategory.AUDIO,
+                            "Voice gate $gateState",
+                            "floor=${formatDb(gate.noiseFloorDb)} trigger=${formatDb(gate.thresholdDb)}",
+                        )
+                    }
+                    // Surface large ambient shifts so a noisy room is visible
+                    // in the logs without streaming every threshold change.
+                    chunksSinceLevelLog++
+                    if (chunksSinceLevelLog >= LEVEL_LOG_CHUNKS) {
+                        chunksSinceLevelLog = 0
+                        val threshold = gate.thresholdDb
+                        if (kotlin.math.abs(threshold - lastLoggedThreshold) >= LEVEL_LOG_DELTA_DB) {
+                            lastLoggedThreshold = threshold
+                            AppLog.info(
+                                LogCategory.AUDIO,
+                                "Voice gate retuned",
+                                "floor=${formatDb(gate.noiseFloorDb)} trigger=${formatDb(threshold)}",
+                            )
+                        }
+                    }
                 } else if (read < 0) {
                     onError("Microphone read failed ($read).")
                     break
@@ -112,16 +151,24 @@ class PcmRecorder(
             }
             runCatching { aec?.release() }
             runCatching { noiseSuppressor?.release() }
-            AppLog.info(LogCategory.AUDIO, "PCM capture stopped")
+            val sent = gate.streamedMs
+            val captured = gate.capturedMs
+            val kept = if (captured > 0f) (sent / captured * 100f) else 100f
+            AppLog.info(
+                LogCategory.AUDIO,
+                "PCM capture stopped",
+                "sent=${sent.toInt()}ms of ${captured.toInt()}ms (${kept.toInt()}%) " +
+                    "floor=${formatDb(gate.noiseFloorDb)} trigger=${formatDb(gate.thresholdDb)}",
+            )
             onLevel(0f)
         }
     }
 
-    private fun levelOf(buffer: ByteArray, length: Int): Float {
+    private fun levelOf(buffer: ByteArray): Float {
         var sum = 0.0
         var count = 0
         var index = 0
-        while (index + 1 < length) {
+        while (index + 1 < buffer.size) {
             val sample = (buffer[index].toInt() and 0xFF) or (buffer[index + 1].toInt() shl 8)
             val signed = sample.toShort().toInt()
             sum += signed.toDouble() * signed
@@ -135,8 +182,14 @@ class PcmRecorder(
         return smoothedLevel
     }
 
+    private fun formatDb(value: Float): String =
+        String.format(java.util.Locale.US, "%.0fdB", value)
+
     companion object {
         const val SAMPLE_RATE = 16_000
+        private const val BYTES_PER_SAMPLE = 2
         private const val CHUNK_BYTES = 1_600 // 50 ms
+        private const val LEVEL_LOG_CHUNKS = 40 // ~2 s
+        private const val LEVEL_LOG_DELTA_DB = 6f
     }
 }

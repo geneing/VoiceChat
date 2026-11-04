@@ -66,6 +66,10 @@ data class SessionConfig(
     val turnDetection: String = "semantic_vad",
     val vadThreshold: Float = 0.5f,
     val silenceMs: Int = 600,
+    /** Gate captured audio on the device so silence is never billed. */
+    val onDeviceVad: Boolean = true,
+    /** Speech must exceed the measured noise floor by this many dB. */
+    val vadSensitivityDb: Float = 9f,
     val speechRate: Double = 0.0,
     val inputTranscription: Boolean = true,
     val transcriptionModel: String = "qwen3-asr-flash-realtime",
@@ -77,4 +81,21 @@ data class SessionConfig(
     val languageHint: String = "",
 ) {
     val endpoint: String get() = ApiEndpoints.urlFor(this)
+
+    /**
+     * How long the on-device gate keeps streaming after the last syllable. The
+     * gate must never close a turn earlier than the server would, otherwise a
+     * natural pause splits one sentence into two turns: `smart_turn` waits about
+     * three seconds, the acoustic modes use [silenceMs].
+     */
+    fun voiceGateHangoverMs(): Int = if (turnDetection.startsWith("smart_turn")) {
+        SMART_TURN_HANGOVER_MS
+    } else {
+        (silenceMs + ACOUSTIC_HANGOVER_MARGIN_MS).coerceIn(1_200, 6_000)
+    }
+
+    companion object {
+        private const val SMART_TURN_HANGOVER_MS = 3_200
+        private const val ACOUSTIC_HANGOVER_MARGIN_MS = 800
+    }
 }

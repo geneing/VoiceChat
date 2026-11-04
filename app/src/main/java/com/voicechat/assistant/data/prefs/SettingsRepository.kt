@@ -34,6 +34,8 @@ data class AppSettings(
     val turnDetection: String = "semantic_vad",
     val vadThreshold: Float = 0.5f,
     val silenceMs: Int = 600,
+    val onDeviceVad: Boolean = true,
+    val vadSensitivityDb: Float = 9f,
     val inputTranscription: Boolean = true,
     val toolsEnabled: Boolean = true,
     val nativeSearch: Boolean = true,
@@ -72,6 +74,8 @@ class SettingsRepository(private val context: Context) {
             turnDetection = prefs[Keys.turnDetection] ?: defaults.turnDetection,
             vadThreshold = prefs[Keys.vadThreshold] ?: defaults.vadThreshold,
             silenceMs = prefs[Keys.silenceMs] ?: defaults.silenceMs,
+            onDeviceVad = prefs[Keys.onDeviceVad] ?: defaults.onDeviceVad,
+            vadSensitivityDb = prefs[Keys.vadSensitivityDb] ?: defaults.vadSensitivityDb,
             inputTranscription = prefs[Keys.inputTranscription] ?: defaults.inputTranscription,
             toolsEnabled = prefs[Keys.toolsEnabled] ?: defaults.toolsEnabled,
             nativeSearch = prefs[Keys.nativeSearch] ?: defaults.nativeSearch,
@@ -150,6 +154,8 @@ class SettingsRepository(private val context: Context) {
         prefs[Keys.turnDetection] = s.turnDetection
         prefs[Keys.vadThreshold] = s.vadThreshold
         prefs[Keys.silenceMs] = s.silenceMs
+        prefs[Keys.onDeviceVad] = s.onDeviceVad
+        prefs[Keys.vadSensitivityDb] = s.vadSensitivityDb
         prefs[Keys.inputTranscription] = s.inputTranscription
         prefs[Keys.toolsEnabled] = s.toolsEnabled
         prefs[Keys.nativeSearch] = s.nativeSearch
@@ -175,6 +181,8 @@ class SettingsRepository(private val context: Context) {
         val turnDetection = stringPreferencesKey("turn_detection")
         val vadThreshold = floatPreferencesKey("vad_threshold")
         val silenceMs = intPreferencesKey("silence_ms")
+        val onDeviceVad = booleanPreferencesKey("on_device_vad")
+        val vadSensitivityDb = floatPreferencesKey("vad_sensitivity_db")
         val inputTranscription = booleanPreferencesKey("input_transcription")
         val toolsEnabled = booleanPreferencesKey("tools_enabled")
         val nativeSearch = booleanPreferencesKey("native_search")

@@ -13,5 +13,9 @@ Quick reference:
 - One realtime session per conversation. Text turns request text-only output;
   voice turns request text+audio. Same context. Barge-in mutes playback and
   cancels the response immediately.
+- WebSocket capture is gated on device (`realtime/audio/SpeechGate`): only
+  speech plus 1 s pre-roll and 1.5 s tail silence is streamed. The server VAD
+  still trims silence from billing, so the gate buys bandwidth, not tokens —
+  see `AGENTS.md` for the measured table.
 - Protocol details, module map, transports, logging/metrics rules and known
   limitations are in `AGENTS.md`. Update that file with code changes.

@@ -16,6 +16,7 @@ import com.voicechat.assistant.realtime.TransportState
 import com.voicechat.assistant.realtime.audio.AudioFocus
 import com.voicechat.assistant.realtime.audio.PcmPlayer
 import com.voicechat.assistant.realtime.audio.PcmRecorder
+import com.voicechat.assistant.realtime.audio.VadConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -90,10 +91,18 @@ class WebSocketTransport(
     @Volatile
     private var micEnabled = false
 
+    @Volatile
+    private var vadConfig = VadConfig()
+
     override suspend fun connect(config: SessionConfig): Result<Unit> = withContext(Dispatchers.IO) {
         if (config.apiKey.isBlank()) {
             return@withContext Result.failure(IllegalStateException("API key is not configured."))
         }
+        vadConfig = VadConfig(
+            enabled = config.onDeviceVad,
+            sensitivityDb = config.vadSensitivityDb,
+            hangoverMs = config.voiceGateHangoverMs(),
+        )
         _state.value = TransportState.CONNECTING
         val opened = CompletableDeferred<Result<Unit>>()
         val url = ApiEndpoints.webSocketUrl(config.host, config.workspaceId, config.model)
@@ -143,6 +152,7 @@ class WebSocketTransport(
             if (enabled) {
                 if (_state.value == TransportState.CONNECTED) {
                     focus.enterVoiceMode()
+                    recorder.vadConfig = vadConfig
                     recorder.start()
                     focus.acquire()
                 }

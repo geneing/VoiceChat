@@ -100,7 +100,7 @@ app/src/main/java/com/voicechat/assistant/
     webrtc/WebRtcTransport.kt org.webrtc peer connection + data channel
     aoq/AoqTokenClient.kt    AppServer token allocation + response mapping
     aoq/AoqTransport.kt      Alibaba AOQ SDK: QUIC media + Data events
-    audio/                   PcmRecorder, PcmPlayer, level meter, focus
+    audio/                   PcmRecorder, PcmPlayer, SpeechGate (device VAD), level meter, focus
     tools/                   ToolDefinitions (schemas) + ToolRegistry (execution)
     RealtimeSession.kt       protocol state machine: turns, tools, metrics
   ui/
@@ -214,10 +214,53 @@ Function calling: tool results go back as
   Qwen Audio 3.1 supports both (verified on the device). Qwen Audio's function
   calling schema parser requires `required` on every tool.
 
+## On-device voice gate
+
+Android exposes no public VAD API, so `realtime/audio/SpeechGate` derives speech
+from the WebSocket capture stream. `PcmRecorder` keeps reading the microphone but
+only forwards audio that belongs to a spoken turn:
+
+- 1 s pre-roll ring buffer, flushed on onset so the first syllable is never lost.
+- Onset needs 100 ms of speech above the trigger, which follows the measured
+  ambient noise floor (fast down, slow up) to adapt to a quiet room or a noisy one.
+- 1.2 s hangover keeps short pauses inside one turn.
+- 1.5 s of digital silence is appended after the last syllable. Without it the
+  server never closes the turn: a capture that stops right after speech produces
+  no `speech_stopped` and the response dies with a 60 s
+  "Response stream timeout" (measured).
+- `onLevel` still fires for every chunk, so the mic meter and barge-in behave
+  exactly as before.
+- Capture stop logs `sent=Xms of Yms (Z%)`, the learned floor and the trigger.
+
+Billing facts measured against the live API (both models, same 2.96 s utterance,
+silence padded before and after):
+
+| Turn detection | Audio streamed | `input_tokens_details.audio_tokens` |
+| --- | --- | --- |
+| `semantic_vad` (Omni), gate off | 13.96 s | 28 |
+| `semantic_vad` (Omni), gate on | 6.35 s | 28 |
+| `smart_turn_v2` (Qwen Audio), gate off | 13.96 s | 23 |
+| `smart_turn_v2` (Qwen Audio), gate on | 6.35 s | 25 |
+| `turn_detection: null` (manual), gate off | 13.96 s | 98 |
+| `turn_detection: null` (manual), gate on | 6.35 s | 49 |
+
+With server-side turn detection the server tokenizes only its own VAD window, so
+silence around the turn is already free and the gate mainly buys bandwidth,
+battery and privacy. Manual mode bills the whole client buffer (~7 audio tokens
+per second), so there the gate is what keeps the cost down. Neither mode changes
+the transcript.
+
+Settings: "On-device voice gate" (`onDeviceVad`) and "Voice gate trigger above
+noise" (`vadSensitivityDb`, dB above the noise floor) travel through
+`SessionConfig` → `WebSocketTransport` → `PcmRecorder.vadConfig` and apply when
+capture starts. WebRTC and AOQ cannot gate: the vendor SDK owns the live media
+stream and a pre-roll cannot be replayed into it.
+
 ## Transports
 
 - **WebSocket** — full feature set: mic capture, streaming TTS playback,
-  barge-in, images, tools, works on emulators.
+  barge-in, images, tools, works on emulators. The on-device voice gate is
+  WebSocket-only.
 - **WebRTC** — lowest latency media path; `org.webrtc` owns mic, AEC, noise
   suppression and playback, so `PcmRecorder`/`PcmPlayer` are not used. VAD
   turns only. Attachments are not supported (protocol carries images on the
@@ -288,8 +331,9 @@ Function calling: tool results go back as
   when audio is received, blue while VAD detects the user speaking, amber when
   connected but silent, gray when disconnected.
 - Settings: connection (transport, model, voice, workspace host, API key),
-  conversation (system prompt + presets, VAD, transcription, client tools +
-  native search), metrics/cost rates, debug categories + log viewer.
+  conversation (system prompt + presets, VAD, on-device voice gate + trigger,
+  transcription, client tools + native search), metrics/cost rates, debug
+  categories + log viewer.
 - Keep strings in `res/values/strings.xml` when reused; UI copy may also be
   inline for one-off labels. No hard-coded colours outside the theme.
 
@@ -311,8 +355,10 @@ Function calling: tool results go back as
 
 Unit tests live in `app/src/test`. Cover: event parsing (including unknown
 events and redaction), URL/session-config building, cost/TTFT math, tool
-argument handling, text-turn vs voice-turn modality policy. UI tests are not
-required; verify screens on the emulator with `adb` screenshots.
+argument handling, text-turn vs voice-turn modality policy, and the
+`SpeechGate` state machine (silence dropped, pre-roll flushed, tail silence,
+adaptive floor, disabled pass-through). UI tests are not required; verify
+screens on the emulator with `adb` screenshots.
 
 ## Known limitations / roadmap
 
@@ -322,4 +368,5 @@ required; verify screens on the emulator with `adb` screenshots.
   shots are sent as still images; no video track is published.
 - Cost rates must be entered manually; there is no billing API integration.
 - No automatic reconnect; no wake word or background/locked-screen service.
+- The on-device voice gate only covers the WebSocket transport.
 - No release signing, by design.
