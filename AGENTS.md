@@ -205,9 +205,14 @@ Function calling: tool results go back as
   one way to search. `get_current_datetime` and `get_location` stay available
   alongside it; turning native search off brings the client `web_search` back.
   Installs from before the switch are moved over once by
-  `SettingsRepository.applySearchDefaultMigration`. Qwen Audio 3.1 supports
-  function calling; unlike Omni, its schema parser requires `required` on every
-  tool.
+  `SettingsRepository.applySearchDefaultMigration`.
+- `enable_search` runs the model in "agent mode", which rejects any `tools`
+  array ("Agent mode does not support tools"). Only models with
+  `ModelInfo.supportsToolsWithSearch` can do both; Qwen3.8 Omni cannot, so while
+  client tools are on, `ModelInfo.resolveNativeSearch` keeps them and falls back
+  to the client `web_search` (turn client tools off to use Omni's server search).
+  Qwen Audio 3.1 supports both (verified on the device). Qwen Audio's function
+  calling schema parser requires `required` on every tool.
 
 ## Transports
 

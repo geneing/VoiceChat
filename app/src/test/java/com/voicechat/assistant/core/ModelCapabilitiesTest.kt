@@ -54,4 +54,19 @@ class ModelCapabilitiesTest {
         assertEquals(clone, audio.resolveVoice(clone))
         assertFalse(audio.supportsVoice("not-a-voice"))
     }
+
+    @Test
+    fun `only the audio model accepts tools next to server side search`() {
+        assertFalse(omni.supportsToolsWithSearch)
+        assertTrue(audio.supportsToolsWithSearch)
+    }
+
+    @Test
+    fun `client tools win when the model cannot combine them with search`() {
+        assertFalse(omni.resolveNativeSearch(requested = true, clientToolsEnabled = true))
+        assertTrue(omni.resolveNativeSearch(requested = true, clientToolsEnabled = false))
+        assertFalse(omni.resolveNativeSearch(requested = false, clientToolsEnabled = true))
+        assertTrue(audio.resolveNativeSearch(requested = true, clientToolsEnabled = true))
+        assertFalse(audio.resolveNativeSearch(requested = false, clientToolsEnabled = true))
+    }
 }

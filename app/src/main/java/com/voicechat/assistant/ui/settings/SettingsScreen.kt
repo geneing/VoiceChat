@@ -356,29 +356,39 @@ fun SettingsScreen(
                         viewModel.updateSettings { it.copy(inputTranscription = value) }
                     },
                 )
+                val modelInfo = settings.modelInfo
+                val clientToolsOn = settings.toolsEnabled && modelInfo.supportsTools
+                val searchBlocked = clientToolsOn && !modelInfo.supportsToolsWithSearch
+                val nativeSearchOn = modelInfo.resolveNativeSearch(settings.nativeSearch, clientToolsOn)
                 SwitchSetting(
                     title = "Client tools",
-                    subtitle = if (settings.modelInfo.supportsTools) {
+                    subtitle = if (modelInfo.supportsTools) {
                         "Date and time, plus location, through function calling."
                     } else {
-                        "Not supported by ${settings.modelInfo.label}."
+                        "Not supported by ${modelInfo.label}."
                     },
-                    checked = settings.toolsEnabled && settings.modelInfo.supportsTools,
-                    enabled = settings.modelInfo.supportsTools,
+                    checked = clientToolsOn,
+                    enabled = modelInfo.supportsTools,
                     onCheckedChange = { value -> viewModel.updateSettings { it.copy(toolsEnabled = value) } },
                 )
                 SwitchSetting(
                     title = "Native web search",
-                    subtitle = "Server-side search, on by default. Replaces the client web search tool.",
-                    checked = settings.nativeSearch && settings.modelInfo.supportsTools,
-                    enabled = settings.modelInfo.supportsTools,
+                    subtitle = when {
+                        !modelInfo.supportsTools -> "Not supported by ${modelInfo.label}."
+                        searchBlocked ->
+                            "${modelInfo.label} cannot search on the server while client " +
+                                "tools are on. Its web search runs on the device instead."
+                        else -> "Server-side search, on by default. Replaces the client web search tool."
+                    },
+                    checked = nativeSearchOn,
+                    enabled = modelInfo.supportsTools && !searchBlocked,
                     onCheckedChange = { value -> viewModel.updateSettings { it.copy(nativeSearch = value) } },
                 )
                 SwitchSetting(
                     title = "Include search sources",
                     subtitle = "Ask the server for source links when native search is on.",
                     checked = settings.searchSources,
-                    enabled = settings.nativeSearch,
+                    enabled = nativeSearchOn,
                     onCheckedChange = { value -> viewModel.updateSettings { it.copy(searchSources = value) } },
                 )
             }
@@ -420,8 +430,9 @@ fun SettingsScreen(
                 }
                 Text(
                     "The client web_search tool uses DuckDuckGo and needs no key. Native " +
-                        "search runs on the server instead and is used by default; while it " +
-                        "is on, only the date/time and location tools are sent.",
+                        "search runs on the server instead and is used by default where the " +
+                        "model allows it; Qwen3.8 Omni rejects tools in agent mode, so it " +
+                        "falls back to the client search while client tools are on.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

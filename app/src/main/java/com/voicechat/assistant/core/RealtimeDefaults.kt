@@ -16,6 +16,12 @@ data class ModelInfo(
     val supportedTransports: Set<TransportKind>,
     val supportsSpeechRate: Boolean = false,
     val defaultSpeechRate: Double = 0.0,
+    /**
+     * `enable_search` runs the model in "agent mode", which rejects any `tools`
+     * array ("Agent mode does not support tools"). Only models that accept both
+     * can search server-side while client tools are attached.
+     */
+    val supportsToolsWithSearch: Boolean = true,
 ) {
     /**
      * System voices come from the vendor's per-model voice list. Cloned voices
@@ -29,6 +35,13 @@ data class ModelInfo(
     }
 
     fun resolveVoice(voice: String): String = if (supportsVoice(voice)) voice else defaultVoice
+
+    /**
+     * Client tools win when the model cannot combine them with agent mode: the
+     * client `web_search` stays available instead of failing the session.
+     */
+    fun resolveNativeSearch(requested: Boolean, clientToolsEnabled: Boolean): Boolean =
+        requested && supportsTools && (supportsToolsWithSearch || !clientToolsEnabled)
 }
 
 /** Static model catalogue and defaults shared by settings and the session layer. */
@@ -206,6 +219,7 @@ object RealtimeDefaults {
             supportsTools = true,
             transcriptionModel = "qwen3-asr-flash-realtime",
             supportedTransports = TransportKind.entries.toSet(),
+            supportsToolsWithSearch = false,
             supportsSpeechRate = true,
             defaultSpeechRate = 1.25,
         ),

@@ -537,7 +537,7 @@ class AppViewModel(application: Application) :
         val current = settings.value
         val modelInfo = current.modelInfo
         val toolsEnabled = current.toolsEnabled && modelInfo.supportsTools
-        val nativeSearch = current.nativeSearch && modelInfo.supportsTools
+        val nativeSearch = modelInfo.resolveNativeSearch(current.nativeSearch, toolsEnabled)
         return SessionConfig(
             model = current.model,
             voice = modelInfo.resolveVoice(current.voice),

@@ -54,9 +54,9 @@ data class AppSettings(
 
 class SettingsRepository(private val context: Context) {
 
-    val settings: Flow<AppSettings> = context.dataStore.data.map { prefs -> prefs.toSettings() }
+    val settings: Flow<AppSettings> = context.dataStore.data.map { prefs -> toSettings(prefs) }
 
-    private fun Preferences.toSettings(): AppSettings {
+    private fun toSettings(prefs: Preferences): AppSettings {
         val defaults = AppSettings()
         return AppSettings(
             transport = prefs[Keys.transport]?.let { name ->
@@ -115,7 +115,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun update(transform: (AppSettings) -> AppSettings) {
         // Read inside the edit so a concurrent one-time migration (or another
         // writer) is never overwritten by a stale snapshot.
-        context.dataStore.edit { prefs -> writeAll(prefs, transform(prefs.toSettings())) }
+        context.dataStore.edit { prefs -> writeAll(prefs, transform(toSettings(prefs))) }
     }
 
     suspend fun addUsage(inputTokens: Int, outputTokens: Int, costUsd: Double) {
