@@ -31,8 +31,9 @@ Voice input ──► Qwen realtime session ──► spoken answer + live trans
 - **Chat history** — drawer with day grouping, long-press to rename or delete.
 - **Attachments** — photo/camera/document picker, images sent through the image
   buffer (< 256 KB JPEG), text documents inlined into the turn.
-- **Tools** — `get_current_datetime`, `get_location`, `web_search` (DuckDuckGo),
-  or the server-side native web search. Both models support function calling;
+- **Tools** — server-side native web search by default, plus the client tools
+  `get_current_datetime` and `get_location`; disabling native search swaps in
+  the client `web_search` (DuckDuckGo). Both models support function calling;
   Qwen Audio 3.1 is stricter about JSON Schema (`required` must be present).
 - **Metrics** — connect latency, TTFT per answer, token usage per conversation,
   and lifetime token/cost totals since the billing start. Prices are editable.

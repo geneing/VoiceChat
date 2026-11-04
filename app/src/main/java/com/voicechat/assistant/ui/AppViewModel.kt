@@ -536,7 +536,8 @@ class AppViewModel(application: Application) :
     private fun buildConfig(): SessionConfig {
         val current = settings.value
         val modelInfo = current.modelInfo
-        val toolsEnabled = current.toolsEnabled && !current.nativeSearch && modelInfo.supportsTools
+        val toolsEnabled = current.toolsEnabled && modelInfo.supportsTools
+        val nativeSearch = current.nativeSearch && modelInfo.supportsTools
         return SessionConfig(
             model = current.model,
             voice = modelInfo.resolveVoice(current.voice),
@@ -560,8 +561,12 @@ class AppViewModel(application: Application) :
             speechRate = if (modelInfo.supportsSpeechRate) modelInfo.defaultSpeechRate else 0.0,
             inputTranscription = current.inputTranscription,
             transcriptionModel = modelInfo.transcriptionModel,
-            toolsJson = if (toolsEnabled) container.tools.definitionsJson else null,
-            nativeSearch = current.nativeSearch && modelInfo.supportsTools,
+            toolsJson = if (toolsEnabled) {
+                container.tools.definitions(includeWebSearch = !nativeSearch)
+            } else {
+                null
+            },
+            nativeSearch = nativeSearch,
             searchSources = current.searchSources,
             priceInputPerMillion = current.priceInputPerMillion,
             priceOutputPerMillion = current.priceOutputPerMillion,

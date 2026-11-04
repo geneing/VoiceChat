@@ -36,7 +36,7 @@ data class AppSettings(
     val silenceMs: Int = 600,
     val inputTranscription: Boolean = true,
     val toolsEnabled: Boolean = true,
-    val nativeSearch: Boolean = false,
+    val nativeSearch: Boolean = true,
     val searchSources: Boolean = true,
     val languageHint: String = "",
     val priceInputPerMillion: Double = 0.0,
@@ -54,9 +54,11 @@ data class AppSettings(
 
 class SettingsRepository(private val context: Context) {
 
-    val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
+    val settings: Flow<AppSettings> = context.dataStore.data.map { prefs -> prefs.toSettings() }
+
+    private fun Preferences.toSettings(): AppSettings {
         val defaults = AppSettings()
-        AppSettings(
+        return AppSettings(
             transport = prefs[Keys.transport]?.let { name ->
                 TransportKind.entries.firstOrNull { it.name == name }
             } ?: defaults.transport,
@@ -98,9 +100,22 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun current(): AppSettings = settings.first()
 
+    /**
+     * Server-side search is the default now. Turn it on once for installs that
+     * still hold the old default; the client tools keep working alongside it.
+     */
+    suspend fun applySearchDefaultMigration() {
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.searchDefaultMigrated] == true) return@edit
+            prefs[Keys.nativeSearch] = true
+            prefs[Keys.searchDefaultMigrated] = true
+        }
+    }
+
     suspend fun update(transform: (AppSettings) -> AppSettings) {
-        val updated = transform(settings.first())
-        context.dataStore.edit { prefs -> writeAll(prefs, updated) }
+        // Read inside the edit so a concurrent one-time migration (or another
+        // writer) is never overwritten by a stale snapshot.
+        context.dataStore.edit { prefs -> writeAll(prefs, transform(prefs.toSettings())) }
     }
 
     suspend fun addUsage(inputTokens: Int, outputTokens: Int, costUsd: Double) {
@@ -163,6 +178,7 @@ class SettingsRepository(private val context: Context) {
         val inputTranscription = booleanPreferencesKey("input_transcription")
         val toolsEnabled = booleanPreferencesKey("tools_enabled")
         val nativeSearch = booleanPreferencesKey("native_search")
+        val searchDefaultMigrated = booleanPreferencesKey("search_default_migrated")
         val searchSources = booleanPreferencesKey("search_sources")
         val languageHint = stringPreferencesKey("language_hint")
         val priceIn = doublePreferencesKey("price_input_per_million")

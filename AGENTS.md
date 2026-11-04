@@ -101,7 +101,7 @@ app/src/main/java/com/voicechat/assistant/
     aoq/AoqTokenClient.kt    AppServer token allocation + response mapping
     aoq/AoqTransport.kt      Alibaba AOQ SDK: QUIC media + Data events
     audio/                   PcmRecorder, PcmPlayer, level meter, focus
-    tools/                   ToolRegistry + date/location/web_search tools
+    tools/                   ToolDefinitions (schemas) + ToolRegistry (execution)
     RealtimeSession.kt       protocol state machine: turns, tools, metrics
   ui/
     theme/                   Material 3 theme
@@ -199,9 +199,15 @@ Function calling: tool results go back as
 "Conversation already has an active response". Only act on
 `response.function_call_arguments.done` or completed `function_call` items;
 `conversation.item.created` for an in-progress call has empty arguments.
-- The native `enable_search` option and client tools are mutually exclusive in
-  the app settings. Qwen Audio 3.1 supports function calling; unlike Omni, its
-  schema parser requires `required` on every tool.
+- Server-side search is the default: `enable_search` + `search_options` go out
+  with the session and the client `web_search` tool is dropped from `tools`
+  (`ToolDefinitions.json(includeWebSearch = false)`), so the model has exactly
+  one way to search. `get_current_datetime` and `get_location` stay available
+  alongside it; turning native search off brings the client `web_search` back.
+  Installs from before the switch are moved over once by
+  `SettingsRepository.applySearchDefaultMigration`. Qwen Audio 3.1 supports
+  function calling; unlike Omni, its schema parser requires `required` on every
+  tool.
 
 ## Transports
 
@@ -277,8 +283,8 @@ Function calling: tool results go back as
   when audio is received, blue while VAD detects the user speaking, amber when
   connected but silent, gray when disconnected.
 - Settings: connection (transport, model, voice, workspace host, API key),
-  conversation (system prompt + presets, VAD, transcription, tools vs search),
-  metrics/cost rates, debug categories + log viewer.
+  conversation (system prompt + presets, VAD, transcription, client tools +
+  native search), metrics/cost rates, debug categories + log viewer.
 - Keep strings in `res/values/strings.xml` when reused; UI copy may also be
   inline for one-off labels. No hard-coded colours outside the theme.
 

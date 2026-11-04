@@ -12,15 +12,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
-import kotlinx.serialization.json.putJsonObject
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLDecoder
@@ -40,79 +37,9 @@ class ToolRegistry(
 
     private val json = Json { prettyPrint = false }
 
-    val definitionsJson: String = buildJsonArray {
-        add(
-            buildJsonObject {
-                put("type", "function")
-                putJsonObject("function") {
-                    put("name", "get_current_datetime")
-                    put(
-                        "description",
-                        "Get the current date and time. Use it for questions about today, " +
-                            "the current date, weekday, time or time zone.",
-                    )
-                    putJsonObject("parameters") {
-                        put("type", "object")
-                        putJsonObject("properties") {
-                            putJsonObject("timezone") {
-                                put("type", "string")
-                                put(
-                                    "description",
-                                    "Optional IANA time zone, for example Europe/Berlin. " +
-                                        "Defaults to the device time zone.",
-                                )
-                            }
-                        }
-                        // Qwen Audio's function-call parser rejects a schema
-                        // without `required` (internal service error), even when
-                        // no argument is mandatory.
-                        putJsonArray("required") {}
-                    }
-                }
-            },
-        )
-        add(
-            buildJsonObject {
-                put("type", "function")
-                putJsonObject("function") {
-                    put("name", "get_location")
-                    put(
-                        "description",
-                        "Get the device's last known approximate location. Use it for " +
-                            "location-specific answers such as weather or nearby places.",
-                    )
-                    putJsonObject("parameters") {
-                        put("type", "object")
-                        putJsonObject("properties") {}
-                        putJsonArray("required") {}
-                    }
-                }
-            },
-        )
-        add(
-            buildJsonObject {
-                put("type", "function")
-                putJsonObject("function") {
-                    put("name", "web_search")
-                    put(
-                        "description",
-                        "Search the public web for current information. Returns the top " +
-                            "results with title, URL and snippet.",
-                    )
-                    putJsonObject("parameters") {
-                        put("type", "object")
-                        putJsonObject("properties") {
-                            putJsonObject("query") {
-                                put("type", "string")
-                                put("description", "Search query")
-                            }
-                        }
-                        putJsonArray("required") { add("query") }
-                    }
-                }
-            },
-        )
-    }.toString()
+    fun definitions(includeWebSearch: Boolean): String = ToolDefinitions.json(includeWebSearch)
+
+    val definitionsJson: String get() = ToolDefinitions.all
 
     suspend fun execute(name: String, argumentsJson: String): String = withContext(Dispatchers.IO) {
         AppLog.info(LogCategory.TOOLS, "Executing $name", argumentsJson.take(400))

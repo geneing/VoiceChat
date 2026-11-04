@@ -1,6 +1,7 @@
 package com.voicechat.assistant.realtime
 
 import com.voicechat.assistant.data.model.TransportKind
+import com.voicechat.assistant.realtime.tools.ToolDefinitions
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -147,12 +148,26 @@ class SessionPayloadsTest {
     }
 
     @Test
-    fun `native search and tools are exclusive in payload`() {
+    fun `native search ships without the client web search tool`() {
         val json = SessionPayloads.sessionUpdate(
-            config.copy(toolsJson = null, nativeSearch = true),
+            config.copy(
+                toolsJson = ToolDefinitions.json(includeWebSearch = false),
+                nativeSearch = true,
+            ),
         )
         assertTrue(json.contains("\"enable_search\":true"))
-        assertTrue(!json.contains("\"tools\""))
+        assertTrue(json.contains("get_current_datetime"))
+        assertTrue(json.contains("get_location"))
+        assertTrue(!json.contains("web_search"))
+    }
+
+    @Test
+    fun `client web search is offered when native search is off`() {
+        val json = SessionPayloads.sessionUpdate(
+            config.copy(toolsJson = ToolDefinitions.json(includeWebSearch = true)),
+        )
+        assertTrue(json.contains("web_search"))
+        assertTrue(!json.contains("enable_search"))
     }
 
     @Test
@@ -165,7 +180,7 @@ class SessionPayloadsTest {
             ),
         )
         assertTrue(json.contains("\"type\":\"smart_turn_v2\""))
-        assertTrue(json.contains("\"speech_rate\":1.15"))
+        assertTrue(json.contains("\"speech_rate\":1.25"))
         assertTrue(!json.contains("\"silence_duration_ms\""))
         assertTrue(json.contains("slightly faster"))
     }

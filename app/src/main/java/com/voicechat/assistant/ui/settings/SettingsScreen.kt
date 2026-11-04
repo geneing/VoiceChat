@@ -359,24 +359,20 @@ fun SettingsScreen(
                 SwitchSetting(
                     title = "Client tools",
                     subtitle = if (settings.modelInfo.supportsTools) {
-                        "Date/time, location and web search through function calling."
+                        "Date and time, plus location, through function calling."
                     } else {
                         "Not supported by ${settings.modelInfo.label}."
                     },
-                    checked = settings.toolsEnabled && !settings.nativeSearch && settings.modelInfo.supportsTools,
-                    enabled = settings.modelInfo.supportsTools && !settings.nativeSearch,
+                    checked = settings.toolsEnabled && settings.modelInfo.supportsTools,
+                    enabled = settings.modelInfo.supportsTools,
                     onCheckedChange = { value -> viewModel.updateSettings { it.copy(toolsEnabled = value) } },
                 )
                 SwitchSetting(
                     title = "Native web search",
-                    subtitle = "Server-side search. Cannot be combined with client tools.",
+                    subtitle = "Server-side search, on by default. Replaces the client web search tool.",
                     checked = settings.nativeSearch && settings.modelInfo.supportsTools,
                     enabled = settings.modelInfo.supportsTools,
-                    onCheckedChange = { value ->
-                        viewModel.updateSettings {
-                            it.copy(nativeSearch = value, toolsEnabled = if (value) false else it.toolsEnabled)
-                        }
-                    },
+                    onCheckedChange = { value -> viewModel.updateSettings { it.copy(nativeSearch = value) } },
                 )
                 SwitchSetting(
                     title = "Include search sources",
@@ -423,8 +419,9 @@ fun SettingsScreen(
                     }
                 }
                 Text(
-                    "web_search uses DuckDuckGo and needs no key. Native search is a " +
-                        "server-side alternative available on Qwen3.8 Omni.",
+                    "The client web_search tool uses DuckDuckGo and needs no key. Native " +
+                        "search runs on the server instead and is used by default; while it " +
+                        "is on, only the date/time and location tools are sent.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
