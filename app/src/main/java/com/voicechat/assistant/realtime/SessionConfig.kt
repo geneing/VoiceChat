@@ -70,6 +70,12 @@ data class SessionConfig(
     val onDeviceVad: Boolean = true,
     /** Speech must exceed the measured noise floor by this many dB. */
     val vadSensitivityDb: Float = 9f,
+    /**
+     * Audio the server keeps before it flags speech start. The vendor default is
+     * 300 ms, which is shorter than the semantic VAD's own reaction time and
+     * clips the first word of a turn.
+     */
+    val prefixPaddingMs: Int = 800,
     val speechRate: Double = 0.0,
     val inputTranscription: Boolean = true,
     val transcriptionModel: String = "qwen3-asr-flash-realtime",

@@ -143,6 +143,7 @@ class SessionPayloadsTest {
         assertTrue(json.contains("\"sample_rate\":24000"))
         assertTrue(json.contains("\"type\":\"semantic_vad\""))
         assertTrue(json.contains("\"silence_duration_ms\":650"))
+        assertTrue(json.contains("\"prefix_padding_ms\":800"))
         assertTrue(json.contains("\"tools\""))
         assertTrue(!json.contains("enable_search"))
     }
@@ -182,6 +183,7 @@ class SessionPayloadsTest {
         assertTrue(json.contains("\"type\":\"smart_turn_v2\""))
         assertTrue(json.contains("\"speech_rate\":1.25"))
         assertTrue(!json.contains("\"silence_duration_ms\""))
+        assertTrue(!json.contains("\"prefix_padding_ms\""))
         assertTrue(json.contains("slightly faster"))
     }
 

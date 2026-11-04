@@ -70,6 +70,9 @@ object SessionPayloads {
                     ) {
                         put("threshold", config.vadThreshold.toDouble())
                         put("silence_duration_ms", config.silenceMs)
+                        // Keep enough audio before the VAD trigger; the vendor
+                        // default of 300 ms cuts the first word of a turn.
+                        put("prefix_padding_ms", config.prefixPaddingMs)
                     }
                 })
             } else {

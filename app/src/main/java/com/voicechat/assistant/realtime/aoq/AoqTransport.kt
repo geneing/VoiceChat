@@ -13,6 +13,10 @@ import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqCreateConfig
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqDataMsg
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqEncoderType
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqErrorCode
+import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqAudioFrameData
+import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqAudioObserverConfig
+import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqAudioObserverMode
+import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqAudioSource
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqRelayEndpoint
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqTrackParam
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqTrackType
