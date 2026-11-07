@@ -1,5 +1,7 @@
 package com.voicechat.assistant.realtime
 
+import com.voicechat.assistant.core.RealtimeDefaults
+import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
 import java.net.URLEncoder
 
@@ -76,12 +78,18 @@ data class SessionConfig(
      * clips the first word of a turn.
      */
     val prefixPaddingMs: Int = 800,
-    val speechRate: Double = 0.0,
+    /**
+     * Client-side playback speed multiplier for the streamed audio. The
+     * realtime API ignores every server-side speed hint, so the value is applied
+     * to local playback with the platform time stretcher (pitch preserved).
+     */
+    val speechRate: Double = RealtimeDefaults.DEFAULT_SPEECH_RATE,
     val inputTranscription: Boolean = true,
     val transcriptionModel: String = "qwen3-asr-flash-realtime",
     val toolsJson: String? = null,
     val nativeSearch: Boolean = false,
     val searchSources: Boolean = true,
+    val searchProvider: SearchProvider = SearchProvider.EXA,
     val priceInputPerMillion: Double = 0.0,
     val priceOutputPerMillion: Double = 0.0,
     val languageHint: String = "",

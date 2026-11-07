@@ -1,6 +1,7 @@
 package com.voicechat.assistant.realtime.audio
 
 import android.annotation.SuppressLint
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -29,8 +30,17 @@ class PcmRecorder(
     @Volatile
     var vadConfig: VadConfig = VadConfig()
 
+    /** Capture microphone to prefer; null means the platform default. */
+    @Volatile
+    private var preferredInput: AudioDeviceInfo? = null
 
+    private val lifecycleLock = Any()
+
+    @Volatile
     private var thread: Thread? = null
+
+    @Volatile
+    private var activeRecord: AudioRecord? = null
 
     @Volatile
     private var running = false
@@ -39,21 +49,55 @@ class PcmRecorder(
     private var smoothedLevel = 0f
 
     @SuppressLint("MissingPermission")
-    fun start() {
-        synchronized(this) {
+    fun start(preferredInput: AudioDeviceInfo? = null) {
+        synchronized(lifecycleLock) {
             if (running) return
+            this.preferredInput = preferredInput
             running = true
             thread = Thread({ loop() }, "pcm-recorder").also { it.start() }
         }
     }
 
+    /**
+     * Re-pins capture to a headset microphone, e.g. when Bluetooth connects
+     * while the session is already listening. Ignored before capture starts.
+     */
+    fun setPreferredInput(device: AudioDeviceInfo?) {
+        val previous = preferredInput
+        if (previous?.id == device?.id) return
+        preferredInput = device
+        if (activeRecord == null) return
+        AppLog.info(
+            LogCategory.AUDIO,
+            "Restarting capture for route change",
+            device?.let { "${it.typeName()} (${it.productName})" } ?: "system default",
+        )
+        restartForRouteChange()
+    }
+
     fun stop() {
-        synchronized(this) {
+        synchronized(lifecycleLock) {
             running = false
+            activeRecord?.let { record ->
+                runCatching { record.stop() }
+            }
             thread?.join(700)
             thread = null
         }
         onLevel(0f)
+    }
+
+    private fun restartForRouteChange() {
+        synchronized(lifecycleLock) {
+            if (!running) return
+            activeRecord?.let { record ->
+                runCatching { record.stop() }
+            }
+            thread?.join(700)
+            if (running) {
+                thread = Thread({ loop() }, "pcm-recorder").also { it.start() }
+            }
+        }
     }
 
     private fun loop() {
@@ -61,7 +105,10 @@ class PcmRecorder(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
-        )
+        ).takeIf { it > 0 } ?: run {
+            onError("Microphone does not support the required audio format.")
+            return
+        }
         val bufferSize = maxOf(minBuffer * 2, 16_384)
         val gate = SpeechGate(vadConfig, SAMPLE_RATE * BYTES_PER_SAMPLE)
         var record: AudioRecord? = null
@@ -87,6 +134,18 @@ class PcmRecorder(
                 onError("Microphone could not be initialised.")
                 return
             }
+            // Pin capture to the headset microphone when the router found one.
+            val desiredInput = preferredInput
+            if (desiredInput != null) {
+                val pinned = runCatching { record.setPreferredDevice(desiredInput) }
+                    .getOrDefault(false)
+                AppLog.info(
+                    LogCategory.AUDIO,
+                    "PCM capture device",
+                    "${desiredInput.typeName()} (${desiredInput.productName}) pinned=$pinned",
+                )
+            }
+            activeRecord = record
             // VOICE_COMMUNICATION plus these effects is the platform echo path.
             // Some devices only have software AEC; the effect is null then.
             val sessionId = record.audioSessionId
@@ -145,6 +204,7 @@ class PcmRecorder(
             onError("Microphone is unavailable: ${error.message}")
             AppLog.error(LogCategory.AUDIO, "Microphone failure", error.message)
         } finally {
+            activeRecord = null
             runCatching {
                 record?.stop()
                 record?.release()

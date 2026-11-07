@@ -15,10 +15,11 @@ The goal specification lives in `GOAL.md`. Treat it as the product contract.
 
 ## Non-negotiable rules
 
-1. **The API key never enters git.** `secrets/` is git-ignored. Gradle reads
-   `secrets/qwen-apiKey-*.csv` at configuration time and injects the values into
-   `BuildConfig`. Never copy a key into source, resources, tests, docs, logs or
-   commit messages. Never log `Authorization` headers or full request URLs with
+1. **API keys never enter git.** `secrets/` is git-ignored. Gradle reads
+   `secrets/qwen-apiKey-*.csv` and search-provider `secrets/*.key` files at
+   configuration time and injects the values into `BuildConfig`. Never copy a
+   key into source, resources, tests, docs, logs or commit messages. Never log
+   `Authorization` headers, provider key headers or full request URLs with
    credentials. `secrets/opencode-go.key` is the coding agent's own key, not
    the app's.
 2. **This is a private build.** Debug builds may embed the key. Do not add
@@ -67,6 +68,10 @@ $env:JAVA_HOME = "$env:USERPROFILE\.gradle\jdks\eclipse_adoptium-21-amd64-window
 
 Secrets resolution (`app/build.gradle.kts`):
 - Reads `secrets/qwen-apiKey-1341022.csv` (simple `name,value` rows).
+- Search keys: `secrets/exa.key` and `secrets/brave.key`. Each may contain a bare
+  key or a `name=value` / `name,value` line — `keyFile()` extracts only the value
+  after the last separator. Passing the whole line as the API key made Exa answer
+  HTTP 401 on the device.
 - Injects `QWEN_API_KEY`, `QWEN_WORKSPACE_ID`, `QWEN_API_HOST`,
   `QWEN_OPENAI_BASE`, `QWEN_DASHSCOPE_BASE`.
 - If the file is absent the build still succeeds with empty values; the app
@@ -100,7 +105,7 @@ app/src/main/java/com/voicechat/assistant/
     webrtc/WebRtcTransport.kt org.webrtc peer connection + data channel
     aoq/AoqTokenClient.kt    AppServer token allocation + response mapping
     aoq/AoqTransport.kt      Alibaba AOQ SDK: QUIC media + Data events
-    audio/                   PcmRecorder, PcmPlayer, SpeechGate (device VAD), level meter, focus
+    audio/                   PcmRecorder, PcmPlayer + TimeStretcher (WSOLA speed control), SpeechGate (device VAD), level meter, focus/routing
     tools/                   ToolDefinitions (schemas) + ToolRegistry (execution)
     RealtimeSession.kt       protocol state machine: turns, tools, metrics
   ui/
@@ -151,12 +156,14 @@ committed, `conversation.item.input_audio_transcription.*`,
 Session defaults (see `RealtimeDefaults.kt` / `SessionConfig`): 16 kHz s16le
 mono input, 24 kHz PCM output, server-side turn detection, input audio
 transcription model `qwen3-asr-flash-realtime`. Qwen Audio 3.1 defaults to
-`smart_turn_v2` (semantic + acoustic, much less self-interruption) and
-`speech_rate: 1.15`; Omni also sends `speech_rate: 1.15`. Every system prompt
-gets a delivery line asking for a brisk, slightly faster pace.
+`smart_turn_v2` (semantic + acoustic, much less self-interruption). Every
+system prompt gets a delivery line asking for a brisk, slightly faster pace;
+the server-side `speech_rate` option is ignored, so speech rate is adjusted in
+local WebSocket playback instead.
 
-WebSocket voice mode puts Android into `MODE_IN_COMMUNICATION` with the
-loudspeaker, uses `VOICE_COMMUNICATION` capture/playback attributes and enables
+WebSocket voice mode puts Android into `MODE_IN_COMMUNICATION`, selects a
+connected headset's communication device when available (otherwise loudspeaker),
+uses `VOICE_COMMUNICATION` capture/playback attributes and enables
 `AcousticEchoCanceler` + `NoiseSuppressor` when available. Keep that path intact:
 it is what stops the assistant from hearing its own audio and barging in.
 
@@ -212,7 +219,28 @@ Function calling: tool results go back as
   client tools are on, `ModelInfo.resolveNativeSearch` keeps them and falls back
   to the client `web_search` (turn client tools off to use Omni's server search).
   Qwen Audio 3.1 supports both (verified on the device). Qwen Audio's function
-  calling schema parser requires `required` on every tool.
+  calling schema parser requires `required` on every tool. When client or native
+  search is configured, session instructions explicitly require search for
+  current/recent questions (news, headlines, weather, prices and events); do not
+  claim live information is inaccessible before attempting the configured search.
+- The client `web_search` provider is user-selectable: Exa (default, key from
+  `secrets/exa.key`), Brave Search (key from `secrets/brave.key`), or DuckDuckGo.
+  Keys are read at Gradle configuration time into `BuildConfig` and never logged.
+  `SearchProvider` is persisted in settings. A search tries the selected provider
+  first and then the remaining providers that have credentials
+  (`searchFallbackChain`), so an empty result still answers. A provider that
+  answers 401/403 is remembered as rejected for the session and reported to the
+  user once (`onSearchIssue` → snackbar) instead of failing silently.
+- `get_location` resolves the device position (network provider first, then GPS)
+  and falls back to a fresh `LocationManager.getCurrentLocation` fix when the
+  last-known location is older than 2 minutes. It also reverse-geocodes a place
+  name. The tool result includes a reason when permission or the provider is
+  missing. Location permission is requested when voice mode starts (optional: a
+  denial only disables these tools). The session instructions require the model
+  to call the tool for location questions instead of claiming it has no access.
+- `get_weather` returns current conditions and today's high/low from Open-Meteo,
+  which needs no API key and no search provider. Weather questions use it rather
+  than `web_search`: searching raw coordinates returned unrelated results.
 
 ## On-device voice gate
 
@@ -256,21 +284,66 @@ noise" (`vadSensitivityDb`, dB above the noise floor) travel through
 capture starts. WebRTC and AOQ cannot gate: the vendor SDK owns the live media
 stream and a pre-roll cannot be replayed into it.
 
+## Audio routing and speech speed
+
+**Bluetooth headsets**: Android only exposes a headset microphone once the
+system is in communication mode *and* the headset link is requested. The app's
+`AudioFocus.enterVoiceMode()` selects the communication device on API 31+ or
+starts SCO on API 26–30. Android 12+ asks for the `BLUETOOTH_CONNECT` runtime
+permission before starting voice mode. On API 31+, Android automatically pairs
+the selected communication output with its matching microphone; capture is
+pinned to that input when exposed. Playback is pinned to the same communication
+device with `AudioTrack.setPreferredDevice`, because the platform routed the
+assistant to the phone speaker while the microphone was already on the headset.
+If Android drops the SCO route mid-session (observed once: the active device fell
+back to the earpiece while the headset stayed connected), the
+`OnCommunicationDeviceChangedListener` re-applies `MODE_IN_COMMUNICATION` and the
+headset route. A headset that connects mid-session triggers an `AudioDeviceCallback`, which reapplies the route and restarts capture against
+the new input. Headset types are preferred in order BLE headset → SCO → USB →
+hearing aid → wired → USB device; A2DP-only headsets have no microphone and are
+not selected as capture inputs. When nothing external is connected, the
+loudspeaker is forced for AEC reference.
+
+**Speech speed**: the realtime API ignores every server-side hint (verified by
+measuring audio duration at `speech_rate` 1.0/1.5/2.0 and nested variants like
+`audio.output.speech_rate` and `voice_settings.speed`; all produced ~9.7 s of
+audio for the same sentence). `AudioTrack.playbackParams` is not usable either:
+on the Pixel 10 every combination of usage (voice communication, media,
+assistant), sample rate (24/48 kHz) and performance mode (none, low latency)
+throws `IllegalArgumentException: arguments out of range`, so the platform time
+stretcher can never be enabled. The app therefore stretches its own PCM with
+`realtime/audio/TimeStretcher` (WSOLA: 20 ms Hann windows, 50 % overlap, ±10 ms
+similarity search) before writing to the track, which preserves pitch. The
+selected rate is also included in the session delivery instructions so the model
+phrases for that pace. Speed changes take effect immediately without
+reconnecting. WebRTC and AOQ playback follow the vendor audio stack and cannot
+be stretched locally. Settings expose a "Speech speed" slider (0.75×–2.0×,
+default 1.25×) that travels through `AppSettings.speechRate` →
+`SessionConfig.speechRate` → `WebSocketTransport.player.setSpeed()`. Bluetooth
+headsets are selected as the capture route on WebSocket voice mode when Android
+exposes a matching communication input.
+
 ## Transports
 
-- **WebSocket** — full feature set: mic capture, streaming TTS playback,
-  barge-in, images, tools, works on emulators. The on-device voice gate is
-  WebSocket-only.
+- **WebSocket** — full feature set: mic capture, streaming TTS playback with
+  pitch-preserving speed control, barge-in, images, tools, works on emulators.
+  The on-device voice gate is WebSocket-only. The realtime API ignores every
+  server-side speech-rate hint (verified by measuring audio duration at
+  `speech_rate` 1.0/1.5/2.0 and nested variants), and `AudioTrack.playbackParams`
+  is rejected by the device, so the app stretches its own PCM with
+  `TimeStretcher` before playback.
 - **WebRTC** — lowest latency media path; `org.webrtc` owns mic, AEC, noise
   suppression and playback, so `PcmRecorder`/`PcmPlayer` are not used. VAD
   turns only. Attachments are not supported (protocol carries images on the
   video track, which this app does not publish). Surface that limitation in
-  the UI instead of failing silently.
+  the UI instead of failing silently. Speech speed is not available for WebRTC
+  because the vendor stack controls playback timing.
 - **AOQ** — implemented in `realtime/aoq/` with Alibaba's
   `AoqClientSdk-release.aar` (v1.4.0) and `libPluginOpus.so` (in
   `app/libs` / `app/src/main/jniLibs`). The SDK owns capture, Opus, playback,
   AEC and the QUIC relay; realtime events travel as Data messages using the
-  same payloads as WebSocket.
+  same payloads as WebSocket. Speech speed is not available for AOQ because the
+  vendor SDK controls playback.
   - **Token authentication**: production puts this call on an AppServer so the
     API key never reaches the device. This private build performs the AppServer
     step in-process (`AoqTokenClient`): `POST /api/v1/webrtc/realtime?model=…`
@@ -331,9 +404,9 @@ stream and a pre-roll cannot be replayed into it.
   when audio is received, blue while VAD detects the user speaking, amber when
   connected but silent, gray when disconnected.
 - Settings: connection (transport, model, voice, workspace host, API key),
-  conversation (system prompt + presets, VAD, on-device voice gate + trigger,
-  transcription, client tools + native search), metrics/cost rates, debug
-  categories + log viewer.
+  conversation (system prompt + presets, speech speed slider, VAD, on-device
+  voice gate + trigger, transcription, client tools + native search),
+  metrics/cost rates, debug categories + log viewer.
 - Keep strings in `res/values/strings.xml` when reused; UI copy may also be
   inline for one-off labels. No hard-coded colours outside the theme.
 

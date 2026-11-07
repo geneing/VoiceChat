@@ -4,6 +4,7 @@ import android.os.SystemClock
 import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.data.model.CostCalculator
+import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TokenUsage
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.model.TurnMetrics
@@ -95,6 +96,10 @@ class RealtimeSession(
 
     private enum class DeltaChannel { NONE, TEXT, TRANSCRIPT }
 
+    private companion object {
+        val TOOL_NAME = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"")
+    }
+
     suspend fun start(config: SessionConfig, live: Boolean): Result<Unit> = mutex.withLock {
         val current = transport
         if (current != null && this.config == config && current.state.value == TransportState.CONNECTED) {
@@ -157,7 +162,8 @@ class RealtimeSession(
             AppLog.info(
                 LogCategory.SESSION,
                 "Session started",
-                "model=${config.model} transport=${config.transport} live=$live",
+                "model=${config.model} transport=${config.transport} live=$live " +
+                    "tools=${toolNames(config.toolsJson)}",
             )
         } else {
             val message = result.exceptionOrNull()?.message ?: "Connection failed"
@@ -214,6 +220,11 @@ class RealtimeSession(
 
     suspend fun setLiveMode(enabled: Boolean) = mutex.withLock {
         applyLiveMode(enabled)
+    }
+
+    /** Playback speed for the live player; safe to call while a turn is playing. */
+    fun setPlaybackSpeed(speed: Float) {
+        transport?.setPlaybackSpeed(speed)
     }
 
     suspend fun interrupt() = mutex.withLock {
@@ -518,7 +529,11 @@ class RealtimeSession(
         AppLog.info(LogCategory.TOOLS, "Model requested ${event.name}", event.arguments)
         listener.onToolCall(event.name, event.arguments, null)
         _state.update { it.copy(status = LiveStatus.THINKING) }
-        val result = tools.execute(event.name, event.arguments)
+        val result = tools.execute(
+            event.name,
+            event.arguments,
+            config?.searchProvider ?: SearchProvider.EXA,
+        )
         listener.onToolCall(event.name, event.arguments, result)
         val responseAlreadyFinished = !responding
         activeTransport.send(SessionPayloads.functionOutputItem(event.callId, result))
@@ -571,6 +586,14 @@ class RealtimeSession(
         if (firstDeltaAt == 0L) {
             firstDeltaAt = SystemClock.elapsedRealtime()
         }
+    }
+
+    /** Tool names offered in `session.update`, for diagnostics. */
+    private fun toolNames(toolsJson: String?): String {
+        if (toolsJson.isNullOrBlank()) return "none"
+        return TOOL_NAME.findAll(toolsJson).map { it.groupValues[1] }.toList()
+            .joinToString(",")
+            .ifBlank { "none" }
     }
 
     private fun buildMetrics(usage: TokenUsage?): TurnMetrics {

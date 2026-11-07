@@ -1,6 +1,8 @@
 package com.voicechat.assistant.realtime
 
+import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
+import com.voicechat.assistant.realtime.tools.SearchResponseParser
 import com.voicechat.assistant.realtime.tools.ToolDefinitions
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -136,8 +138,9 @@ class SessionPayloadsTest {
     )
 
     @Test
-    fun `session update carries audio formats and vad`() {
-        val json = SessionPayloads.sessionUpdate(config)
+    fun `session update carries configured speech rate and audio formats`() {
+        val json = SessionPayloads.sessionUpdate(config.copy(speechRate = 1.5))
+        assertTrue(json.contains("speak at about 1.50 times normal speed"))
         assertTrue(json.contains("\"type\":\"session.update\""))
         assertTrue(json.contains("\"sample_rate\":16000"))
         assertTrue(json.contains("\"sample_rate\":24000"))
@@ -163,28 +166,76 @@ class SessionPayloadsTest {
     }
 
     @Test
-    fun `client web search is offered when native search is off`() {
+    fun `client web search is offered and required for current information`() {
         val json = SessionPayloads.sessionUpdate(
             config.copy(toolsJson = ToolDefinitions.json(includeWebSearch = true)),
         )
         assertTrue(json.contains("web_search"))
+        assertTrue(json.contains("Mandatory web search"))
+        assertTrue(json.contains("call the web_search function before answering"))
         assertTrue(!json.contains("enable_search"))
     }
 
     @Test
-    fun `smart turn and speech rate are sent for audio model`() {
+    fun `native search gets current information instruction`() {
+        val json = SessionPayloads.sessionUpdate(
+            config.copy(
+                toolsJson = ToolDefinitions.json(includeWebSearch = false),
+                nativeSearch = true,
+            ),
+        )
+        assertTrue(json.contains("enabled native web search"))
+        assertTrue(!json.contains("Mandatory web search"))
+    }
+
+    @Test
+    fun `parses Exa search results`() {
+        val results = SearchResponseParser.exa(
+            """{"results":[{"title":"Headline","url":"https://example.com/story","highlights":["First highlight.","Second highlight."]}]}""",
+        )
+        assertEquals(1, results.size)
+        assertEquals("Headline", results.single().title)
+        assertEquals("https://example.com/story", results.single().url)
+        assertEquals("First highlight. Second highlight.", results.single().snippet)
+    }
+
+    @Test
+    fun `parses Brave search results`() {
+        val results = SearchResponseParser.brave(
+            """{"web":{"results":[{"title":"Headline","url":"https://example.com/story","description":"A summary."}]}}""",
+        )
+        assertEquals(1, results.size)
+        assertEquals("Headline", results.single().title)
+        assertEquals("https://example.com/story", results.single().url)
+        assertEquals("A summary.", results.single().snippet)
+    }
+
+    @Test
+    fun `search provider defaults to Exa`() {
+        assertEquals(SearchProvider.EXA, SessionConfig(
+            model = "test",
+            voice = "Tina",
+            instructions = "",
+            transport = TransportKind.WEBSOCKET,
+            apiKey = "",
+            host = "",
+            workspaceId = "",
+        ).searchProvider)
+    }
+
+    @Test
+    fun `smart turn is sent for audio model`() {
         val json = SessionPayloads.sessionUpdate(
             config.copy(
                 model = "qwen-audio-3.1-realtime-flash",
                 turnDetection = "smart_turn_v2",
-                speechRate = 1.25,
+                speechRate = 1.0,
             ),
         )
         assertTrue(json.contains("\"type\":\"smart_turn_v2\""))
-        assertTrue(json.contains("\"speech_rate\":1.25"))
         assertTrue(!json.contains("\"silence_duration_ms\""))
         assertTrue(!json.contains("\"prefix_padding_ms\""))
-        assertTrue(json.contains("slightly faster"))
+        assertTrue(json.contains("about 1.00 times normal speed"))
     }
 
     @Test

@@ -14,6 +14,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.core.RealtimeDefaults
+import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.model.UsageTotals
 import kotlinx.coroutines.flow.Flow
@@ -40,7 +41,10 @@ data class AppSettings(
     val toolsEnabled: Boolean = true,
     val nativeSearch: Boolean = true,
     val searchSources: Boolean = true,
+    val searchProvider: SearchProvider = SearchProvider.EXA,
     val languageHint: String = "",
+    /** Client-side playback speed multiplier (pitch preserved). */
+    val speechRate: Double = RealtimeDefaults.DEFAULT_SPEECH_RATE,
     val priceInputPerMillion: Double = 0.0,
     val priceOutputPerMillion: Double = 0.0,
     val debugCategories: Set<LogCategory> = LogCategory.entries.toSet(),
@@ -80,7 +84,11 @@ class SettingsRepository(private val context: Context) {
             toolsEnabled = prefs[Keys.toolsEnabled] ?: defaults.toolsEnabled,
             nativeSearch = prefs[Keys.nativeSearch] ?: defaults.nativeSearch,
             searchSources = prefs[Keys.searchSources] ?: defaults.searchSources,
+            searchProvider = prefs[Keys.searchProvider]?.let { stored ->
+                SearchProvider.entries.firstOrNull { it.name == stored }
+            } ?: defaults.searchProvider,
             languageHint = prefs[Keys.languageHint] ?: defaults.languageHint,
+            speechRate = prefs[Keys.speechRate] ?: defaults.speechRate,
             priceInputPerMillion = prefs[Keys.priceIn] ?: defaults.priceInputPerMillion,
             priceOutputPerMillion = prefs[Keys.priceOut] ?: defaults.priceOutputPerMillion,
             debugCategories = prefs[Keys.debugCategories]
@@ -160,7 +168,9 @@ class SettingsRepository(private val context: Context) {
         prefs[Keys.toolsEnabled] = s.toolsEnabled
         prefs[Keys.nativeSearch] = s.nativeSearch
         prefs[Keys.searchSources] = s.searchSources
+        prefs[Keys.searchProvider] = s.searchProvider.name
         prefs[Keys.languageHint] = s.languageHint
+        prefs[Keys.speechRate] = s.speechRate
         prefs[Keys.priceIn] = s.priceInputPerMillion
         prefs[Keys.priceOut] = s.priceOutputPerMillion
         prefs[Keys.debugCategories] = s.debugCategories.map { it.name }.toSet()
@@ -188,7 +198,9 @@ class SettingsRepository(private val context: Context) {
         val nativeSearch = booleanPreferencesKey("native_search")
         val searchDefaultMigrated = booleanPreferencesKey("search_default_migrated")
         val searchSources = booleanPreferencesKey("search_sources")
+        val searchProvider = stringPreferencesKey("search_provider")
         val languageHint = stringPreferencesKey("language_hint")
+        val speechRate = doublePreferencesKey("speech_rate")
         val priceIn = doublePreferencesKey("price_input_per_million")
         val priceOut = doublePreferencesKey("price_output_per_million")
         val debugCategories = stringSetPreferencesKey("debug_categories")

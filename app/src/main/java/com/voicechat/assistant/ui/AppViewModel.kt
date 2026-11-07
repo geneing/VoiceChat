@@ -113,6 +113,8 @@ class AppViewModel(application: Application) :
     val sessionState: StateFlow<SessionUiState> = session.state
 
     init {
+        // Surface a bad search key instead of silently degrading to the fallback.
+        container.tools.onSearchIssue = { message -> _uiEvents.tryEmit(message) }
         scope.launch {
             settings.collect { current ->
                 val info = current.modelInfo
@@ -376,6 +378,10 @@ class AppViewModel(application: Application) :
                 _streaming.value = null
                 _uiEvents.tryEmit("Session settings changed. Reconnecting on the next turn.")
             }
+            // Speed is applied to the live player, so it must not force a reconnect.
+            if (before.speechRate != after.speechRate) {
+                session.setPlaybackSpeed(after.speechRate.toFloat())
+            }
         }
     }
 
@@ -525,7 +531,11 @@ class AppViewModel(application: Application) :
     private suspend fun ensureSession(config: SessionConfig): Result<Unit> {
         val state = session.state.value
         val current = session.currentConfig()
-        return if (state.connected && current == config) {
+        // Speed only affects local playback, so adjust it instead of reconnecting.
+        val unchanged = current != null &&
+            current.copy(speechRate = config.speechRate) == config
+        return if (state.connected && unchanged) {
+            session.setPlaybackSpeed(config.speechRate.toFloat())
             Result.success(Unit)
         } else {
             val live = state.liveEnabled
@@ -560,7 +570,10 @@ class AppViewModel(application: Application) :
             silenceMs = current.silenceMs,
             onDeviceVad = current.onDeviceVad,
             vadSensitivityDb = current.vadSensitivityDb,
-            speechRate = if (modelInfo.supportsSpeechRate) modelInfo.defaultSpeechRate else 0.0,
+            speechRate = current.speechRate.coerceIn(
+                RealtimeDefaults.MIN_SPEECH_RATE.toDouble(),
+                RealtimeDefaults.MAX_SPEECH_RATE.toDouble(),
+            ),
             inputTranscription = current.inputTranscription,
             transcriptionModel = modelInfo.transcriptionModel,
             toolsJson = if (toolsEnabled) {
@@ -570,6 +583,7 @@ class AppViewModel(application: Application) :
             },
             nativeSearch = nativeSearch,
             searchSources = current.searchSources,
+            searchProvider = current.searchProvider,
             priceInputPerMillion = current.priceInputPerMillion,
             priceOutputPerMillion = current.priceOutputPerMillion,
             languageHint = current.languageHint,
@@ -643,5 +657,6 @@ private fun AppSettings.sessionKey(): List<Any> = listOf(
     toolsEnabled,
     nativeSearch,
     searchSources,
+    searchProvider,
     languageHint,
 )

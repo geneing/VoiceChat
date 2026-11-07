@@ -48,8 +48,28 @@ object ToolDefinitions {
             put("name", "get_location")
             put(
                 "description",
-                "Get the device's last known approximate location. Use it for " +
-                    "location-specific answers such as weather or nearby places.",
+                "Get the device's current or last known coordinates. Call this for " +
+                    "questions about the user's location, weather, nearby places, " +
+                    "local time or directions instead of saying the location is " +
+                    "unavailable.",
+            )
+            putJsonObject("parameters") {
+                put("type", "object")
+                putJsonObject("properties") {}
+                putJsonArray("required") {}
+            }
+        }
+    }
+
+    private val weather = buildJsonObject {
+        put("type", "function")
+        putJsonObject("function") {
+            put("name", "get_weather")
+            put(
+                "description",
+                "Get today's weather for the user's current location: temperature, " +
+                    "feels-like, humidity, wind, rain chance and the daily high/low. " +
+                    "Call this for any weather question instead of searching the web.",
             )
             putJsonObject("parameters") {
                 put("type", "object")
@@ -65,8 +85,11 @@ object ToolDefinitions {
             put("name", "web_search")
             put(
                 "description",
-                "Search the public web for current information. Returns the top " +
-                    "results with title, URL and snippet.",
+                "Search the public web before answering questions about current " +
+                    "or recent information, including news, today's headlines, " +
+                    "weather, prices, or events. Returns results with title, URL " +
+                    "and snippet; summarize these results and do not answer from " +
+                    "memory when fresh information is requested.",
             )
             putJsonObject("parameters") {
                 put("type", "object")
@@ -88,6 +111,7 @@ object ToolDefinitions {
     fun json(includeWebSearch: Boolean): String = buildJsonArray {
         add(currentDateTime)
         add(location)
+        add(weather)
         if (includeWebSearch) add(webSearch)
     }.toString()
 

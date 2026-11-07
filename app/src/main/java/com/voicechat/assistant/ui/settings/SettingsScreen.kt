@@ -59,6 +59,7 @@ import com.voicechat.assistant.BuildConfig
 import com.voicechat.assistant.core.Formatters
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.core.RealtimeDefaults
+import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.prefs.AppSettings
 import com.voicechat.assistant.ui.AppViewModel
@@ -301,6 +302,31 @@ fun SettingsScreen(
                     placeholder = "e.g. Ukrainian, English",
                     onCommit = { value -> viewModel.updateSettings { it.copy(languageHint = value.trim()) } },
                 )
+                SliderSetting(
+                    label = "Speech speed",
+                    valueText = String.format(java.util.Locale.US, "%.2f×", settings.speechRate),
+                    value = settings.speechRate.toFloat(),
+                    min = RealtimeDefaults.MIN_SPEECH_RATE,
+                    max = RealtimeDefaults.MAX_SPEECH_RATE,
+                    step = 0.05f,
+                    onCommit = { value ->
+                        viewModel.updateSettings { it.copy(speechRate = value.toDouble()) }
+                    },
+                )
+                Text(
+                    if (settings.transport == TransportKind.WEBSOCKET) {
+                        "Applied on this device by stretching the audio with pitch " +
+                            "preserved. The realtime API ignores server-side speed hints, " +
+                            "and the platform AudioTrack rate control is rejected by this " +
+                            "device. WebRTC/AOQ cannot be stretched locally."
+                    } else {
+                        "Stored for WebSocket playback, but the current ${settings.transport} " +
+                            "vendor audio stack does not expose playback-rate control. " +
+                            "The realtime API ignores server-side speed hints."
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 DropdownSetting(
                     label = "Turn detection",
                     value = settings.turnDetection,
@@ -418,6 +444,24 @@ fun SettingsScreen(
                     enabled = modelInfo.supportsTools && !searchBlocked,
                     onCheckedChange = { value -> viewModel.updateSettings { it.copy(nativeSearch = value) } },
                 )
+                DropdownSetting(
+                    label = "Client web search provider",
+                    value = settings.searchProvider.label,
+                    enabled = !nativeSearchOn && clientToolsOn,
+                    options = SearchProvider.entries.map { provider ->
+                        val keyMissing = when (provider) {
+                            SearchProvider.EXA -> BuildConfig.EXA_API_KEY.isBlank()
+                            SearchProvider.BRAVE -> BuildConfig.BRAVE_SEARCH_API_KEY.isBlank()
+                            SearchProvider.DUCKDUCKGO -> false
+                        }
+                        (if (keyMissing) "${provider.label} (key missing)" else provider.label) to provider.name
+                    },
+                    onSelect = { value ->
+                        SearchProvider.entries.firstOrNull { it.name == value }?.let { provider ->
+                            viewModel.updateSettings { it.copy(searchProvider = provider) }
+                        }
+                    },
+                )
                 SwitchSetting(
                     title = "Include search sources",
                     subtitle = "Ask the server for source links when native search is on.",
@@ -463,10 +507,10 @@ fun SettingsScreen(
                     }
                 }
                 Text(
-                    "The client web_search tool uses DuckDuckGo and needs no key. Native " +
-                        "search runs on the server instead and is used by default where the " +
-                        "model allows it; Qwen3.8 Omni rejects tools in agent mode, so it " +
-                        "falls back to the client search while client tools are on.",
+                    "Client web_search supports Exa (default; key from secrets/exa.key), " +
+                        "Brave Search (key from secrets/brave.key), and DuckDuckGo. Native " +
+                        "search runs on the server instead where supported; Qwen3.8 Omni " +
+                        "uses the selected client provider when client tools are enabled.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -652,6 +696,7 @@ private fun DebouncedTextField(
 private fun DropdownSetting(
     label: String,
     value: String,
+    enabled: Boolean = true,
     options: List<Pair<String, String>>,
     onSelect: (String) -> Unit,
 ) {
@@ -661,6 +706,7 @@ private fun DropdownSetting(
         androidx.compose.foundation.layout.Box {
             OutlinedButton(
                 onClick = { expanded = true },
+                enabled = enabled,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(

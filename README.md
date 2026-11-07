@@ -14,15 +14,26 @@ Voice input ──► Qwen realtime session ──► spoken answer + live trans
 
 ## Features
 
+- **Bluetooth microphone routing** — voice mode selects a connected headset's
+  communication route and matching microphone; a headset connected while
+  listening is picked up automatically. Android 12+ prompts for Bluetooth
+  permission before voice mode starts.
 - **Live voice mode** — continuous listening, server VAD (`semantic_vad` /
   `smart_turn_v2` / `server_vad`), platform echo cancellation, streaming
   playback, tap or just talk to interrupt. Qwen Audio 3.1 defaults to
   `smart_turn_v2` so its own playback does not trigger a barge-in.
+- **Bluetooth microphone routing** — voice mode selects a connected headset's
+  communication route and its matching microphone; a headset connected while
+  listening is picked up automatically.
 - **Audio traffic indicator** — media sent/received per current session in
   B/KB/MB, plus a top-bar dot that is green while receiving audio, blue while
   the user is speaking, amber during VAD silence and gray when disconnected.
-- **Faster speech** — a delivery instruction is appended to every prompt and
-  both realtime models receive `speech_rate: 1.15`.
+- **Speech speed** — a delivery instruction includes the selected rate, and
+  WebSocket playback applies pitch-preserving time-stretching to the PCM stream
+  in-app (0.75×–2.0× slider in Settings). The realtime API ignores server-side
+  `speech_rate` hints, and `AudioTrack.playbackParams` is rejected by the
+  device, so rate control is done by `TimeStretcher`; WebRTC/AOQ use the vendor
+  audio stack and do not expose local playback-rate control.
 - **Text mode** — type in the same session; sending stops the microphone,
   answers are requested as text and audio is suppressed even if the server
   streams it. Voice only resumes from the sound-wave button.
@@ -31,16 +42,22 @@ Voice input ──► Qwen realtime session ──► spoken answer + live trans
 - **Chat history** — drawer with day grouping, long-press to rename or delete.
 - **Attachments** — photo/camera/document picker, images sent through the image
   buffer (< 256 KB JPEG), text documents inlined into the turn.
-- **Tools** — server-side native web search by default, plus the client tools
-  `get_current_datetime` and `get_location`; disabling native search swaps in
-  the client `web_search` (DuckDuckGo). Both models support function calling;
-  Qwen Audio 3.1 is stricter about JSON Schema (`required` must be present).
+- **Tools** — `get_current_datetime`, `get_location` (with a fresh fix and a
+  place name), `get_weather` (Open-Meteo, no key) and web search: server-side
+  native search where supported, or the client `web_search` when using Qwen3.8
+  Omni with client tools. The client provider is selectable (Exa by default,
+  using `secrets/exa.key`, Brave Search using `secrets/brave.key`, or
+  DuckDuckGo) and automatically falls back to the other credentialed providers
+  when one fails or returns nothing. API keys are loaded from ignored `secrets/`
+  files at build time. Both models support function calling; Qwen Audio 3.1 is
+  stricter about JSON Schema (`required` must be present).
 - **Metrics** — connect latency, TTFT per answer, token usage per conversation,
   and lifetime token/cost totals since the billing start. Prices are editable.
 - **Debug logging** — category filters, protocol dumps (audio/image redacted),
   in-app log viewer, optional rotating file log.
 - **Settings** — transport, model, voice, workspace host, system prompt presets,
-  VAD tuning, transcription, tools/search, cost rates, prompts. Each model shows
+  speech speed (0.75×–2.0× pitch-preserving time-stretch), VAD tuning, on-device
+  voice gate, transcription, tools/search, cost rates, prompts. Each model shows
   its own official voice list (56 for Omni, 89 for Audio 3.1); an unsupported or
   migrated voice falls back to that model's default.
 
@@ -60,6 +77,9 @@ The key is **not in git**. Put it in `secrets/qwen-apiKey-<id>.csv` (simple
 `name,value` rows; `secrets/` is git-ignored). Gradle injects the values into
 `BuildConfig`; the app falls back to the key field in Settings when the file is
 missing.
+
+Search providers use `secrets/exa.key` and `secrets/brave.key`. Either a bare key
+or a pasted `name=value` line works; only the value is read.
 
 ```powershell
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"

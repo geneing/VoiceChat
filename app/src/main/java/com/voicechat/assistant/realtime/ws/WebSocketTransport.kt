@@ -85,6 +85,19 @@ class WebSocketTransport(
         },
     )
 
+    init {
+        // A headset that connects mid-session must take over capture.
+        focus.onInputRouteChanged = { device ->
+            onAudioThread {
+                if (micEnabled) recorder.setPreferredInput(device)
+            }
+        }
+        // Playback follows the same communication route as the microphone.
+        focus.onOutputRouteChanged = { device ->
+            onAudioThread { player.setPreferredDevice(device) }
+        }
+    }
+
     @Volatile
     private var socket: WebSocket? = null
 
@@ -122,6 +135,7 @@ class WebSocketTransport(
             ?: Result.failure(IOException("Timed out while opening the realtime socket."))
         if (result.isSuccess) {
             _state.value = TransportState.CONNECTED
+            player.setSpeed(config.speechRate.toFloat())
             player.start()
             focus.acquire()
             AppLog.info(LogCategory.TRANSPORT, "WebSocket connected")
@@ -153,7 +167,7 @@ class WebSocketTransport(
                 if (_state.value == TransportState.CONNECTED) {
                     focus.enterVoiceMode()
                     recorder.vadConfig = vadConfig
-                    recorder.start()
+                    recorder.start(focus.preferredInputDevice())
                     focus.acquire()
                 }
             } else {
@@ -166,6 +180,10 @@ class WebSocketTransport(
     override fun setSpeakerMuted(muted: Boolean) {
         player.setMuted(muted)
         AppLog.debug(LogCategory.AUDIO, if (muted) "Playback muted" else "Playback unmuted")
+    }
+
+    override fun setPlaybackSpeed(speed: Float) {
+        onAudioThread { player.setSpeed(speed) }
     }
 
     override fun close() {

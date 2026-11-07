@@ -17,8 +17,6 @@ class ModelCapabilitiesTest {
         assertTrue(audio.supportsTools)
         assertEquals("smart_turn_v2", audio.defaultTurnDetection)
         assertTrue(audio.turnDetectionOptions.contains("smart_turn_v2"))
-        assertTrue(audio.supportsSpeechRate)
-        assertTrue(audio.defaultSpeechRate > 1.0)
     }
 
     @Test

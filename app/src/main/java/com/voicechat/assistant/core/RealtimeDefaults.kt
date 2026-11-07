@@ -14,8 +14,6 @@ data class ModelInfo(
     val supportsTools: Boolean,
     val transcriptionModel: String,
     val supportedTransports: Set<TransportKind>,
-    val supportsSpeechRate: Boolean = false,
-    val defaultSpeechRate: Double = 0.0,
     /**
      * `enable_search` runs the model in "agent mode", which rejects any `tools`
      * array ("Agent mode does not support tools"). Only models that accept both
@@ -220,8 +218,6 @@ object RealtimeDefaults {
             transcriptionModel = "qwen3-asr-flash-realtime",
             supportedTransports = TransportKind.entries.toSet(),
             supportsToolsWithSearch = false,
-            supportsSpeechRate = true,
-            defaultSpeechRate = 1.25,
         ),
         ModelInfo(
             id = AUDIO_MODEL,
@@ -238,8 +234,6 @@ object RealtimeDefaults {
             // The AOQ gateway returns no credentials for this model and the
             // WebRTC signalling endpoint answers HTTP 500; WebSocket works.
             supportedTransports = setOf(TransportKind.WEBSOCKET),
-            supportsSpeechRate = true,
-            defaultSpeechRate = 1.25,
         ),
     )
 
@@ -250,6 +244,11 @@ object RealtimeDefaults {
     val defaultApiKey: String = BuildConfig.QWEN_API_KEY
 
     const val ASR_MODEL = "qwen3-asr-flash-realtime"
+
+    /** Default and bounds for the client-side speech speed setting. */
+    const val DEFAULT_SPEECH_RATE = 1.25
+    const val MIN_SPEECH_RATE = 0.75f
+    const val MAX_SPEECH_RATE = 2.0f
 
     const val DEFAULT_INSTRUCTIONS = """You are VoiceChat, a concise, friendly personal assistant.
 Answer in the language the user speaks. Prefer concise, spoken-friendly answers

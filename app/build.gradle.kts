@@ -9,8 +9,8 @@ plugins {
 }
 
 /**
- * The API key and workspace details live in a git-ignored CSV so they are never
- * committed. We only read them at build time and inject them into BuildConfig.
+ * The Qwen credentials live in a git-ignored CSV, and search keys live in
+ * git-ignored secret files. They are read at build time into BuildConfig.
  *
  * secrets/qwen-apiKey-*.csv rows are simple "name,value" pairs:
  *   id,ws-...
@@ -42,6 +42,23 @@ val secrets: Map<String, String> = run {
 
 fun secret(name: String, fallback: String = ""): String = secrets[name] ?: fallback
 
+/**
+ * Reads a search-provider key from `secrets/`. Accepts a bare key or the
+ * `name=value` / `name,value` form people paste from a dashboard; handing the
+ * raw line to the API produced a 401 on the device.
+ */
+fun keyFile(name: String): String {
+    val file = rootProject.file("secrets/$name")
+    if (!file.isFile) return ""
+    val line = file.readLines().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    val value = when {
+        line.contains('=') -> line.substringAfterLast('=')
+        line.contains(',') -> line.substringAfterLast(',')
+        else -> line
+    }
+    return value.trim().trim('"', '\'')
+}
+
 fun quoted(value: String): String =
     "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
 
@@ -63,6 +80,8 @@ android {
         buildConfigField("String", "QWEN_API_HOST", quoted(secret("apiHost")))
         buildConfigField("String", "QWEN_OPENAI_BASE", quoted(secret("openAiCompatible")))
         buildConfigField("String", "QWEN_DASHSCOPE_BASE", quoted(secret("dashScope")))
+        buildConfigField("String", "EXA_API_KEY", quoted(keyFile("exa.key")))
+        buildConfigField("String", "BRAVE_SEARCH_API_KEY", quoted(keyFile("brave.key")))
     }
 
     buildTypes {

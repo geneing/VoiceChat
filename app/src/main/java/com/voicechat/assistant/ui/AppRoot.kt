@@ -2,6 +2,7 @@ package com.voicechat.assistant.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -82,11 +83,71 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
         }
     }
 
+    val locationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        // Location only powers the get_location tool; voice mode works without it.
+        viewModel.startLive()
+    }
+
+    val locationGranted: () -> Boolean = {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+            ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    val bluetoothPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    "Bluetooth permission is needed to use a connected headset microphone.",
+                )
+            }
+        }
+        if (locationGranted()) {
+            viewModel.startLive()
+        } else {
+            locationPermission.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                ),
+            )
+        }
+    }
+
+    val continueLiveAfterPermissions = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH_CONNECT,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            bluetoothPermission.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        } else if (!locationGranted()) {
+            locationPermission.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                ),
+            )
+        } else {
+            viewModel.startLive()
+        }
+    }
+
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            viewModel.startLive()
+            continueLiveAfterPermissions()
         } else {
             scope.launch {
                 snackbarHostState.showSnackbar("Microphone permission is required for voice mode.")
@@ -99,7 +160,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
             context,
             Manifest.permission.RECORD_AUDIO,
         ) == PackageManager.PERMISSION_GRANTED
-        if (granted) viewModel.startLive() else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        if (granted) continueLiveAfterPermissions() else micPermission.launch(Manifest.permission.RECORD_AUDIO)
     }
 
     BackHandler(enabled = route != Route.CHAT) { routeName = Route.CHAT.name }
