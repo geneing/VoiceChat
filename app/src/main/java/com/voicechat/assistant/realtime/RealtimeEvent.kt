@@ -43,7 +43,12 @@ sealed interface RealtimeEvent {
         val arguments: String,
     ) : RealtimeEvent
 
-    data class Failure(val message: String) : RealtimeEvent
+    /**
+     * Transport-level failure. [recoverable] tells [RealtimeSession] whether
+     * reconnecting can help; permanent problems (missing key, unsupported ABI)
+     * are surfaced to the user instead of retried.
+     */
+    data class Failure(val message: String, val recoverable: Boolean = true) : RealtimeEvent
 
     data class Closed(val code: Int, val reason: String) : RealtimeEvent
 

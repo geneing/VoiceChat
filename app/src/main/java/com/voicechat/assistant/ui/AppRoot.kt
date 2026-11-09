@@ -1,8 +1,12 @@
 package com.voicechat.assistant.ui
 
 import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.os.Build
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,6 +36,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,6 +81,10 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
 
     var showUsage by rememberSaveable { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // A live voice conversation must not be interrupted by the display timing
+    // out: the screen (and with it the radio) stays awake until voice mode ends.
+    KeepScreenOn(enabled = session.liveEnabled || session.reconnecting)
 
     LaunchedEffect(viewModel) {
         viewModel.uiEvents.collect { message ->
@@ -300,6 +309,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
 private fun statusLine(status: String, transport: String?, connectMs: Long): String {
     val prefix = when (status) {
         "CONNECTING" -> "Connecting"
+        "RECONNECTING" -> "Reconnecting"
         "LISTENING" -> "Listening"
         "THINKING" -> "Thinking"
         "RESPONDING" -> "Responding"
@@ -311,4 +321,23 @@ private fun statusLine(status: String, transport: String?, connectMs: Long): Str
         if (transport != null) append(" · ").append(transport)
         if (connectMs > 0) append(" · ").append(connectMs).append(" ms")
     }
+}
+
+/** Holds `FLAG_KEEP_SCREEN_ON` while [enabled], and releases it afterwards. */
+@Composable
+private fun KeepScreenOn(enabled: Boolean) {
+    val context = LocalContext.current
+    DisposableEffect(context, enabled) {
+        val window = context.findActivity()?.window
+        if (enabled) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            if (enabled) window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

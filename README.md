@@ -51,15 +51,23 @@ Voice input ──► Qwen realtime session ──► spoken answer + live trans
   when one fails or returns nothing. API keys are loaded from ignored `secrets/`
   files at build time. Both models support function calling; Qwen Audio 3.1 is
   stricter about JSON Schema (`required` must be present).
+- **Deep reasoning handoff** — hard turns (code, multi-step maths, derivations,
+  planning, long documents) are handed to a stronger text model
+  (`qwen3.8-flash` by default, `qwen3.8-max` for the strongest) through a
+  `deep_reasoning` client tool, and the answer returns through the same session
+  as text or speech. Hard voice questions are pre-warmed while the assistant
+  says it is thinking, so there is no pause; nothing reconnects and the
+  transcript stays in one conversation.
 - **Metrics** — connect latency, TTFT per answer, token usage per conversation,
   and lifetime token/cost totals since the billing start. Prices are editable.
 - **Debug logging** — category filters, protocol dumps (audio/image redacted),
   in-app log viewer, optional rotating file log.
 - **Settings** — transport, model, voice, workspace host, system prompt presets,
   speech speed (0.75×–2.0× pitch-preserving time-stretch), VAD tuning, on-device
-  voice gate, transcription, tools/search, cost rates, prompts. Each model shows
-  its own official voice list (56 for Omni, 89 for Audio 3.1); an unsupported or
-  migrated voice falls back to that model's default.
+  voice gate, transcription, tools/search, deep reasoning (model, thinking
+  budget, timeout, context turns, speculative voice), cost rates, prompts. Each
+  model shows its own official voice list (56 for Omni, 89 for Audio 3.1); an
+  unsupported or migrated voice falls back to that model's default.
 
 ## Requirements
 

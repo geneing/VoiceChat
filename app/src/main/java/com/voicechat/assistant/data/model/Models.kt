@@ -19,7 +19,7 @@ enum class TransportKind(val label: String, val detail: String) {
 
 enum class MessageRole { USER, ASSISTANT, TOOL, SYSTEM }
 
-enum class MessageKind { TEXT, VOICE, TOOL, SYSTEM }
+enum class MessageKind { TEXT, VOICE, TOOL, SYSTEM, HANDOFF }
 
 enum class AttachmentKind { IMAGE, DOCUMENT }
 

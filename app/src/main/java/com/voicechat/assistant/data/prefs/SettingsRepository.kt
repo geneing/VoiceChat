@@ -17,6 +17,8 @@ import com.voicechat.assistant.core.RealtimeDefaults
 import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.model.UsageTotals
+import com.voicechat.assistant.realtime.handoff.HandoffConfig
+import com.voicechat.assistant.realtime.handoff.ReasoningModels
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -47,6 +49,18 @@ data class AppSettings(
     val speechRate: Double = RealtimeDefaults.DEFAULT_SPEECH_RATE,
     val priceInputPerMillion: Double = 0.0,
     val priceOutputPerMillion: Double = 0.0,
+    /** Hand a hard turn to a stronger reasoning model instead of answering shallowly. */
+    val handoffEnabled: Boolean = true,
+    val handoffModel: String = ReasoningModels.DEFAULT_ID,
+    /** Pre-reason hard typed questions deterministically, before the turn is sent. */
+    val handoffHeuristic: Boolean = false,
+    /** Warm a reasoning call from a hard voice transcript while the model speaks. */
+    val handoffSpeculativeVoice: Boolean = true,
+    val handoffThinkingBudget: Int = ReasoningModels.DEFAULT_THINKING_BUDGET,
+    val handoffTimeoutMs: Int = HandoffConfig.DEFAULT_TIMEOUT_MS,
+    val handoffContextTurns: Int = HandoffConfig.DEFAULT_CONTEXT_TURNS,
+    val handoffPriceInputPerMillion: Double = 0.0,
+    val handoffPriceOutputPerMillion: Double = 0.0,
     val debugCategories: Set<LogCategory> = LogCategory.entries.toSet(),
     val protocolDump: Boolean = true,
     val fileLogging: Boolean = false,
@@ -91,6 +105,21 @@ class SettingsRepository(private val context: Context) {
             speechRate = prefs[Keys.speechRate] ?: defaults.speechRate,
             priceInputPerMillion = prefs[Keys.priceIn] ?: defaults.priceInputPerMillion,
             priceOutputPerMillion = prefs[Keys.priceOut] ?: defaults.priceOutputPerMillion,
+            handoffEnabled = prefs[Keys.handoffEnabled] ?: defaults.handoffEnabled,
+            handoffModel = ReasoningModels.resolve(
+                prefs[Keys.handoffModel] ?: defaults.handoffModel,
+            ),
+            handoffHeuristic = prefs[Keys.handoffHeuristic] ?: defaults.handoffHeuristic,
+            handoffSpeculativeVoice = prefs[Keys.handoffSpeculativeVoice]
+                ?: defaults.handoffSpeculativeVoice,
+            handoffThinkingBudget = prefs[Keys.handoffThinkingBudget]
+                ?: defaults.handoffThinkingBudget,
+            handoffTimeoutMs = prefs[Keys.handoffTimeoutMs] ?: defaults.handoffTimeoutMs,
+            handoffContextTurns = prefs[Keys.handoffContextTurns] ?: defaults.handoffContextTurns,
+            handoffPriceInputPerMillion = prefs[Keys.handoffPriceIn]
+                ?: defaults.handoffPriceInputPerMillion,
+            handoffPriceOutputPerMillion = prefs[Keys.handoffPriceOut]
+                ?: defaults.handoffPriceOutputPerMillion,
             debugCategories = prefs[Keys.debugCategories]
                 ?.mapNotNull { name -> LogCategory.entries.firstOrNull { it.name == name } }
                 ?.toSet()
@@ -121,6 +150,21 @@ class SettingsRepository(private val context: Context) {
             if (prefs[Keys.searchDefaultMigrated] == true) return@edit
             prefs[Keys.nativeSearch] = true
             prefs[Keys.searchDefaultMigrated] = true
+        }
+    }
+
+    /**
+     * Installs that stored their debug categories before the `HANDOFF` category
+     * existed would silently drop handoff logging, so add it once.
+     */
+    suspend fun applyHandoffLogMigration() {
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.handoffLogMigrated] == true) return@edit
+            val stored = prefs[Keys.debugCategories]
+            if (stored != null) {
+                prefs[Keys.debugCategories] = stored + LogCategory.HANDOFF.name
+            }
+            prefs[Keys.handoffLogMigrated] = true
         }
     }
 
@@ -173,6 +217,15 @@ class SettingsRepository(private val context: Context) {
         prefs[Keys.speechRate] = s.speechRate
         prefs[Keys.priceIn] = s.priceInputPerMillion
         prefs[Keys.priceOut] = s.priceOutputPerMillion
+        prefs[Keys.handoffEnabled] = s.handoffEnabled
+        prefs[Keys.handoffModel] = s.handoffModel
+        prefs[Keys.handoffHeuristic] = s.handoffHeuristic
+        prefs[Keys.handoffSpeculativeVoice] = s.handoffSpeculativeVoice
+        prefs[Keys.handoffThinkingBudget] = s.handoffThinkingBudget
+        prefs[Keys.handoffTimeoutMs] = s.handoffTimeoutMs
+        prefs[Keys.handoffContextTurns] = s.handoffContextTurns
+        prefs[Keys.handoffPriceIn] = s.handoffPriceInputPerMillion
+        prefs[Keys.handoffPriceOut] = s.handoffPriceOutputPerMillion
         prefs[Keys.debugCategories] = s.debugCategories.map { it.name }.toSet()
         prefs[Keys.protocolDump] = s.protocolDump
         prefs[Keys.fileLogging] = s.fileLogging
@@ -197,12 +250,22 @@ class SettingsRepository(private val context: Context) {
         val toolsEnabled = booleanPreferencesKey("tools_enabled")
         val nativeSearch = booleanPreferencesKey("native_search")
         val searchDefaultMigrated = booleanPreferencesKey("search_default_migrated")
+        val handoffLogMigrated = booleanPreferencesKey("handoff_log_migrated")
         val searchSources = booleanPreferencesKey("search_sources")
         val searchProvider = stringPreferencesKey("search_provider")
         val languageHint = stringPreferencesKey("language_hint")
         val speechRate = doublePreferencesKey("speech_rate")
         val priceIn = doublePreferencesKey("price_input_per_million")
         val priceOut = doublePreferencesKey("price_output_per_million")
+        val handoffEnabled = booleanPreferencesKey("handoff_enabled")
+        val handoffModel = stringPreferencesKey("handoff_model")
+        val handoffHeuristic = booleanPreferencesKey("handoff_heuristic")
+        val handoffSpeculativeVoice = booleanPreferencesKey("handoff_speculative_voice")
+        val handoffThinkingBudget = intPreferencesKey("handoff_thinking_budget")
+        val handoffTimeoutMs = intPreferencesKey("handoff_timeout_ms")
+        val handoffContextTurns = intPreferencesKey("handoff_context_turns")
+        val handoffPriceIn = doublePreferencesKey("handoff_price_input_per_million")
+        val handoffPriceOut = doublePreferencesKey("handoff_price_output_per_million")
         val debugCategories = stringSetPreferencesKey("debug_categories")
         val protocolDump = booleanPreferencesKey("protocol_dump")
         val fileLogging = booleanPreferencesKey("file_logging")

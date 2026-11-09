@@ -18,6 +18,7 @@ enum class LogCategory {
     PROTOCOL,
     AUDIO,
     TOOLS,
+    HANDOFF,
     SESSION,
     COST,
     UI,

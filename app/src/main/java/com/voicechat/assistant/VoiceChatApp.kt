@@ -18,6 +18,9 @@ class VoiceChatApp : Application() {
         super.onCreate()
         AppLog.attach(this)
         container = AppContainer(this)
-        appScope.launch { container.settings.applySearchDefaultMigration() }
+        appScope.launch {
+            container.settings.applySearchDefaultMigration()
+            container.settings.applyHandoffLogMigration()
+        }
     }
 }

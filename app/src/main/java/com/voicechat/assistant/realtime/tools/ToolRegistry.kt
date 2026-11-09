@@ -69,7 +69,8 @@ class ToolRegistry(
         const val MAX_LOCATION_AGE_MS = 120_000L
     }
 
-    fun definitions(includeWebSearch: Boolean): String = ToolDefinitions.json(includeWebSearch)
+    fun definitions(includeWebSearch: Boolean, includeHandoff: Boolean = false): String =
+        ToolDefinitions.json(includeWebSearch, includeHandoff)
 
     val definitionsJson: String get() = ToolDefinitions.all
 

@@ -80,7 +80,9 @@ class WebSocketTransport(
         onChunk = { sendAudio(it) },
         onLevel = { _micLevel.value = it },
         onError = { message ->
-            emit(RealtimeEvent.Failure(message))
+            // A capture failure is not a link problem: retrying would just
+            // restart the same failing microphone.
+            emit(RealtimeEvent.Failure(message, recoverable = false))
             _state.value = TransportState.ERROR
         },
     )

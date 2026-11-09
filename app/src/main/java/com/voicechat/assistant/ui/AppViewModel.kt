@@ -1,6 +1,8 @@
 package com.voicechat.assistant.ui
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -24,6 +26,12 @@ import com.voicechat.assistant.realtime.RealtimeSession
 import com.voicechat.assistant.realtime.SessionConfig
 import com.voicechat.assistant.realtime.SessionListener
 import com.voicechat.assistant.realtime.SessionUiState
+import com.voicechat.assistant.realtime.handoff.HandoffConfig
+import com.voicechat.assistant.realtime.handoff.HandoffPrompt
+import com.voicechat.assistant.realtime.handoff.HandoffRouter
+import com.voicechat.assistant.realtime.handoff.HandoffTrace
+import com.voicechat.assistant.realtime.handoff.ReasoningModels
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -103,11 +111,27 @@ class AppViewModel(application: Application) :
     private val _uiEvents = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val uiEvents = _uiEvents.asSharedFlow()
 
+    private var handoffUnavailableNoted = false
+    /** Remembered live-mode intent so a manual retry restores voice mode. */
+    private var liveWanted = false
+
+    private val connectivity: ConnectivityManager? = runCatching {
+        application.getSystemService(ConnectivityManager::class.java)
+    }.getOrNull()
+
+    /** Retries a pending recovery as soon as a network is usable again. */
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            session.nudgeReconnect()
+        }
+    }
+
     val session: RealtimeSession = RealtimeSession(
         scope = scope,
         transportFactory = { kind -> container.createTransport(kind, scope) },
         tools = container.tools,
         listener = this,
+        reasoner = container.reasoner,
     )
 
     val sessionState: StateFlow<SessionUiState> = session.state
@@ -115,6 +139,7 @@ class AppViewModel(application: Application) :
     init {
         // Surface a bad search key instead of silently degrading to the fallback.
         container.tools.onSearchIssue = { message -> _uiEvents.tryEmit(message) }
+        runCatching { connectivity?.registerDefaultNetworkCallback(networkCallback) }
         scope.launch {
             settings.collect { current ->
                 val info = current.modelInfo
@@ -167,6 +192,7 @@ class AppViewModel(application: Application) :
     // ---- Chats -------------------------------------------------------------
 
     fun newChat() {
+        liveWanted = false
         scope.launch {
             session.stop()
             _streaming.value = null
@@ -177,6 +203,7 @@ class AppViewModel(application: Application) :
 
     fun selectChat(chatId: String) {
         if (_currentChatId.value == chatId) return
+        liveWanted = false
         scope.launch {
             session.stop()
             _streaming.value = null
@@ -235,13 +262,22 @@ class AppViewModel(application: Application) :
                 )
                 return@launch
             }
-            session.sendText(prepared.sentText, prepared.images).onFailure { error ->
-                _uiEvents.tryEmit("Could not send the message: ${error.message}")
-            }
+            val deepReasoning = HandoffRouter.shouldEscalate(
+                text = prepared.sentText,
+                config = config.handoff,
+                documentAttached = attachments.any { it.kind == AttachmentKind.DOCUMENT },
+            )
+            session.sendText(prepared.sentText, prepared.images, deepReasoning)
+                .onFailure { error ->
+                    if (error !is CancellationException) {
+                        _uiEvents.tryEmit("Could not send the message: ${error.message}")
+                    }
+                }
         }
     }
 
     fun startLive() {
+        liveWanted = true
         scope.launch {
             val config = buildConfig()
             if (config.apiKey.isBlank()) {
@@ -264,6 +300,7 @@ class AppViewModel(application: Application) :
     }
 
     fun stopLive() {
+        liveWanted = false
         scope.launch { session.setLiveMode(false) }
     }
 
@@ -272,9 +309,30 @@ class AppViewModel(application: Application) :
     }
 
     fun disconnect() {
+        liveWanted = false
         scope.launch {
             session.stop()
             _streaming.value = null
+        }
+    }
+
+    /** Manual retry from the error banner, keeping the previous mode. */
+    fun reconnect() {
+        scope.launch {
+            val config = buildConfig()
+            if (config.apiKey.isBlank()) {
+                _uiEvents.tryEmit("Add your Qwen API key in Settings first.")
+                return@launch
+            }
+            val live = liveWanted
+            val result = session.start(config, live = live)
+            if (result.isFailure) {
+                _uiEvents.tryEmit(
+                    result.exceptionOrNull()?.message ?: "Could not reconnect.",
+                )
+            } else {
+                _uiEvents.tryEmit(if (live) "Voice mode restored." else "Reconnected.")
+            }
         }
     }
 
@@ -501,6 +559,30 @@ class AppViewModel(application: Application) :
         _uiEvents.tryEmit(message)
     }
 
+    override fun onHandoff(trace: HandoffTrace) {
+        scope.launch {
+            val chatId = ensureChatId()
+            container.chats.addMessage(
+                Message(
+                    id = UUID.randomUUID().toString(),
+                    chatId = chatId,
+                    role = MessageRole.TOOL,
+                    kind = MessageKind.HANDOFF,
+                    text = HandoffPrompt.cardText(trace),
+                    attachments = emptyList(),
+                    createdAt = System.currentTimeMillis(),
+                    streaming = false,
+                    inputTokens = trace.usage.inputTokens,
+                    outputTokens = trace.usage.outputTokens,
+                    costUsd = trace.costUsd,
+                ),
+            )
+        }
+        if (trace.failed) {
+            _uiEvents.tryEmit(trace.error ?: "Deep reasoning failed.")
+        }
+    }
+
     override fun onUsage(usage: TokenUsage, costUsd: Double) {
         scope.launch {
             container.settings.addUsage(usage.inputTokens, usage.outputTokens, costUsd)
@@ -548,6 +630,17 @@ class AppViewModel(application: Application) :
         val modelInfo = current.modelInfo
         val toolsEnabled = current.toolsEnabled && modelInfo.supportsTools
         val nativeSearch = modelInfo.resolveNativeSearch(current.nativeSearch, toolsEnabled)
+        val handoff = buildHandoff(current, toolsEnabled)
+        if (current.handoffEnabled && handoff == null && !handoffUnavailableNoted) {
+            handoffUnavailableNoted = true
+            _uiEvents.tryEmit(
+                if (!toolsEnabled) {
+                    "Deep reasoning needs client tools. Enable Tools in Settings to use it."
+                } else {
+                    "Deep reasoning endpoint is not configured."
+                },
+            )
+        }
         return SessionConfig(
             model = current.model,
             voice = modelInfo.resolveVoice(current.voice),
@@ -577,16 +670,43 @@ class AppViewModel(application: Application) :
             inputTranscription = current.inputTranscription,
             transcriptionModel = modelInfo.transcriptionModel,
             toolsJson = if (toolsEnabled) {
-                container.tools.definitions(includeWebSearch = !nativeSearch)
+                container.tools.definitions(
+                    includeWebSearch = !nativeSearch,
+                    includeHandoff = handoff != null,
+                )
             } else {
                 null
             },
+            handoff = handoff,
             nativeSearch = nativeSearch,
             searchSources = current.searchSources,
             searchProvider = current.searchProvider,
             priceInputPerMillion = current.priceInputPerMillion,
             priceOutputPerMillion = current.priceOutputPerMillion,
             languageHint = current.languageHint,
+        )
+    }
+
+    private fun buildHandoff(current: AppSettings, toolsEnabled: Boolean): HandoffConfig? {
+        // The handoff is a client tool: without the tools array the realtime
+        // model can never call it, so do not advertise one.
+        if (!current.handoffEnabled || !toolsEnabled) return null
+        if (!container.reasoner.configured) return null
+        return HandoffConfig(
+            model = ReasoningModels.resolve(current.handoffModel),
+            thinkingBudget = current.handoffThinkingBudget.coerceIn(
+                ReasoningModels.MIN_THINKING_BUDGET,
+                ReasoningModels.MAX_THINKING_BUDGET,
+            ),
+            timeoutMs = current.handoffTimeoutMs.coerceIn(
+                ReasoningModels.MIN_TIMEOUT_MS,
+                ReasoningModels.MAX_TIMEOUT_MS,
+            ),
+            contextTurns = current.handoffContextTurns.coerceIn(0, 16),
+            forceForTypedTurns = current.handoffHeuristic,
+            speculativeVoice = current.handoffSpeculativeVoice,
+            priceInputPerMillion = current.handoffPriceInputPerMillion,
+            priceOutputPerMillion = current.handoffPriceOutputPerMillion,
         )
     }
 
@@ -635,6 +755,7 @@ class AppViewModel(application: Application) :
     }
 
     override fun onCleared() {
+        runCatching { connectivity?.unregisterNetworkCallback(networkCallback) }
         session.shutdown()
         super.onCleared()
     }

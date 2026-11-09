@@ -140,7 +140,7 @@ class AoqTransport(
             val message = "AOQ native libraries are not available for this CPU architecture."
             AppLog.error(LogCategory.TRANSPORT, message, error.message)
             _state.value = TransportState.ERROR
-            emit(RealtimeEvent.Failure(message))
+            emit(RealtimeEvent.Failure(message, recoverable = false))
             return@withContext Result.failure(IOException(message, error))
         } catch (error: RuntimeException) {
             _state.value = TransportState.ERROR

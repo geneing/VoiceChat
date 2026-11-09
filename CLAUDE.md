@@ -19,3 +19,7 @@ Quick reference:
   see `AGENTS.md` for the measured table.
 - Protocol details, module map, transports, logging/metrics rules and known
   limitations are in `AGENTS.md`. Update that file with code changes.
+- Deep reasoning handoff (`realtime/handoff/`): the `deep_reasoning` client tool
+  asks a stronger text model (`qwen3.8-flash` default, `qwen3.8-max` strongest)
+  and returns `spoken_summary` + `answer` through the same session; hard voice
+  transcripts get a speculative warm call. See "Model handoff" in `AGENTS.md`.

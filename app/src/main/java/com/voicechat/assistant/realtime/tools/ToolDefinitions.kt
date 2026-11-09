@@ -105,16 +105,64 @@ object ToolDefinitions {
     }
 
     /**
-     * The client `web_search` is left out when the session uses the server-side
-     * search, so the model has exactly one way to search.
+     * Handed to the realtime model so it can escalate a hard turn to a stronger
+     * text model without the user switching anything.
      */
-    fun json(includeWebSearch: Boolean): String = buildJsonArray {
+    private val deepReasoning = buildJsonObject {
+        put("type", "function")
+        putJsonObject("function") {
+            put("name", HANDOFF_NAME)
+            put(
+                "description",
+                "Consult a stronger reasoning model for work that needs care: " +
+                    "multi-step arithmetic or logic, code, derivations, planning, " +
+                    "comparing options, or analysing a long document. Do not use it " +
+                    "for small talk, weather or current facts, and not for anything " +
+                    "you can answer confidently in one step. Pass a self-contained " +
+                    "task, because the reasoning model cannot see this conversation " +
+                    "unless you restate it.",
+            )
+            putJsonObject("parameters") {
+                put("type", "object")
+                putJsonObject("properties") {
+                    putJsonObject("task") {
+                        put("type", "string")
+                        put(
+                            "description",
+                            "What must be worked out, including every fact the " +
+                                "reasoning model needs.",
+                        )
+                    }
+                    putJsonObject("depth") {
+                        put("type", "string")
+                        put("description", "brief for a short answer, detailed for full working.")
+                        putJsonArray("enum") {
+                            add("brief")
+                            add("detailed")
+                        }
+                    }
+                }
+                putJsonArray("required") { add("task") }
+            }
+        }
+    }
+
+    /**
+     * The client `web_search` is left out when the session uses the server-side
+     * search, so the model has exactly one way to search. `deep_reasoning` is
+     * only offered when the handoff is configured: it is executed by
+     * `RealtimeSession`, not by [ToolRegistry].
+     */
+    fun json(includeWebSearch: Boolean, includeHandoff: Boolean = false): String = buildJsonArray {
         add(currentDateTime)
         add(location)
         add(weather)
         if (includeWebSearch) add(webSearch)
+        if (includeHandoff) add(deepReasoning)
     }.toString()
 
     /** Convenience for callers that do not care about the distinction. */
     val all: String by lazy { json(includeWebSearch = true) }
+
+    const val HANDOFF_NAME = "deep_reasoning"
 }

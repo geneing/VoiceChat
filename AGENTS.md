@@ -107,6 +107,7 @@ app/src/main/java/com/voicechat/assistant/
     aoq/AoqTransport.kt      Alibaba AOQ SDK: QUIC media + Data events
     audio/                   PcmRecorder, PcmPlayer + TimeStretcher (WSOLA speed control), SpeechGate (device VAD), level meter, focus/routing
     tools/                   ToolDefinitions (schemas) + ToolRegistry (execution)
+    handoff/                 deep_reasoning: ReasoningClient (SSE), HandoffPrompt, HandoffRouter, SpeculativeHandoff
     RealtimeSession.kt       protocol state machine: turns, tools, metrics
   ui/
     theme/                   Material 3 theme
@@ -242,6 +243,84 @@ Function calling: tool results go back as
   which needs no API key and no search provider. Weather questions use it rather
   than `web_search`: searching raw coordinates returned unrelated results.
 
+## Model handoff (deep reasoning)
+
+The realtime models are tuned for conversation. Hard turns — multi-step maths,
+code, derivations, careful analysis, long documents — are handed to a stronger
+text model on the same OpenAI-compatible endpoint, and its answer comes back
+through the same session. Nothing reconnects, the model picker never appears and
+the modality policy is unchanged: text turns answer as text, voice turns answer
+as audio.
+
+`realtime/handoff/`:
+
+- `ReasoningModels` — catalogue and `ThinkingMode` (see the table below).
+- `HandoffConfig` — per-session snapshot: model, thinking budget, timeout,
+  context turns, `forceForTypedTurns`, `speculativeVoice`, price/1M tokens.
+- `HandoffPrompt` — pure: system prompt, dossier, request body, `## Answer` /
+  `## Spoken summary` parsing, `function_call_output` JSON, chat card text.
+- `ReasoningClient` — SSE over OkHttp; per-call cancellation (a cancelled
+  coroutine is registered on its own `Call`, so a speculative call and a tool
+  call never abort each other), error mapping (401/403/404/429), `usage` and
+  `completion_tokens_details.reasoning_tokens` from the final chunk.
+- `HandoffRouter` — deterministic scorer for typed pre-reasoning and for
+  speculative voice warm starts.
+- `SpeculativeHandoff` — one warm call at a time, reused only when the tool's
+  `task` overlaps the transcript (Jaccard ≥ 0.5).
+
+Escalation has three triggers and one engine:
+
+1. **Voice, model-driven.** The session advertises a client tool
+   `deep_reasoning` (`task`, `depth: brief|detailed`). The model calls it; the
+   answer returns as `function_call_output`
+   `{"ok":true,"model":…,"spoken_summary":…,"answer":…,"reasoning_tokens":…,"elapsed_ms":…}`
+   followed by the usual single `response.create` after `response.done`, with
+   `["text","audio"]` for a voice turn. The delivery instructions tell the model
+   to acknowledge in one short spoken sentence while it runs, lead with
+   `spoken_summary`, and never read `answer` verbatim.
+2. **Typed, model-driven (default).** Same tool; the answer is phrased as a text
+   reply. `handoffHeuristic` additionally pre-reasons hard typed prompts in the
+   app before the turn is sent and appends a delimited reference block to the
+   same user item — opt-in, because it adds the full reasoning latency up front.
+3. **Voice, speculative (default on).** On `input_audio_buffer` transcription
+   completion, a transcript that clears the same bar as escalation warms a
+   reasoning call while the realtime model composes its acknowledgement. If the
+   model then calls `deep_reasoning` for the same question, that call is awaited
+   (often already finished); otherwise it is dropped at `response.done`, on
+   barge-in, live-mode off, interrupt, stop, shutdown or reconnect.
+
+Handoff runs off the session mutex and reports through
+`SessionListener.onHandoff` (chat card + snackbar on failure) and `onUsage`.
+Every reasoning call is billed exactly once where it returns, including a warm
+call the model never uses; cost uses the two optional price fields. A failure is
+never fatal: the tool returns `ok:false` with a hint, and the realtime model
+answers from its own knowledge and says briefly that deep reasoning was
+unavailable.
+
+Verified against this workspace (streaming, `include_usage:true`):
+
+| Model | Thinking | Notes |
+| --- | --- | --- |
+| `qwen3.8-flash` | budget | default; newest fast thinker |
+| `qwen3.8-max` | budget | strongest |
+| `qwen3.7-max` | budget | previous generation |
+| `qwen-plus`, `qwen-flash` | budget | cheaper thinkers |
+| `qwq-plus-2025-03-05` | always | ignores and rejects `thinking_budget` |
+| `qwen-max` | none | no `reasoning_content` |
+
+`ThinkingMode` decides the body: `BUDGET` sends `enable_thinking` plus
+`thinking_budget` (or `enable_thinking:false` when the budget is 0), `ALWAYS` and
+`NONE` send neither. A budget sent to a model that rejects it fails the whole
+request (`kimi-k3` answers "Parameter thinking_budget is not supported"), which
+is why the mode is per model. `HandoffConfig.resolvedModel` falls back to the
+catalogue default when a stored id disappears.
+
+The handoff is a client tool, so it needs client tools enabled. The
+`qwen3.8-omni-flash-realtime` model in server-search agent mode rejects a `tools`
+array; `ModelInfo.resolveNativeSearch` already falls back to the client
+`web_search` in that case, so enabling the handoff keeps working instead of
+silently never firing.
+
 ## On-device voice gate
 
 Android exposes no public VAD API, so `realtime/audio/SpeechGate` derives speech
@@ -369,6 +448,46 @@ exposes a matching communication input.
   is shared. If the session cannot be opened, show the error and retry; do not
   silently fall back to another model.
 
+## Connection resilience
+
+The link to DashScope drops often on mobile networks, so `RealtimeSession`
+recovers on its own instead of ending the chat:
+
+- **Opening a session** (`start`) tries `ReconnectPolicy.INITIAL_ATTEMPTS` times
+  (250 ms, 600 ms backoff). `ensureSession` in `AppViewModel` reuses a connected
+  transport, so a chat keeps one session across turns.
+- **A dropped session** (`RealtimeEvent.Failure` with `recoverable = true`, or an
+  unexpected `RealtimeEvent.Closed`) starts a recovery loop of
+  `ReconnectPolicy.RECOVERY_ATTEMPTS` attempts at 250 ms → 3 s backoff while
+  `LiveStatus.RECONNECTING` is shown. Live mode survives the reconnect: the new
+  transport is opened with the microphone enabled again.
+- **Every attempt is bounded** by `ReconnectPolicy.connectTimeoutMs` (20 s for a
+  first attempt, 8 s for retries), so a dead network cannot make one attempt
+  wait out the full TCP timeout and stall the loop.
+- **Errors a retry cannot fix** are never retried: `ReconnectPolicy.isPermanent`
+  matches a missing/rejected API key and the AOQ ABI limitation, and
+  `RealtimeEvent.Failure(recoverable = false)` marks capture failures. Those go
+  to `SessionUiState.error` straight away.
+- **Context survives the reconnect.** The server conversation is new, so the
+  turns `RealtimeSession` still remembers are folded into the instructions by
+  `SessionPayloads.resumeInstructions` before the first `session.update`. The
+  recap is capped (12 turns, 4 000 chars) and marked as already-said, so the
+  model continues instead of restarting. `stop()` clears the transcript: an
+  explicit stop, a new chat or a settings change starts a clean conversation.
+- **Network changes retry immediately.** `AppViewModel` registers a default
+  network callback and calls `nudgeReconnect()` on `onAvailable`, which wakes
+  the backoff instead of waiting it out.
+- **Keep-alive** is OkHttp's WebSocket ping (`pingInterval` 10 s on
+  `realtimeClient`), so an idle socket is not reaped and a dead link fails into
+  the recovery path within ~20 s. AOQ/WebRTC keep their link inside the vendor
+  stack.
+- **The screen stays on while voice mode is live.** `KeepScreenOn` in `AppRoot`
+  holds `FLAG_KEEP_SCREEN_ON` while `liveEnabled || reconnecting`, so the display
+  (and the radio with it) does not sleep mid-conversation and Doze cannot
+  suspend the session. The flag is cleared as soon as voice mode ends.
+- The error banner offers a manual **Retry** (`AppViewModel.reconnect`) that
+  restores the previous mode, for when every automatic attempt failed.
+
 ## Metrics, cost and logging
 
 - `response.done.response.usage` provides `input_tokens`, `output_tokens`,
@@ -383,8 +502,8 @@ exposes a matching communication input.
   does not expose per-key billing through this API.
 - `AppLog` keeps a bounded in-memory ring buffer, mirrors to Logcat in debug,
   optionally writes a rotating file (`filesDir/logs/app.log`, 1 MB x 2), and is
-  filtered by category (`TRANSPORT`, `PROTOCOL`, `AUDIO`, `TOOLS`, `SESSION`,
-  `COST`, `UI`, `DB`). Protocol dumps redact audio/image payloads to
+  filtered by category (`TRANSPORT`, `PROTOCOL`, `AUDIO`, `TOOLS`, `HANDOFF`,
+  `SESSION`, `COST`, `UI`, `DB`). Protocol dumps redact audio/image payloads to
   `"<audio N bytes>"` / `"<image N bytes>"` and never print the API key.
 
 ## UI conventions
@@ -406,6 +525,7 @@ exposes a matching communication input.
 - Settings: connection (transport, model, voice, workspace host, API key),
   conversation (system prompt + presets, speech speed slider, VAD, on-device
   voice gate + trigger, transcription, client tools + native search),
+  deep reasoning (model, budget, timeout, context, speculative voice),
   metrics/cost rates, debug categories + log viewer.
 - Keep strings in `res/values/strings.xml` when reused; UI copy may also be
   inline for one-off labels. No hard-coded colours outside the theme.
@@ -428,10 +548,11 @@ exposes a matching communication input.
 
 Unit tests live in `app/src/test`. Cover: event parsing (including unknown
 events and redaction), URL/session-config building, cost/TTFT math, tool
-argument handling, text-turn vs voice-turn modality policy, and the
-`SpeechGate` state machine (silence dropped, pre-roll flushed, tail silence,
-adaptive floor, disabled pass-through). UI tests are not required; verify
-screens on the emulator with `adb` screenshots.
+argument handling, text-turn vs voice-turn modality policy, the handoff request
+shape (`Authorization`, thinking mode per model), the speculative warm-call
+lifecycle, and the `SpeechGate` state machine (silence dropped, pre-roll
+flushed, tail silence, adaptive floor, disabled pass-through). UI tests are not
+required; verify screens on the emulator with `adb` screenshots.
 
 ## Known limitations / roadmap
 
@@ -440,6 +561,11 @@ screens on the emulator with `adb` screenshots.
 - Image turns pause live mode: they need manual commits on WebSocket. Camera
   shots are sent as still images; no video track is published.
 - Cost rates must be entered manually; there is no billing API integration.
-- No automatic reconnect; no wake word or background/locked-screen service.
+- Deep reasoning needs client tools; with server-side search in agent mode on
+  `qwen3.8-omni-flash-realtime` the app falls back to the client `web_search` to
+  keep the tool available. Speculative voice warm calls can spend tokens the
+  realtime model never uses.
+- No wake word or background/locked-screen service: voice mode keeps the screen
+  awake instead (see "Connection resilience").
 - The on-device voice gate only covers the WebSocket transport.
 - No release signing, by design.

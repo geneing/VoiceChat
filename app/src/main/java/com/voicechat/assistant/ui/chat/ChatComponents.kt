@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Waves
 import androidx.compose.material3.DropdownMenu
@@ -66,12 +67,17 @@ import com.voicechat.assistant.data.model.MessageKind
 import com.voicechat.assistant.data.model.MessageRole
 import com.voicechat.assistant.realtime.LiveStatus
 import com.voicechat.assistant.realtime.SessionUiState
+import com.voicechat.assistant.realtime.handoff.HandoffUiState
 import com.voicechat.assistant.ui.StreamingMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @Composable
 fun MessageBubble(message: Message, showMetrics: Boolean) {
+    if (message.kind == MessageKind.HANDOFF) {
+        HandoffBubble(message.text)
+        return
+    }
     when (message.role) {
         MessageRole.TOOL -> ToolBubble(message.text)
         MessageRole.SYSTEM -> SystemRow(message.text)
@@ -233,6 +239,110 @@ private fun ToolBubble(text: String) {
 }
 
 @Composable
+private fun HandoffBubble(text: String) {
+    var expanded by remember { mutableStateOf(false) }
+    val header = text.lineSequence().firstOrNull().orEmpty().ifBlank { "Deep reasoning" }
+    val body = text.removePrefix(header).trim()
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 560.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(1.dp, MaterialTheme.colorScheme.tertiary, RoundedCornerShape(14.dp))
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Star,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.tertiary,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    header,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    if (expanded) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (body.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = body,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (expanded) Int.MAX_VALUE else 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/** Live "Deep reasoning…" strip; shown for typed pre-reasoning and tool handoffs. */
+@Composable
+fun HandoffStrip(handoff: HandoffUiState, onCancel: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 2.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .clickable(onClick = onCancel)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.Star,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = buildString {
+                    append("Deep reasoning with ")
+                    append(handoff.model)
+                    append('…')
+                    if (handoff.reasoningChars > 0) {
+                        append(' ')
+                        append(handoff.reasoningChars)
+                        append(" reasoning chars")
+                    }
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "Cancel",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+        }
+    }
+}
+
+@Composable
 private fun SystemRow(text: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
         Text(
@@ -315,7 +425,8 @@ fun LiveCard(
 ) {
     val active = state.status == LiveStatus.LISTENING ||
         state.status == LiveStatus.RESPONDING ||
-        state.status == LiveStatus.CONNECTING
+        state.status == LiveStatus.CONNECTING ||
+        state.status == LiveStatus.RECONNECTING
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -338,18 +449,25 @@ fun LiveCard(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = when (state.status) {
-                            LiveStatus.CONNECTING -> "Connecting…"
-                            LiveStatus.LISTENING -> "Listening…"
-                            LiveStatus.THINKING -> "Thinking…"
-                            LiveStatus.RESPONDING -> "Responding…"
-                            LiveStatus.ERROR -> "Connection problem"
-                            LiveStatus.IDLE -> "Voice mode paused"
+                        text = when {
+                            state.handoff != null -> "Deep reasoning…"
+                            state.status == LiveStatus.CONNECTING -> "Connecting…"
+                            state.status == LiveStatus.RECONNECTING ->
+                                "Reconnecting… (${state.reconnectAttempt})"
+                            state.status == LiveStatus.LISTENING -> "Listening…"
+                            state.status == LiveStatus.THINKING -> "Thinking…"
+                            state.status == LiveStatus.RESPONDING -> "Responding…"
+                            state.status == LiveStatus.ERROR -> "Connection problem"
+                            else -> "Voice mode paused"
                         },
                         style = MaterialTheme.typography.titleMedium,
                     )
                     val subtitle = when {
+                        state.status == LiveStatus.RECONNECTING ->
+                            "Restoring the voice connection automatically."
                         state.error != null -> state.error
+                        state.handoff != null ->
+                            "${state.handoff.model} is working through this turn."
                         state.status == LiveStatus.LISTENING -> "Speak naturally — talk over the answer to interrupt."
                         state.status == LiveStatus.RESPONDING -> "Reply in progress. Start talking to barge in."
                         state.status == LiveStatus.THINKING -> "Waiting for the first token."

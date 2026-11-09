@@ -2,6 +2,7 @@ package com.voicechat.assistant.realtime
 
 import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
+import com.voicechat.assistant.realtime.handoff.HandoffConfig
 import com.voicechat.assistant.realtime.tools.SearchResponseParser
 import com.voicechat.assistant.realtime.tools.ToolDefinitions
 import org.junit.Assert.assertEquals
@@ -186,6 +187,29 @@ class SessionPayloadsTest {
         )
         assertTrue(json.contains("enabled native web search"))
         assertTrue(!json.contains("Mandatory web search"))
+    }
+
+    @Test
+    fun `handoff tool is offered and instructed when configured`() {
+        val json = SessionPayloads.sessionUpdate(
+            config.copy(
+                toolsJson = ToolDefinitions.json(includeWebSearch = true, includeHandoff = true),
+                handoff = HandoffConfig(model = "qwen-flash"),
+            ),
+        )
+        assertTrue(json.contains("deep_reasoning"))
+        assertTrue(json.contains("\"required\":[\"task\"]"))
+        assertTrue(json.contains("Deep reasoning:"))
+        assertTrue(json.contains("spoken_summary"))
+    }
+
+    @Test
+    fun `handoff tool and instruction stay out when disabled`() {
+        val json = SessionPayloads.sessionUpdate(
+            config.copy(toolsJson = ToolDefinitions.json(includeWebSearch = true)),
+        )
+        assertTrue(!json.contains("deep_reasoning"))
+        assertTrue(!json.contains("Deep reasoning:"))
     }
 
     @Test

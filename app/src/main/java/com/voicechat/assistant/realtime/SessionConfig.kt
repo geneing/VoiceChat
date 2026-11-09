@@ -3,6 +3,7 @@ package com.voicechat.assistant.realtime
 import com.voicechat.assistant.core.RealtimeDefaults
 import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
+import com.voicechat.assistant.realtime.handoff.HandoffConfig
 import java.net.URLEncoder
 
 /**
@@ -87,6 +88,8 @@ data class SessionConfig(
     val inputTranscription: Boolean = true,
     val transcriptionModel: String = "qwen3-asr-flash-realtime",
     val toolsJson: String? = null,
+    /** Deep-reasoning handoff. `null` means the session has no such tool. */
+    val handoff: HandoffConfig? = null,
     val nativeSearch: Boolean = false,
     val searchSources: Boolean = true,
     val searchProvider: SearchProvider = SearchProvider.EXA,

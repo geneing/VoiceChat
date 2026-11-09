@@ -407,6 +407,10 @@ class WebRtcTransport(
                 PeerConnection.PeerConnectionState.FAILED -> {
                     if (!connected.isCompleted) {
                         connected.completeExceptionally(IOException("Peer connection failed"))
+                    } else {
+                        // An established call dropped: hand it to the session's
+                        // automatic recovery instead of dying silently.
+                        emit(RealtimeEvent.Failure("Peer connection failed"))
                     }
                 }
 

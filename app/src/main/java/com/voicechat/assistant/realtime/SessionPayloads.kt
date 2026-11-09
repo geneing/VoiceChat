@@ -1,5 +1,6 @@
 package com.voicechat.assistant.realtime
 
+import com.voicechat.assistant.realtime.handoff.HandoffPrompt
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -17,6 +18,41 @@ object SessionPayloads {
     private val SILENCE_FRAME: String = run {
         val bytes = ByteArray(6_400) // 200 ms of 16 kHz s16le mono silence
         Base64.getEncoder().encodeToString(bytes)
+    }
+
+    private val WHITESPACE = Regex("\\s+")
+    private const val MAX_RECAP_TURNS = 12
+    private const val MAX_RECAP_TURN_CHARS = 600
+    private const val MAX_RECAP_CHARS = 4_000
+
+    /**
+     * A reconnected session is a *new* server conversation, so the turns this
+     * client still remembers are handed back as a short recap appended to the
+     * instructions. Carrying the recap in the instructions (instead of replaying
+     * `conversation.item.create` messages) keeps the reconnect payload identical
+     * in shape to the one that already works for this vendor.
+     */
+    fun resumeInstructions(instructions: String, turns: List<HandoffPrompt.Turn>): String {
+        val lines = turns.mapNotNull { turn ->
+            val text = turn.text.trim().replace(WHITESPACE, " ")
+            if (text.isEmpty()) return@mapNotNull null
+            val label = if (turn.role == "assistant") "Assistant" else "User"
+            "$label: ${text.take(MAX_RECAP_TURN_CHARS)}"
+        }.takeLast(MAX_RECAP_TURNS)
+        if (lines.isEmpty()) return instructions
+        val recap = lines.joinToString("\n").take(MAX_RECAP_CHARS)
+        return buildString {
+            append(instructions.trim())
+            append(
+                "\n\nEarlier in this conversation (restored after a connection drop, " +
+                    "so the audio is gone; treat it as what was already said):\n",
+            )
+            append(recap)
+            append(
+                "\n\nContinue the conversation naturally. Do not read this recap back " +
+                    "and do not mention the reconnect.",
+            )
+        }
     }
 
     fun sessionUpdate(config: SessionConfig): String {
@@ -62,6 +98,23 @@ object SessionPayloads {
                         "headlines, weather, prices, or events. Do not answer from " +
                         "memory or claim you cannot access live information. If search " +
                         "returns no useful results, say so plainly; never invent results.",
+                )
+            }
+            if (config.toolsJson?.contains("\"name\":\"deep_reasoning\"") == true) {
+                append(
+                    "\n\nDeep reasoning: for work the user would notice getting wrong — " +
+                        "multi-step arithmetic or logic, code, derivations, planning, " +
+                        "comparing options, or a long document — call deep_reasoning " +
+                        "with a self-contained task description before you answer. " +
+                        "Do not call it for small talk, weather or current facts " +
+                        "(search for those), and not for anything you can answer " +
+                        "confidently in one step. One short spoken sentence such as " +
+                        "\"let me work that through\" is fine while it runs. When the " +
+                        "result returns, lead with the conclusion from spoken_summary, " +
+                        "keep the reply short for speech, and use answer only for the " +
+                        "detail the user asked for; never read it out verbatim. If it " +
+                        "fails, answer from your own knowledge and say briefly that " +
+                        "deep reasoning was unavailable.",
                 )
             }
             if (config.languageHint.isNotBlank()) {

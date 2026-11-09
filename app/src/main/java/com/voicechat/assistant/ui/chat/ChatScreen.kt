@@ -107,8 +107,26 @@ fun ChatScreen(
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         modifier = Modifier.weight(1f),
                     )
+                    TextButton(onClick = { viewModel.reconnect() }) { Text("Retry") }
                     TextButton(onClick = { viewModel.dismissError() }) { Text("Dismiss") }
                 }
+            }
+        }
+
+        if (session.reconnecting && !session.liveEnabled) {
+            Surface(
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Text(
+                    text = "Reconnecting… (attempt ${session.reconnectAttempt})",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                )
             }
         }
 
@@ -175,6 +193,10 @@ fun ChatScreen(
 
         if (session.active) {
             AudioTrafficStrip(state = session)
+        }
+
+        session.handoff?.let { handoff ->
+            if (!showLive) HandoffStrip(handoff, onCancel = viewModel::interrupt)
         }
 
         Composer(

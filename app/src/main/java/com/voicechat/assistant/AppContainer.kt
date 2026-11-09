@@ -7,6 +7,7 @@ import com.voicechat.assistant.data.prefs.SettingsRepository
 import com.voicechat.assistant.data.repo.ChatRepository
 import com.voicechat.assistant.realtime.RealtimeTransport
 import com.voicechat.assistant.realtime.aoq.AoqTransport
+import com.voicechat.assistant.realtime.handoff.ReasoningClient
 import com.voicechat.assistant.realtime.tools.ToolRegistry
 import com.voicechat.assistant.realtime.webrtc.WebRtcTransport
 import com.voicechat.assistant.realtime.ws.WebSocketTransport
@@ -39,12 +40,18 @@ class AppContainer(context: Context) {
     private val realtimeClient: OkHttpClient by lazy {
         apiClient.newBuilder()
             .readTimeout(0, TimeUnit.MILLISECONDS)
-            .pingInterval(20, TimeUnit.SECONDS)
+            // Keep-alive heartbeat: a WebSocket ping every 10 s stops NAT/proxy
+            // idle reaping and makes OkHttp fail a dead link within ~20 s, which
+            // is what triggers RealtimeSession's automatic recovery.
+            .pingInterval(10, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
     }
 
     val tools: ToolRegistry by lazy { ToolRegistry(appContext, apiClient) }
+
+    /** Higher-reasoning text model consulted for hard turns. */
+    val reasoner: ReasoningClient by lazy { ReasoningClient(apiClient) }
 
     fun createTransport(kind: TransportKind, scope: CoroutineScope): RealtimeTransport = when (kind) {
         TransportKind.WEBSOCKET -> WebSocketTransport(realtimeClient, appContext)

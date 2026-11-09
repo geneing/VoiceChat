@@ -8,10 +8,24 @@ import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TokenUsage
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.model.TurnMetrics
+import com.voicechat.assistant.realtime.handoff.HandoffConfig
+import com.voicechat.assistant.realtime.handoff.HandoffException
+import com.voicechat.assistant.realtime.handoff.HandoffPhase
+import com.voicechat.assistant.realtime.handoff.HandoffPrompt
+import com.voicechat.assistant.realtime.handoff.HandoffRouter
+import com.voicechat.assistant.realtime.handoff.HandoffTrace
+import com.voicechat.assistant.realtime.handoff.HandoffUiState
+import com.voicechat.assistant.realtime.handoff.ReasoningClient
+import com.voicechat.assistant.realtime.handoff.ReasoningResult
+import com.voicechat.assistant.realtime.handoff.SpeculativeHandoff
+import com.voicechat.assistant.realtime.tools.ToolDefinitions
 import com.voicechat.assistant.realtime.tools.ToolRegistry
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,8 +34,15 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.io.IOException
+import kotlin.coroutines.coroutineContext
 
-enum class LiveStatus { IDLE, CONNECTING, LISTENING, THINKING, RESPONDING, ERROR }
+enum class LiveStatus { IDLE, CONNECTING, RECONNECTING, LISTENING, THINKING, RESPONDING, ERROR }
 
 data class SessionUiState(
     val active: Boolean = false,
@@ -44,6 +65,12 @@ data class SessionUiState(
     val sendingAudio: Boolean = false,
     val receivingAudio: Boolean = false,
     val speechActive: Boolean = false,
+    /** True while a dropped connection is being restored automatically. */
+    val reconnecting: Boolean = false,
+    /** 1-based number of the recovery attempt in flight. */
+    val reconnectAttempt: Int = 0,
+    /** Non-null while the app is consulting the reasoning model. */
+    val handoff: HandoffUiState? = null,
 ) {
     val isBusy: Boolean
         get() = status == LiveStatus.THINKING || status == LiveStatus.RESPONDING
@@ -57,6 +84,9 @@ interface SessionListener {
     fun onToolCall(name: String, arguments: String, result: String?)
     fun onError(message: String)
     fun onUsage(usage: TokenUsage, costUsd: Double)
+
+    /** A deep-reasoning handoff finished (or failed) and is worth recording. */
+    fun onHandoff(trace: HandoffTrace) {}
 }
 
 /**
@@ -69,6 +99,8 @@ class RealtimeSession(
     private val transportFactory: (TransportKind) -> RealtimeTransport,
     private val tools: ToolRegistry,
     private val listener: SessionListener,
+    /** Consulted for `deep_reasoning`; `null` disables the handoff entirely. */
+    private val reasoner: ReasoningClient? = null,
 ) {
 
     private val _state = MutableStateFlow(SessionUiState())
@@ -94,22 +126,99 @@ class RealtimeSession(
     private var toolOutputsSent = false
     private val handledCalls = mutableSetOf<String>()
 
+    /** Non-null while the automatic reconnect loop is running. */
+    private var recoveryJob: Job? = null
+    /** Wakes the recovery loop early, e.g. when the network becomes available. */
+    private var recoveryWake: Channel<Unit>? = null
+    @Volatile
+    private var recovering = false
+    /** True while the current transport is being closed on purpose. */
+    @Volatile
+    private var closingTransport = false
+
+    /** Conversation history handed to the reasoning model as context. */
+    private val transcript = ArrayDeque<HandoffPrompt.Turn>()
+    private var handoffJob: Job? = null
+    private var handoffStartedAt = 0L
+    private var handoffCancelled = false
+    /** True while a typed turn is being reasoned about, before it is sent. */
+    private var preReasoning = false
+    /** Warm reasoning call started from a hard voice transcript. */
+    private val speculation = SpeculativeHandoff()
+    private var speculativeJob: Job? = null
+
+    @Volatile
+    private var handoffOutcome: Result<ReasoningResult>? = null
+
     private enum class DeltaChannel { NONE, TEXT, TRANSCRIPT }
 
     private companion object {
         val TOOL_NAME = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"")
+        val JSON = Json { ignoreUnknownKeys = true }
+        const val MAX_TRANSCRIPT_TURNS = 16
     }
 
-    suspend fun start(config: SessionConfig, live: Boolean): Result<Unit> = mutex.withLock {
+    private data class PendingHandoff(
+        val config: HandoffConfig,
+        val apiKey: String,
+        val context: List<HandoffPrompt.Turn>,
+    )
+
+    suspend fun start(config: SessionConfig, live: Boolean): Result<Unit> {
+        cancelRecovery("starting a new session")
+        var failure: Throwable? = null
+        for (attempt in 1..ReconnectPolicy.INITIAL_ATTEMPTS) {
+            val result = mutex.withLock { startOnce(config, live, attempt) }
+            if (result.isSuccess) return result
+            failure = result.exceptionOrNull()
+            AppLog.warn(
+                LogCategory.TRANSPORT,
+                "Connect attempt $attempt failed",
+                failure?.message,
+            )
+            if (attempt == ReconnectPolicy.INITIAL_ATTEMPTS ||
+                ReconnectPolicy.isPermanent(failure?.message)
+            ) {
+                break
+            }
+            val wait = ReconnectPolicy.delayMs(attempt)
+            _state.update {
+                it.copy(
+                    active = true,
+                    connected = false,
+                    status = LiveStatus.CONNECTING,
+                    reconnecting = true,
+                    reconnectAttempt = attempt + 1,
+                    error = null,
+                )
+            }
+            delay(wait)
+        }
+        val message = failure?.message ?: "Connection failed"
+        _state.update {
+            it.copy(
+                active = true,
+                connected = false,
+                status = LiveStatus.ERROR,
+                error = message,
+                reconnecting = false,
+                reconnectAttempt = 0,
+            )
+        }
+        listener.onError(message)
+        return Result.failure(failure ?: IllegalStateException(message))
+    }
+
+    private suspend fun startOnce(config: SessionConfig, live: Boolean, attempt: Int): Result<Unit> {
         val current = transport
         if (current != null && this.config == config && current.state.value == TransportState.CONNECTED) {
             applyLiveMode(live)
-            return@withLock Result.success(Unit)
+            return Result.success(Unit)
         }
-        stopLocked()
+        closeTransportLocked()
         this.config = config
-        connectStartedAt = SystemClock.elapsedRealtime()
         liveEnabled = live
+        cancelSpeculation("new connection")
         _state.value = SessionUiState(
             active = true,
             connected = false,
@@ -119,8 +228,72 @@ class RealtimeSession(
             model = config.model,
             voice = config.voice,
         )
+        return openTransport(config, live, attempt)
+    }
+
+    /** Creates a transport, opens it and configures the session. */
+    private suspend fun openTransport(
+        config: SessionConfig,
+        live: Boolean,
+        attempt: Int,
+    ): Result<Unit> {
+        connectStartedAt = SystemClock.elapsedRealtime()
         val newTransport = transportFactory(config.transport)
         transport = newTransport
+        closingTransport = false
+        attachCollectors(newTransport)
+        val timeoutMs = ReconnectPolicy.connectTimeoutMs(attempt)
+        val result = withTimeoutOrNull(timeoutMs) { newTransport.connect(config) }
+            ?: Result.failure(IOException("Timed out while opening the session (${timeoutMs}ms)."))
+        if (result.isFailure) {
+            eventsJob?.cancel()
+            eventsJob = null
+            levelJob?.cancel()
+            levelJob = null
+            trafficJob?.cancel()
+            trafficJob = null
+            closingTransport = true
+            runCatching { newTransport.close() }
+            transport = null
+            _state.update { it.copy(connected = false) }
+            return result
+        }
+        newTransport.setMicEnabled(live)
+        // A restored session is a fresh server conversation; hand the turns the
+        // client still remembers back as part of the instructions.
+        val payloadConfig = if (transcript.isEmpty()) {
+            config
+        } else {
+            config.copy(
+                instructions = SessionPayloads.resumeInstructions(config.instructions, transcript.toList()),
+            )
+        }
+        if (!newTransport.send(SessionPayloads.sessionUpdate(payloadConfig))) {
+            AppLog.warn(LogCategory.SESSION, "session.update could not be sent")
+        }
+        _state.update {
+            it.copy(
+                active = true,
+                connected = true,
+                liveEnabled = live,
+                status = if (live) LiveStatus.LISTENING else LiveStatus.IDLE,
+                reconnecting = false,
+                reconnectAttempt = 0,
+                error = null,
+                speaking = false,
+                speechActive = false,
+            )
+        }
+        AppLog.info(
+            LogCategory.SESSION,
+            "Session started",
+            "model=${config.model} transport=${config.transport} live=$live " +
+                "restoredTurns=${transcript.size} tools=${toolNames(config.toolsJson)}",
+        )
+        return Result.success(Unit)
+    }
+
+    private fun attachCollectors(newTransport: RealtimeTransport) {
         eventsJob = scope.launch {
             newTransport.events.collect { event -> handleEvent(event) }
         }
@@ -145,46 +318,132 @@ class RealtimeSession(
                 delay(200)
             }
         }
-        val result = newTransport.connect(config)
-        if (result.isSuccess) {
-            newTransport.setMicEnabled(live)
-            if (!newTransport.send(SessionPayloads.sessionUpdate(config))) {
-                AppLog.warn(LogCategory.SESSION, "session.update could not be sent")
-            }
-            _state.update {
-                it.copy(
-                    active = true,
-                    connected = true,
-                    liveEnabled = live,
-                    status = if (live) LiveStatus.LISTENING else LiveStatus.IDLE,
-                )
-            }
-            AppLog.info(
-                LogCategory.SESSION,
-                "Session started",
-                "model=${config.model} transport=${config.transport} live=$live " +
-                    "tools=${toolNames(config.toolsJson)}",
-            )
-        } else {
-            val message = result.exceptionOrNull()?.message ?: "Connection failed"
-            _state.update {
-                it.copy(
-                    active = true,
-                    connected = false,
-                    status = LiveStatus.ERROR,
-                    error = message,
-                )
-            }
-            listener.onError(message)
-        }
-        result
     }
 
-    suspend fun sendText(text: String, images: List<String> = emptyList()): Result<Unit> =
-        mutex.withLock {
+    /**
+     * Restores a dropped connection: keeps the transcript and live mode, and
+     * retries with a short backoff so a flaky link does not end the chat.
+     */
+    private fun scheduleRecovery(reason: String) {
+        if (recovering) return
+        val currentConfig = config ?: return
+        if (!_state.value.active) return
+        recovering = true
+        val wake = Channel<Unit>(Channel.CONFLATED)
+        recoveryWake = wake
+        recoveryJob = scope.launch {
+            var lastError = reason
+            var restored = false
+            for (attempt in 1..ReconnectPolicy.RECOVERY_ATTEMPTS) {
+                val wait = ReconnectPolicy.delayMs(attempt)
+                _state.update {
+                    it.copy(
+                        connected = false,
+                        status = LiveStatus.RECONNECTING,
+                        reconnecting = true,
+                        reconnectAttempt = attempt,
+                        error = null,
+                        speaking = false,
+                        speechActive = false,
+                    )
+                }
+                AppLog.warn(
+                    LogCategory.TRANSPORT,
+                    "Connection lost; retrying",
+                    "attempt=$attempt/${ReconnectPolicy.RECOVERY_ATTEMPTS} in ${wait}ms: $reason",
+                )
+                // A network callback can wake the loop before the backoff ends.
+                withTimeoutOrNull(wait) { wake.receive() }
+                // Read the mode at attempt time: the user may have stopped or
+                // (re)started voice mode while the link was down. Every recovery
+                // attempt is a retry, so it uses the short connect timeout.
+                val result = mutex.withLock { reopenLocked(currentConfig, liveEnabled) }
+                if (result.isSuccess) {
+                    AppLog.info(
+                        LogCategory.TRANSPORT,
+                        "Connection recovered",
+                        "attempt=$attempt",
+                    )
+                    restored = true
+                    break
+                }
+                lastError = result.exceptionOrNull()?.message ?: lastError
+                if (ReconnectPolicy.isPermanent(lastError)) break
+            }
+            recovering = false
+            recoveryWake = null
+            recoveryJob = null
+            if (!restored) {
+                AppLog.error(LogCategory.TRANSPORT, "Automatic recovery failed", lastError)
+                _state.update {
+                    it.copy(
+                        active = false,
+                        connected = false,
+                        liveEnabled = false,
+                        status = LiveStatus.ERROR,
+                        error = lastError,
+                        reconnecting = false,
+                        reconnectAttempt = 0,
+                        speechActive = false,
+                    )
+                }
+                listener.onError("Connection lost: $lastError")
+            }
+        }
+    }
+
+    private suspend fun reopenLocked(config: SessionConfig, live: Boolean): Result<Unit> {
+        finishTurn(partial = true)
+        cancelSpeculation("connection lost")
+        eventsJob?.cancel()
+        eventsJob = null
+        levelJob?.cancel()
+        levelJob = null
+        trafficJob?.cancel()
+        trafficJob = null
+        closingTransport = true
+        runCatching { transport?.close() }
+        transport = null
+        responding = false
+        handledCalls.clear()
+        _state.update { it.copy(connected = false, status = LiveStatus.RECONNECTING) }
+        // attempt = 2 selects the retry-sized connect timeout.
+        return openTransport(config, live, attempt = 2)
+    }
+
+    /** Cancels a running recovery loop, e.g. when the user stops the session. */
+    private fun cancelRecovery(reason: String) {
+        val job = recoveryJob ?: return
+        recoveryJob = null
+        recoveryWake = null
+        recovering = false
+        job.cancel()
+        AppLog.debug(LogCategory.TRANSPORT, "Recovery cancelled", reason)
+    }
+
+    /**
+     * Wakes the recovery loop so it retries immediately, for example when the
+     * device moves back onto Wi-Fi or a tunnel finally has signal.
+     */
+    fun nudgeReconnect() {
+        if (recovering) recoveryWake?.trySend(Unit)
+    }
+
+
+    /**
+     * Sends a typed turn. With [deepReasoning] the app consults the reasoning
+     * model first and the answer rides along as a reference, so hard typed
+     * questions never depend on the realtime model deciding to escalate.
+     */
+    suspend fun sendText(
+        text: String,
+        images: List<String> = emptyList(),
+        deepReasoning: Boolean = false,
+    ): Result<Unit> {
+        val pending: PendingHandoff? = mutex.withLock {
             val activeTransport = transport
             if (activeTransport == null || activeTransport.state.value != TransportState.CONNECTED) {
-                return@withLock Result.failure(IllegalStateException("Session is not connected."))
+                return Result.failure(IllegalStateException("Session is not connected."))
             }
             if (responding) {
                 activeTransport.send(SessionPayloads.cancelResponse())
@@ -197,6 +456,7 @@ class RealtimeSession(
                 applyLiveMode(false)
             }
             beginTurn(voice = false)
+            cancelSpeculation("typed turn")
             _state.update {
                 it.copy(
                     status = LiveStatus.THINKING,
@@ -205,18 +465,82 @@ class RealtimeSession(
                     speechActive = false,
                 )
             }
-            SessionPayloads.textTurn(text, images).forEach { event ->
-                if (!activeTransport.send(event)) {
-                    AppLog.warn(LogCategory.SESSION, "Could not send text turn event")
-                }
+            val handoff = config?.handoff
+            if (deepReasoning && handoff != null && reasoner != null) {
+                PendingHandoff(handoff, config?.apiKey.orEmpty(), transcript.toList())
+            } else {
+                null
             }
-            AppLog.info(
-                LogCategory.SESSION,
-                "Text turn sent",
-                "chars=${text.length} images=${images.size}",
-            )
-            Result.success(Unit)
         }
+        val handoffConfig = pending ?: return mutex.withLock { dispatchTextTurn(text, images) }
+        val reasonerClient = reasoner
+            ?: return mutex.withLock { dispatchTextTurn(text, images) }
+
+        // The reasoning request runs outside the session mutex: barge-in, the
+        // stop button and status updates must keep working while it streams.
+        handoffStartedAt = SystemClock.elapsedRealtime()
+        handoffCancelled = false
+        handoffOutcome = null
+        preReasoning = true
+        _state.update { it.copy(handoff = HandoffUiState(model = handoffConfig.config.resolvedModel)) }
+        AppLog.info(
+            LogCategory.HANDOFF,
+            "Pre-reasoning typed turn",
+            "model=${handoffConfig.config.model} chars=${text.length}",
+        )
+        handoffJob = scope.launch {
+            val result = reasonerClient.answer(
+                apiKey = handoffConfig.apiKey,
+                config = handoffConfig.config,
+                transcript = handoffConfig.context,
+                task = text,
+            ) { chars -> reportReasoningProgress(chars) }
+            billReasoning(handoffConfig.config, result)
+            handoffOutcome = result
+        }
+        handoffJob?.join()
+        handoffJob = null
+        preReasoning = false
+        val outcome = handoffOutcome
+        handoffOutcome = null
+        if (handoffCancelled || outcome == null) {
+            _state.update { it.copy(handoff = null) }
+            return Result.failure(CancellationException("Deep reasoning cancelled."))
+        }
+        val trace = buildTrace(handoffConfig.config, text, outcome)
+        reportHandoff(trace)
+        return mutex.withLock { dispatchTextTurn(text, images, trace) }
+    }
+
+    private fun dispatchTextTurn(
+        text: String,
+        images: List<String>,
+        trace: HandoffTrace? = null,
+    ): Result<Unit> {
+        val activeTransport = transport
+        if (activeTransport == null || activeTransport.state.value != TransportState.CONNECTED) {
+            _state.update { it.copy(handoff = null) }
+            return Result.failure(IllegalStateException("Session is not connected."))
+        }
+        val wireText = if (trace != null && !trace.failed && trace.answer.isNotBlank()) {
+            HandoffPrompt.questionWithReference(text, trace.answer)
+        } else {
+            text
+        }
+        rememberTurn("user", text)
+        SessionPayloads.textTurn(wireText, images).forEach { event ->
+            if (!activeTransport.send(event)) {
+                AppLog.warn(LogCategory.SESSION, "Could not send text turn event")
+            }
+        }
+        _state.update { it.copy(handoff = null, status = LiveStatus.THINKING) }
+        AppLog.info(
+            LogCategory.SESSION,
+            "Text turn sent",
+            "chars=${text.length} images=${images.size} handoff=${trace != null}",
+        )
+        return Result.success(Unit)
+    }
 
     suspend fun setLiveMode(enabled: Boolean) = mutex.withLock {
         applyLiveMode(enabled)
@@ -229,6 +553,17 @@ class RealtimeSession(
 
     suspend fun interrupt() = mutex.withLock {
         val activeTransport = transport ?: return@withLock
+        cancelSpeculation("interrupted")
+        if (preReasoning) {
+            // Nothing has been sent to the server for this turn yet, so there is
+            // no response to cancel: just stop paying for the reasoning call.
+            cancelHandoff("interrupted")
+            finishTurn(partial = true)
+            _state.update {
+                it.copy(status = if (liveEnabled) LiveStatus.LISTENING else LiveStatus.IDLE, speaking = false)
+            }
+            return@withLock
+        }
         if (responding) {
             activeTransport.setSpeakerMuted(true)
             activeTransport.send(SessionPayloads.cancelResponse())
@@ -246,16 +581,22 @@ class RealtimeSession(
 
     /** Non-suspending cleanup for ViewModel/process teardown. */
     fun shutdown() {
+        cancelRecovery("shutdown")
+        cancelHandoff("shutdown")
+        cancelSpeculation("shutdown")
+        reasoner?.cancelAll()
         eventsJob?.cancel()
         eventsJob = null
         levelJob?.cancel()
         levelJob = null
         trafficJob?.cancel()
         trafficJob = null
+        closingTransport = true
         runCatching { transport?.close() }
         transport = null
         config = null
         responding = false
+        transcript.clear()
         _state.value = SessionUiState()
     }
 
@@ -276,6 +617,7 @@ class RealtimeSession(
 
     private fun applyLiveMode(enabled: Boolean) {
         liveEnabled = enabled
+        if (!enabled) cancelSpeculation("live mode off")
         // Never change turn_detection on an established session: the server
         // rejects it ("cannot change turn detection") and the conversation
         // context would be lost by reconnecting. The session is always opened
@@ -297,6 +639,18 @@ class RealtimeSession(
     }
 
     private suspend fun stopLocked() {
+        cancelRecovery("session stopped")
+        closeTransportLocked()
+        // An explicit stop ends the conversation: the server context is gone and
+        // a later start must not hand old turns back.
+        transcript.clear()
+        _state.value = SessionUiState()
+    }
+
+    /** Tears the transport down but keeps the transcript so recovery can restore it. */
+    private fun closeTransportLocked() {
+        cancelHandoff("session stopped")
+        cancelSpeculation("session stopped")
         finishTurn(partial = true)
         eventsJob?.cancel()
         eventsJob = null
@@ -304,13 +658,13 @@ class RealtimeSession(
         levelJob = null
         trafficJob?.cancel()
         trafficJob = null
-        transport?.close()
+        closingTransport = true
+        runCatching { transport?.close() }
         transport = null
         config = null
         responding = false
         liveEnabled = false
         handledCalls.clear()
-        _state.value = SessionUiState()
     }
 
     private fun beginTurn(voice: Boolean) {
@@ -339,6 +693,8 @@ class RealtimeSession(
 
             is RealtimeEvent.SpeechStarted -> {
                 AppLog.debug(LogCategory.SESSION, "Speech started (barge-in)")
+                cancelHandoff("barge-in")
+                cancelSpeculation("barge-in")
                 transport?.setSpeakerMuted(true)
                 if (responding) {
                     // The server has interrupt_response=true and cancels the
@@ -377,7 +733,11 @@ class RealtimeSession(
             is RealtimeEvent.UserTranscriptCompleted -> {
                 val transcript = event.transcript.trim()
                 _state.update { it.copy(userPartial = transcript) }
-                if (transcript.isNotBlank()) listener.onUserTranscriptFinal(transcript)
+                if (transcript.isNotBlank()) {
+                    rememberTurn("user", transcript)
+                    startSpeculation(transcript)
+                    listener.onUserTranscriptFinal(transcript)
+                }
             }
 
             is RealtimeEvent.ResponseCreated -> {
@@ -435,12 +795,14 @@ class RealtimeSession(
                 val metrics = buildMetrics(usage)
                 val partial = event.status != null && event.status != "completed"
                 finishTurn(partial = partial)
+                // A turn that ended without a handoff leaves the warm call
+                // unused; stop paying for it.
+                if (handoffJob?.isActive != true) cancelSpeculation("turn finished")
                 val completed = event.status == null || event.status == "completed"
                 val needsFollowUp = toolOutputsSent && completed
                 toolOutputsSent = false
                 if (needsFollowUp) {
-                    val modalities = if (currentTurnVoice) listOf("text", "audio") else listOf("text")
-                    transport?.send(SessionPayloads.responseCreate(modalities))
+                    transport?.send(SessionPayloads.responseCreate(modalities()))
                     _state.update {
                         it.copy(
                             status = LiveStatus.THINKING,
@@ -486,30 +848,55 @@ class RealtimeSession(
 
             is RealtimeEvent.Failure -> {
                 finishTurn(partial = true)
-                _state.update {
-                    it.copy(
-                        status = LiveStatus.ERROR,
-                        connected = false,
-                        error = event.message,
-                        speechActive = false,
-                    )
+                // No response.done will arrive for this turn, so stop the warm
+                // reasoning call here instead of leaving it streaming.
+                cancelSpeculation("connection failed")
+                val canRecover = event.recoverable &&
+                    _state.value.active &&
+                    config != null &&
+                    !closingTransport
+                if (canRecover) {
+                    AppLog.warn(LogCategory.SESSION, "Connection problem", event.message)
+                    scheduleRecovery(event.message)
+                } else {
+                    _state.update {
+                        it.copy(
+                            status = LiveStatus.ERROR,
+                            connected = false,
+                            error = event.message,
+                            speechActive = false,
+                            reconnecting = false,
+                        )
+                    }
+                    listener.onError(event.message)
                 }
-                listener.onError(event.message)
             }
 
             is RealtimeEvent.Closed -> {
                 if (_state.value.active) {
                     finishTurn(partial = true)
-                    _state.update {
-                        it.copy(
-                            status = LiveStatus.IDLE,
-                            connected = false,
-                            active = false,
-                            liveEnabled = false,
-                            speechActive = false,
+                    cancelSpeculation("connection closed")
+                    if (config != null && !closingTransport) {
+                        // The server dropped the socket (idle timeout, network
+                        // change, session limit): restore it instead of ending
+                        // the conversation.
+                        AppLog.warn(
+                            LogCategory.SESSION,
+                            "Socket closed unexpectedly",
+                            "code=${event.code} reason=${event.reason}",
                         )
-                    }
-                    if (!responding) {
+                        scheduleRecovery("socket closed (${event.code})")
+                    } else {
+                        _state.update {
+                            it.copy(
+                                status = LiveStatus.IDLE,
+                                connected = false,
+                                active = false,
+                                liveEnabled = false,
+                                speechActive = false,
+                                reconnecting = false,
+                            )
+                        }
                         AppLog.info(LogCategory.SESSION, "Socket closed", "code=${event.code}")
                     }
                 }
@@ -524,9 +911,15 @@ class RealtimeSession(
     private suspend fun handleFunctionCall(event: RealtimeEvent.FunctionCall) {
         if (event.callId.isBlank() || event.name.isBlank()) return
         if (!handledCalls.add(event.callId)) return
-        val activeTransport = transport ?: return
         if (!_state.value.connected) return
         AppLog.info(LogCategory.TOOLS, "Model requested ${event.name}", event.arguments)
+        if (event.name == ToolDefinitions.HANDOFF_NAME) {
+            // A handoff runs for tens of seconds; it must never hold the mutex
+            // that barge-in, interrupt() and event handling need.
+            startHandoff(event)
+            return
+        }
+        val activeTransport = transport ?: return
         listener.onToolCall(event.name, event.arguments, null)
         _state.update { it.copy(status = LiveStatus.THINKING) }
         val result = tools.execute(
@@ -538,13 +931,299 @@ class RealtimeSession(
         val responseAlreadyFinished = !responding
         activeTransport.send(SessionPayloads.functionOutputItem(event.callId, result))
         if (responseAlreadyFinished) {
-            val modalities = if (currentTurnVoice) listOf("text", "audio") else listOf("text")
-            activeTransport.send(SessionPayloads.responseCreate(modalities))
+            activeTransport.send(SessionPayloads.responseCreate(modalities()))
             toolOutputsSent = false
         } else {
             toolOutputsSent = true
         }
     }
+
+    /**
+     * Runs the reasoning model for a `deep_reasoning` tool call and answers the
+     * call when it returns. Launched off the session mutex on purpose.
+     */
+    private fun startHandoff(event: RealtimeEvent.FunctionCall) {
+        val handoffConfig = config?.handoff
+        val reasonerClient = reasoner
+        if (handoffConfig == null || reasonerClient == null) {
+            replyToHandoff(
+                event.callId,
+                HandoffPrompt.toolError(
+                    handoffConfig?.resolvedModel ?: "qwen",
+                    "Deep reasoning is not available in this session.",
+                    0,
+                ),
+            )
+            return
+        }
+        if (handoffJob?.isActive == true) {
+            replyToHandoff(
+                event.callId,
+                HandoffPrompt.toolError(
+                    handoffConfig.resolvedModel,
+                    "Another deep reasoning request is still running.",
+                    0,
+                ),
+            )
+            return
+        }
+        val task = handoffArgument(event.arguments, "task")
+            ?.takeIf { it.isNotBlank() }
+            ?: transcript.lastOrNull { it.role == "user" }?.text
+            ?: "Answer the user's last request."
+        val depth = handoffArgument(event.arguments, "depth") ?: "detailed"
+        val context = transcript.toList()
+        val apiKey = config?.apiKey.orEmpty()
+        handoffStartedAt = SystemClock.elapsedRealtime()
+        handoffCancelled = false
+        handoffOutcome = null
+        _state.update { it.copy(status = LiveStatus.THINKING, handoff = HandoffUiState(handoffConfig.resolvedModel)) }
+        AppLog.info(
+            LogCategory.HANDOFF,
+            "Handoff started",
+            "model=${handoffConfig.resolvedModel} depth=$depth task=${task.take(200)}",
+        )
+        handoffJob = scope.launch {
+            val result = awaitReasoning(
+                client = reasonerClient,
+                handoff = handoffConfig,
+                apiKey = apiKey,
+                context = context,
+                task = task,
+                depth = depth,
+            )
+            if (!isActive) return@launch
+            handoffOutcome = result
+            mutex.withLock { finishHandoffLocked(event.callId, handoffConfig, task, result) }
+            handoffJob = null
+        }
+    }
+
+    /**
+     * Waits for the warm call when one answers this task, otherwise starts a new
+     * one. The warm call is billed where it was started, so only a fresh call is
+     * billed here.
+     */
+    private suspend fun awaitReasoning(
+        client: ReasoningClient,
+        handoff: HandoffConfig,
+        apiKey: String,
+        context: List<HandoffPrompt.Turn>,
+        task: String,
+        depth: String,
+    ): Result<ReasoningResult> {
+        when (val warm = speculation.take(task)) {
+            is SpeculativeHandoff.WarmTake.Reuse -> {
+                AppLog.info(
+                    LogCategory.HANDOFF,
+                    "Using warm reasoning call",
+                    "task=${task.take(120)}",
+                )
+                return try {
+                    warm.deferred.await()
+                } catch (error: CancellationException) {
+                    coroutineContext.ensureActive()
+                    Result.failure(HandoffException("Deep reasoning was cancelled.", cancelled = true))
+                }
+            }
+            SpeculativeHandoff.WarmTake.Mismatch -> cancelSpeculation("task mismatch")
+            SpeculativeHandoff.WarmTake.None -> Unit
+        }
+        val result = client.answer(
+            apiKey = apiKey,
+            config = handoff,
+            transcript = context,
+            task = task,
+            depth = depth,
+        ) { chars -> reportReasoningProgress(chars) }
+        billReasoning(handoff, result)
+        return result
+    }
+
+    private suspend fun finishHandoffLocked(
+        callId: String,
+        handoffConfig: HandoffConfig,
+        task: String,
+        result: Result<ReasoningResult>,
+    ) {
+        if (handoffCancelled) {
+            _state.update { it.copy(handoff = null) }
+            return
+        }
+        handoffOutcome = null
+        _state.update { it.copy(handoff = null) }
+        val activeTransport = transport ?: return
+        val trace = buildTrace(handoffConfig, task, result)
+        activeTransport.send(SessionPayloads.functionOutputItem(callId, HandoffPrompt.toolOutput(trace)))
+        if (!responding) {
+            activeTransport.send(SessionPayloads.responseCreate(modalities()))
+            toolOutputsSent = false
+            _state.update { it.copy(status = LiveStatus.THINKING) }
+        } else {
+            toolOutputsSent = true
+        }
+        reportHandoff(trace)
+    }
+
+    /** Answers a handoff call that cannot run, off the event-processing thread. */
+    private fun replyToHandoff(callId: String, output: String) {
+        scope.launch {
+            mutex.withLock {
+                val activeTransport = transport ?: return@withLock
+                activeTransport.send(SessionPayloads.functionOutputItem(callId, output))
+                if (!responding) {
+                    activeTransport.send(SessionPayloads.responseCreate(modalities()))
+                } else {
+                    toolOutputsSent = true
+                }
+            }
+        }
+    }
+
+    private fun cancelHandoff(reason: String) {
+        val job = handoffJob ?: return
+        handoffCancelled = true
+        handoffJob = null
+        handoffOutcome = null
+        // Cancelling the job aborts its HTTP call too.
+        job.cancel()
+        _state.update { it.copy(handoff = null) }
+        AppLog.info(LogCategory.HANDOFF, "Handoff cancelled", reason)
+    }
+
+    /**
+     * Warms a reasoning call for a hard final voice transcript. The realtime
+     * model keeps deciding whether to escalate; this only removes the wait when
+     * it does.
+     */
+    private fun startSpeculation(text: String) {
+        val handoff = config?.handoff ?: return
+        val reasonerClient = reasoner ?: return
+        if (!currentTurnVoice) return
+        if (handoffJob?.isActive == true || speculativeJob?.isActive == true) return
+        if (!HandoffRouter.shouldSpeculate(text, handoff)) return
+        val deferred = speculation.start(text) ?: return
+        val apiKey = config?.apiKey.orEmpty()
+        val context = transcript.toList()
+        AppLog.info(
+            LogCategory.HANDOFF,
+            "Warming a reasoning call",
+            "model=${handoff.resolvedModel} task=${text.take(120)}",
+        )
+        speculativeJob = scope.launch {
+            val result = reasonerClient.answer(
+                apiKey = apiKey,
+                config = handoff,
+                transcript = context,
+                task = text,
+            ) { chars -> reportReasoningProgress(chars) }
+            // The tokens are spent whether or not the model asks for the result.
+            billReasoning(handoff, result)
+            deferred.complete(result)
+        }
+    }
+
+    private fun cancelSpeculation(reason: String) {
+        speculativeJob?.cancel()
+        speculativeJob = null
+        if (speculation.running) {
+            speculation.cancel()
+            AppLog.debug(LogCategory.HANDOFF, "Warm reasoning call dropped", reason)
+        }
+    }
+
+    /** Bills a reasoning call exactly once, where it returns. */
+    private fun billReasoning(handoff: HandoffConfig, result: Result<ReasoningResult>) {
+        val answer = result.getOrNull() ?: return
+        if (answer.usage.totalTokens <= 0) return
+        listener.onUsage(
+            answer.usage,
+            CostCalculator.cost(
+                answer.usage,
+                handoff.priceInputPerMillion,
+                handoff.priceOutputPerMillion,
+            ),
+        )
+    }
+
+    private fun reportReasoningProgress(chars: Int) {
+        _state.update { current ->
+            val handoff = current.handoff ?: return@update current
+            current.copy(
+                handoff = handoff.copy(
+                    phase = HandoffPhase.RUNNING,
+                    reasoningChars = chars,
+                    elapsedMs = SystemClock.elapsedRealtime() - handoffStartedAt,
+                ),
+            )
+        }
+    }
+
+    private fun buildTrace(
+        handoffConfig: HandoffConfig,
+        task: String,
+        result: Result<ReasoningResult>,
+    ): HandoffTrace {
+        val elapsed = SystemClock.elapsedRealtime() - handoffStartedAt
+        return result.fold(
+            onSuccess = { answer ->
+                HandoffTrace(
+                    model = answer.model,
+                    task = task,
+                    answer = answer.answer,
+                    summary = answer.summary,
+                    reasoning = answer.reasoning,
+                    usage = answer.usage,
+                    reasoningTokens = answer.reasoningTokens,
+                    elapsedMs = answer.elapsedMs,
+                    costUsd = CostCalculator.cost(
+                        answer.usage,
+                        handoffConfig.priceInputPerMillion,
+                        handoffConfig.priceOutputPerMillion,
+                    ),
+                )
+            },
+            onFailure = { error ->
+                HandoffTrace(
+                    model = handoffConfig.resolvedModel,
+                    task = task,
+                    answer = "",
+                    summary = "",
+                    reasoning = "",
+                    usage = TokenUsage(),
+                    reasoningTokens = 0,
+                    elapsedMs = elapsed,
+                    costUsd = 0.0,
+                    error = error.message ?: "Deep reasoning failed.",
+                )
+            },
+        )
+    }
+
+    private fun reportHandoff(trace: HandoffTrace) {
+        listener.onHandoff(trace)
+        AppLog.info(
+            LogCategory.HANDOFF,
+            if (trace.failed) "Handoff failed" else "Handoff delivered",
+            "model=${trace.model} ${trace.elapsedMs}ms tokens=${trace.usage.totalTokens} " +
+                "reasoning=${trace.reasoningTokens}" +
+                (trace.error?.let { " error=$it" } ?: ""),
+        )
+    }
+
+    private fun rememberTurn(role: String, text: String) {
+        val clean = text.trim()
+        if (clean.isEmpty()) return
+        transcript.addLast(HandoffPrompt.Turn(role, clean))
+        while (transcript.size > MAX_TRANSCRIPT_TURNS) transcript.removeFirst()
+    }
+
+    private fun modalities(): List<String> =
+        if (currentTurnVoice) listOf("text", "audio") else listOf("text")
+
+    private fun handoffArgument(arguments: String, key: String): String? = runCatching {
+        JSON.parseToJsonElement(arguments).jsonObject[key]?.jsonPrimitive?.contentOrNull
+    }.getOrNull()
 
     private fun appendDelta(delta: String) {
         if (delta.isEmpty()) return
@@ -622,6 +1301,7 @@ class RealtimeSession(
         val metrics = buildMetrics(turnUsage)
         val text = buffer.toString().trim()
         if (assistantStarted || text.isNotEmpty()) {
+            rememberTurn("assistant", text)
             listener.onAssistantFinished(text, metrics, partial)
         }
         assistantStarted = false
@@ -632,6 +1312,7 @@ class RealtimeSession(
             it.copy(
                 assistantPartial = "",
                 speaking = false,
+                handoff = null,
             )
         }
     }

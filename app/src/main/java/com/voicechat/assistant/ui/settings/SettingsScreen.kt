@@ -62,6 +62,7 @@ import com.voicechat.assistant.core.RealtimeDefaults
 import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.prefs.AppSettings
+import com.voicechat.assistant.realtime.handoff.ReasoningModels
 import com.voicechat.assistant.ui.AppViewModel
 import kotlinx.coroutines.delay
 
@@ -511,6 +512,129 @@ fun SettingsScreen(
                         "Brave Search (key from secrets/brave.key), and DuckDuckGo. Native " +
                         "search runs on the server instead where supported; Qwen3.8 Omni " +
                         "uses the selected client provider when client tools are enabled.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        item {
+            SettingsSection("Deep reasoning", "Escalate hard turns to a stronger model") {
+                SwitchSetting(
+                    title = "Deep reasoning handoff",
+                    subtitle = "Hard turns — code, multi-step math, planning, long documents — " +
+                        "are worked out by a stronger text model, then answered in the same " +
+                        "conversation. Voice and text both work; nothing reconnects.",
+                    checked = settings.handoffEnabled,
+                    onCheckedChange = { value ->
+                        viewModel.updateSettings { it.copy(handoffEnabled = value) }
+                    },
+                )
+                DropdownSetting(
+                    label = "Reasoning model",
+                    value = ReasoningModels.info(settings.handoffModel).label,
+                    enabled = settings.handoffEnabled,
+                    options = ReasoningModels.models.map { it.label to it.id },
+                    onSelect = { id ->
+                        viewModel.updateSettings { it.copy(handoffModel = id) }
+                    },
+                )
+                Text(
+                    ReasoningModels.info(settings.handoffModel).description,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SwitchSetting(
+                    title = "Force it for hard typed questions",
+                    subtitle = "Typed prompts about code, maths, comparisons or long documents " +
+                        "are reasoned about before the turn is sent, instead of waiting for " +
+                        "the voice model to decide. Slower to start, but deterministic.",
+                    checked = settings.handoffHeuristic,
+                    enabled = settings.handoffEnabled,
+                    onCheckedChange = { value ->
+                        viewModel.updateSettings { it.copy(handoffHeuristic = value) }
+                    },
+                )
+                SwitchSetting(
+                    title = "Start it early for voice",
+                    subtitle = "When a finished voice question looks hard, the reasoning model " +
+                        "starts working while the assistant says it is thinking, so the " +
+                        "spoken answer has no pause. Wasted tokens when the model decides " +
+                        "not to use it.",
+                    checked = settings.handoffSpeculativeVoice,
+                    enabled = settings.handoffEnabled,
+                    onCheckedChange = { value ->
+                        viewModel.updateSettings { it.copy(handoffSpeculativeVoice = value) }
+                    },
+                )
+                SliderSetting(
+                    label = "Thinking budget",
+                    valueText = if (settings.handoffThinkingBudget <= 0) {
+                        "off"
+                    } else {
+                        "${settings.handoffThinkingBudget} tokens"
+                    },
+                    value = settings.handoffThinkingBudget.toFloat(),
+                    min = ReasoningModels.MIN_THINKING_BUDGET.toFloat(),
+                    max = ReasoningModels.MAX_THINKING_BUDGET.toFloat(),
+                    step = 256f,
+                    onCommit = { value ->
+                        viewModel.updateSettings { it.copy(handoffThinkingBudget = value.toInt()) }
+                    },
+                )
+                SliderSetting(
+                    label = "Handoff timeout",
+                    valueText = "${settings.handoffTimeoutMs / 1000} s",
+                    value = settings.handoffTimeoutMs.toFloat(),
+                    min = ReasoningModels.MIN_TIMEOUT_MS.toFloat(),
+                    max = ReasoningModels.MAX_TIMEOUT_MS.toFloat(),
+                    step = 5_000f,
+                    onCommit = { value ->
+                        viewModel.updateSettings { it.copy(handoffTimeoutMs = value.toInt()) }
+                    },
+                )
+                SliderSetting(
+                    label = "Conversation context",
+                    valueText = "${settings.handoffContextTurns} turns",
+                    value = settings.handoffContextTurns.toFloat(),
+                    min = 0f,
+                    max = 16f,
+                    step = 1f,
+                    onCommit = { value ->
+                        viewModel.updateSettings { it.copy(handoffContextTurns = value.toInt()) }
+                    },
+                )
+                Text(
+                    "Reasoning model price / 1M tokens (USD)",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                DebouncedTextField(
+                    initial = formatPrice(settings.handoffPriceInputPerMillion),
+                    label = "Input price",
+                    keyboardType = KeyboardType.Decimal,
+                    onCommit = { value ->
+                        viewModel.updateSettings {
+                            it.copy(handoffPriceInputPerMillion = value.toDoubleOrNull() ?: 0.0)
+                        }
+                    },
+                )
+                DebouncedTextField(
+                    initial = formatPrice(settings.handoffPriceOutputPerMillion),
+                    label = "Output price",
+                    keyboardType = KeyboardType.Decimal,
+                    onCommit = { value ->
+                        viewModel.updateSettings {
+                            it.copy(handoffPriceOutputPerMillion = value.toDoubleOrNull() ?: 0.0)
+                        }
+                    },
+                )
+                Text(
+                    "The handoff is a client tool, so it needs Tools enabled above. While " +
+                        "client tools are on, Qwen3.8 Omni searches on the device instead of " +
+                        "running the server-side agent mode, which keeps this tool available. " +
+                        "Reasoning tokens are billed as output, so the thinking budget caps " +
+                        "both the wait and the cost; a voice question that looks hard is " +
+                        "pre-warmed and costs a little even when the model answers it itself.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
