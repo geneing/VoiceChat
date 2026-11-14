@@ -10,14 +10,13 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * Streaming 24 kHz PCM output with instant flush for barge-in and optional
- * pitch-preserving time-stretching for speech-rate control. Writing happens on
- * a dedicated thread; [clear] drops everything queued and flushes the track.
+ * Streaming 24 kHz PCM output with instant flush for barge-in. Writing happens
+ * on a dedicated thread; [clear] drops everything queued and flushes the track.
  *
- * The rate is applied with [TimeStretcher] on our own PCM, not with
- * `AudioTrack.playbackParams`: the target device rejects a speed change with
- * `IllegalArgumentException: arguments out of range` for every AudioTrack
- * configuration (verified on the Pixel 10).
+ * Playback runs at the received sample rate. There is no local rate control:
+ * `AudioTrack.playbackParams` is rejected with `IllegalArgumentException:
+ * arguments out of range` for every configuration on the target device, and
+ * the speech pace comes from the prompt instead.
  */
 class PcmPlayer(private val sampleRate: Int = 24_000) {
 
@@ -32,15 +31,8 @@ class PcmPlayer(private val sampleRate: Int = 24_000) {
     @Volatile
     private var muted = false
 
-    private val stretchLock = Any()
-    private var stretcher: TimeStretcher? = null
-    private var speed = 1f
-
     @Volatile
     private var preferredDevice: AudioDeviceInfo? = null
-
-    @Volatile
-    private var stretchLogged = false
 
     fun start() {
         synchronized(this) {
@@ -50,7 +42,7 @@ class PcmPlayer(private val sampleRate: Int = 24_000) {
             applyPreferredDevice(track)
             track?.play()
             thread = Thread({ loop() }, "pcm-player").also { it.start() }
-            AppLog.info(LogCategory.AUDIO, "PCM playback started", "speed=${speed}x")
+            AppLog.info(LogCategory.AUDIO, "PCM playback started")
         }
     }
 
@@ -69,8 +61,6 @@ class PcmPlayer(private val sampleRate: Int = 24_000) {
 
     fun clear() {
         queue.clear()
-        resetStretcher()
-        stretchLogged = false
         runCatching {
             track?.pause()
             track?.flush()
@@ -82,7 +72,6 @@ class PcmPlayer(private val sampleRate: Int = 24_000) {
         synchronized(this) {
             running = false
             queue.clear()
-            resetStretcher()
             thread?.join(700)
             thread = null
             runCatching {
@@ -94,26 +83,6 @@ class PcmPlayer(private val sampleRate: Int = 24_000) {
             track = null
         }
         AppLog.info(LogCategory.AUDIO, "PCM playback stopped")
-    }
-
-    /**
-     * Set the playback speed multiplier. Applied by stretching our own PCM with
-     * [TimeStretcher] so the pitch is preserved; safe to call while a turn is
-     * playing.
-     */
-    fun setSpeed(value: Float) {
-        val target = value.coerceIn(MIN_SPEED, MAX_SPEED)
-            .let { if (kotlin.math.abs(it - 1f) < 0.01f) 1f else it }
-        synchronized(stretchLock) {
-            if (target == speed) return
-            speed = target
-            stretcher = if (target == 1f) null else TimeStretcher(sampleRate, target)
-        }
-        AppLog.info(LogCategory.AUDIO, "Playback speed set", "${target}x")
-    }
-
-    private fun resetStretcher() {
-        synchronized(stretchLock) { stretcher?.reset() }
     }
 
     /**
@@ -167,22 +136,12 @@ class PcmPlayer(private val sampleRate: Int = 24_000) {
     private fun loop() {
         while (running) {
             val chunk = queue.poll(200, TimeUnit.MILLISECONDS) ?: continue
-            if (muted) continue
-            val pcm = synchronized(stretchLock) { stretcher?.process(chunk) ?: chunk }
-            if (pcm.isEmpty()) continue
-            if (stretcher != null && !stretchLogged) {
-                stretchLogged = true
-                AppLog.info(
-                    LogCategory.AUDIO,
-                    "Time stretch engaged",
-                    "${speed}x in=${chunk.size}B out=${pcm.size}B",
-                )
-            }
+            if (muted || chunk.isEmpty()) continue
             runCatching {
                 var offset = 0
                 val audioTrack = track ?: return@runCatching
-                while (offset < pcm.size && running) {
-                    val written = audioTrack.write(pcm, offset, pcm.size - offset)
+                while (offset < chunk.size && running) {
+                    val written = audioTrack.write(chunk, offset, chunk.size - offset)
                     if (written <= 0) break
                     offset += written
                 }
@@ -190,10 +149,5 @@ class PcmPlayer(private val sampleRate: Int = 24_000) {
                 AppLog.warn(LogCategory.AUDIO, "Playback write failed: ${it.message}")
             }
         }
-    }
-
-    companion object {
-        private const val MIN_SPEED = 0.5f
-        private const val MAX_SPEED = 2.5f
     }
 }

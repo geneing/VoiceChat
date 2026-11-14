@@ -76,9 +76,8 @@ class AppSettingsDefaultsTest {
     }
 
     @Test
-    fun `defaults favour a sensitive gate and a brisk pace`() {
+    fun `defaults favour a sensitive gate`() {
         val settings = AppSettings()
         assertTrue(settings.vadThreshold < 0.5f)
-        assertTrue(settings.speechRate >= 1.4)
     }
 }

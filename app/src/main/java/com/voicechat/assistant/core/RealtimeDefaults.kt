@@ -245,11 +245,6 @@ object RealtimeDefaults {
 
     const val ASR_MODEL = "qwen3-asr-flash-realtime"
 
-    /** Default and bounds for the client-side speech speed setting. */
-    const val DEFAULT_SPEECH_RATE = 1.4
-    const val MIN_SPEECH_RATE = 0.75f
-    const val MAX_SPEECH_RATE = 2.0f
-
     // The default system prompt and the preset picker copy are data, not code:
     // they live in `assets/prompts.json` and are read through `PromptCatalog`.
 

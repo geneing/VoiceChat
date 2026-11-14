@@ -50,8 +50,6 @@ data class AppSettings(
     val searchSources: Boolean = true,
     val searchProvider: SearchProvider = SearchProvider.EXA,
     val languageHint: String = "",
-    /** Client-side playback speed multiplier (pitch preserved). */
-    val speechRate: Double = RealtimeDefaults.DEFAULT_SPEECH_RATE,
     val priceInputPerMillion: Double = 0.0,
     val priceOutputPerMillion: Double = 0.0,
     /** Hand a hard turn to a stronger reasoning model instead of answering shallowly. */
@@ -82,7 +80,6 @@ class SettingsRepository(private val context: Context) {
     private companion object {
         /** Values that earlier builds wrote into preferences as defaults. */
         const val LEGACY_VAD_THRESHOLD = 0.5f
-        const val LEGACY_SPEECH_RATE = 1.25
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs -> toSettings(prefs) }
@@ -113,7 +110,6 @@ class SettingsRepository(private val context: Context) {
                 SearchProvider.entries.firstOrNull { it.name == stored }
             } ?: defaults.searchProvider,
             languageHint = prefs[Keys.languageHint] ?: defaults.languageHint,
-            speechRate = prefs[Keys.speechRate] ?: defaults.speechRate,
             priceInputPerMillion = prefs[Keys.priceIn] ?: defaults.priceInputPerMillion,
             priceOutputPerMillion = prefs[Keys.priceOut] ?: defaults.priceOutputPerMillion,
             handoffEnabled = prefs[Keys.handoffEnabled] ?: defaults.handoffEnabled,
@@ -180,10 +176,9 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
-     * Moves an install off the previous VAD trigger and speech-rate defaults.
-     * Only values that still equal an old default are replaced, so a threshold
-     * the user tuned is left alone. The prompt is owned by
-     * [applyPromptMigration] now.
+     * Moves an install off the previous VAD trigger default. Only a value that
+     * still equals the old default is replaced, so a threshold the user tuned
+     * is left alone. The prompt is owned by [applyPromptMigration] now.
      *
      * The key was bumped after the first pass compared floats exactly: a slider
      * had stored the "0.5" default as 0.50000006, which is why [near] compares
@@ -195,10 +190,6 @@ class SettingsRepository(private val context: Context) {
             val threshold = prefs[Keys.vadThreshold]
             if (threshold == null || near(threshold.toDouble(), LEGACY_VAD_THRESHOLD.toDouble())) {
                 prefs[Keys.vadThreshold] = AppSettings().vadThreshold
-            }
-            val rate = prefs[Keys.speechRate]
-            if (rate == null || near(rate, LEGACY_SPEECH_RATE)) {
-                prefs[Keys.speechRate] = RealtimeDefaults.DEFAULT_SPEECH_RATE
             }
             prefs[Keys.conversationDefaultsV3] = true
         }
@@ -279,7 +270,6 @@ class SettingsRepository(private val context: Context) {
         prefs[Keys.searchSources] = s.searchSources
         prefs[Keys.searchProvider] = s.searchProvider.name
         prefs[Keys.languageHint] = s.languageHint
-        prefs[Keys.speechRate] = s.speechRate
         prefs[Keys.priceIn] = s.priceInputPerMillion
         prefs[Keys.priceOut] = s.priceOutputPerMillion
         prefs[Keys.handoffEnabled] = s.handoffEnabled
@@ -321,7 +311,6 @@ class SettingsRepository(private val context: Context) {
         val searchSources = booleanPreferencesKey("search_sources")
         val searchProvider = stringPreferencesKey("search_provider")
         val languageHint = stringPreferencesKey("language_hint")
-        val speechRate = doublePreferencesKey("speech_rate")
         val priceIn = doublePreferencesKey("price_input_per_million")
         val priceOut = doublePreferencesKey("price_output_per_million")
         val handoffEnabled = booleanPreferencesKey("handoff_enabled")

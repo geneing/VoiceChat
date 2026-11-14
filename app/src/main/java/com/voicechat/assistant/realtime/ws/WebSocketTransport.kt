@@ -137,7 +137,6 @@ class WebSocketTransport(
             ?: Result.failure(IOException("Timed out while opening the realtime socket."))
         if (result.isSuccess) {
             _state.value = TransportState.CONNECTED
-            player.setSpeed(config.speechRate.toFloat())
             player.start()
             focus.acquire()
             AppLog.info(LogCategory.TRANSPORT, "WebSocket connected")
@@ -182,10 +181,6 @@ class WebSocketTransport(
     override fun setSpeakerMuted(muted: Boolean) {
         player.setMuted(muted)
         AppLog.debug(LogCategory.AUDIO, if (muted) "Playback muted" else "Playback unmuted")
-    }
-
-    override fun setPlaybackSpeed(speed: Float) {
-        onAudioThread { player.setSpeed(speed) }
     }
 
     override fun close() {

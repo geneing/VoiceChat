@@ -79,12 +79,6 @@ data class SessionConfig(
      * clips the first word of a turn.
      */
     val prefixPaddingMs: Int = 800,
-    /**
-     * Client-side playback speed multiplier for the streamed audio. The
-     * realtime API ignores every server-side speed hint, so the value is applied
-     * to local playback with the platform time stretcher (pitch preserved).
-     */
-    val speechRate: Double = RealtimeDefaults.DEFAULT_SPEECH_RATE,
     val inputTranscription: Boolean = true,
     val transcriptionModel: String = "qwen3-asr-flash-realtime",
     val toolsJson: String? = null,

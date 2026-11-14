@@ -172,18 +172,15 @@ class SessionPayloadsTest {
     }
 
     @Test
-    fun `web search instructions refuse undated snippets as today's news`() {
+    fun `web search instructions refuse undated snippets as current information`() {
         val json = SessionPayloads.sessionUpdate(config)
         assertTrue(json.contains("published date"))
-        assertTrue(json.contains("is not today's news"))
+        assertTrue(json.contains("is not current"))
     }
 
     @Test
-    fun `session update carries audio formats and keeps delivery out of the rate`() {
-        val json = SessionPayloads.sessionUpdate(config.copy(speechRate = 1.5))
-        // Pacing is applied to the decoded PCM locally; a server-side rate is
-        // ignored, so the prompt must not promise one.
-        assertFalse(json.contains("1.50 times normal speed"))
+    fun `session update carries audio formats and asks for a brisk pace`() {
+        val json = SessionPayloads.sessionUpdate(config)
         assertTrue(json.contains("brisk conversational pace"))
         assertTrue(json.contains("\"type\":\"session.update\""))
         assertTrue(json.contains("\"sample_rate\":16000"))
@@ -193,6 +190,16 @@ class SessionPayloadsTest {
         assertTrue(json.contains("\"prefix_padding_ms\":800"))
         assertTrue(json.contains("\"tools\""))
         assertTrue(!json.contains("enable_search"))
+    }
+
+    @Test
+    fun `the news tool replaces web search for news turns`() {
+        val json = SessionPayloads.sessionUpdate(
+            config.copy(toolsJson = ToolDefinitions.json(includeWebSearch = true)),
+        )
+        assertTrue(json.contains("call get_news"))
+        assertTrue(json.contains("never use web_search for it"))
+        assertTrue(json.contains("say plainly when a section came back empty"))
     }
 
     @Test
@@ -319,7 +326,6 @@ class SessionPayloadsTest {
             config.copy(
                 model = "qwen-audio-3.1-realtime-flash",
                 turnDetection = "smart_turn_v2",
-                speechRate = 1.0,
             ),
         )
         assertTrue(json.contains("\"type\":\"smart_turn_v2\""))

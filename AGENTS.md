@@ -106,7 +106,7 @@ app/src/main/java/com/voicechat/assistant/
     webrtc/WebRtcTransport.kt org.webrtc peer connection + data channel
     aoq/AoqTokenClient.kt    AppServer token allocation + response mapping
     aoq/AoqTransport.kt      Alibaba AOQ SDK: QUIC media + Data events
-    audio/                   PcmRecorder, PcmPlayer + TimeStretcher (WSOLA speed control), SpeechGate (device VAD), level meter, focus/routing
+    audio/                   PcmRecorder, PcmPlayer, SpeechGate (device VAD), level meter, focus/routing
     tools/                   ToolDefinitions (schemas) + ToolRegistry (execution)
     handoff/                 deep_reasoning: ReasoningClient (SSE), HandoffPrompt, HandoffRouter, SpeculativeHandoff
     RealtimeSession.kt       protocol state machine: turns, tools, metrics
@@ -162,9 +162,9 @@ themselves), input audio
 transcription model `qwen3-asr-flash-realtime`. Qwen Audio 3.1 defaults to
 `smart_turn_v2` (semantic + acoustic, much less self-interruption). Every
 system prompt gets a delivery line asking for a brisk conversational pace and
-the current date ("Today is …"), because the models have no clock of their own;
-the server-side `speech_rate` option is ignored, so the rate is applied to the
-decoded PCM during playback instead (default 1.4x, WebSocket only).
+the current date ("Today is …"), because the models have no clock of their own
+and the vendor ignores every server-side `speech_rate` option — the pace comes
+from the prompt, not from the client (see "Speech speed").
 
 The default system prompt and the "Prompt preset" picker are data, not code:
 they ship as `app/src/main/assets/prompts.json` (`version`, `default`,
@@ -180,7 +180,7 @@ the user wrote is left alone. `knownDefaults` therefore has to list every
 default an earlier build stored *plus the current one* (a bump then recognises a
 stored copy), but not preset texts — replacing a chosen preset with the default
 prompt would be wrong. `applyConversationDefaultsMigration` still owns the
-one-time VAD-threshold and speech-rate moves.
+one-time VAD-threshold move.
 
 `prompts.json` is the only prompt source: the fallback string in
 `PromptCatalog` covers a missing or invalid asset and must stay a one-liner,
@@ -256,9 +256,10 @@ Function calling: tool results go back as
   to the client `web_search` (turn client tools off to use Omni's server search).
   Qwen Audio 3.1 supports both (verified on the device). Qwen Audio's function
   calling schema parser requires `required` on every tool. When client or native
-  search is configured, session instructions explicitly require search for
-  current/recent questions (news, headlines, weather, prices and events); do not
-  claim live information is inaccessible before attempting the configured search.
+  search is configured, session instructions explicitly require a tool call for
+  current/recent questions — `get_news` for news and markets, `web_search` for
+  prices, products, people, schedules and events; do not claim live information
+  is inaccessible before attempting the configured search.
 - The client `web_search` provider is user-selectable: Exa (default, key from
   `secrets/exa.key`), Brave Search (key from `secrets/brave.key`), or DuckDuckGo.
   Keys are read at Gradle configuration time into `BuildConfig` and never logged.
@@ -267,17 +268,28 @@ Function calling: tool results go back as
   (`searchFallbackChain`), so an empty result still answers. A provider that
   answers 401/403 is remembered as rejected for the session and reported to the
   user once (`onSearchIssue` → snackbar) instead of failing silently.
-- A "top news today" search must never be answered from a cached page. Exa used
-  to return the `apnews.com` homepage as an undated *highlight*, whose sidebar
-  still carried months-old stories (the Lindsay Clancy trial, a Bartiromo
-  ouster), and the realtime model read that out as today's news. `searchExa`
-  now sends `contents.livecrawl = "always"` and, when `SearchRecency` recognises
-  a news-ish query ("news", "today", "latest", "this weekend", …),
-  `startPublishedDate` three days back; every result's publication date is
+- **News uses its own tool, not web search.** A generic search for "top news
+  today" ranks a homepage first, and its cached highlight mixed a fresh story
+  with months-old sidebar text (the Lindsay Clancy trial, a Bartiromo ouster)
+  that the realtime model read out as today's news. `get_news` (`NewsSections`
+  + `ToolRegistry.news`) asks the providers for *news* published in the last
+  two days, in parallel per section: `world` ("top world news today"),
+  `markets` ("stock market today … what moved the market") and `ai` (releases,
+  papers, open-source models, library changes). Exa is asked with
+  `category=news` + `startPublishedDate` + `livecrawl=always`, Brave with
+  `/res/v1/news/search?freshness=pd`, DuckDuckGo with `df=d`. The result is
+  `{as_of, world:{items}, markets:{items}, ai:{items}}` where every item carries
+  `source`, `published` and a trimmed snippet, so the model reports dated
+  stories instead of guessing. Sections are cached for 10 minutes, so a
+  follow-up ("and the markets?") is instant. The tool is offered even when
+  server-side search is on; the session instruction routes news turns to it and
+  tells the model to say when a section is empty.
+- `web_search` still covers everything that is not news (prices, products,
+  people, schedules, events). `searchExa` livecrawls and, when `SearchRecency`
+  recognises a news-ish query ("news", "today", "latest", "this weekend", …),
+  limits results with `startPublishedDate`; every result's publication date is
   passed on as `published` (Brave's `page_age`) and the tool result carries
-  `today`, so the model can date what it reports. The session instructions say
-  to treat an undated snippet as stale instead of as today's news, and the
-  system prompt asks for the news recipe by section.
+  `today`, so a stray news query is still dated rather than recalled.
 - `get_location` resolves the device position (network provider first, then GPS)
   and falls back to a fresh `LocationManager.getCurrentLocation` fix when the
   last-known location is older than 2 minutes. It also reverse-geocodes a place
@@ -432,54 +444,37 @@ hearing aid → wired → USB device; A2DP-only headsets have no microphone and 
 not selected as capture inputs. When nothing external is connected, the
 loudspeaker is forced for AEC reference.
 
-**Speech speed**: the realtime API ignores every server-side hint (verified by
-measuring audio duration at `speech_rate` 1.0/1.5/2.0 and nested variants like
-`audio.output.speech_rate` and `voice_settings.speed`; all produced ~9.7 s of
-audio for the same sentence). `AudioTrack.playbackParams` is not usable either:
-on the Pixel 10 every combination of usage (voice communication, media,
-assistant), sample rate (24/48 kHz) and performance mode (none, low latency)
-throws `IllegalArgumentException: arguments out of range`, so the platform time
-stretcher can never be enabled. The app therefore stretches its own PCM with
-`realtime/audio/TimeStretcher` (WSOLA: 20 ms Hann windows, 50 % overlap, ±10 ms
-similarity search) before writing to the track, which preserves pitch. The
-session instructions ask for a brisk pace but no longer promise a numeric rate,
-because the API ignores it. Speed changes take effect immediately without
-reconnecting. Settings expose a "Speech speed" slider (0.75×–2.0×, default
-1.4×) that travels through `AppSettings.speechRate` →
-`SessionConfig.speechRate` → the transport player. Only WebSocket renders the
-audio itself, with `PcmPlayer`. AOQ used to switch to that path (`isExternal`
-playback plus `onPlaybackAudioFrame`) for a rate other than 1.0, but the SDK
-hands the decoded stream over at 1x (measured: ten 10 ms frames per second of
-audio, ratio 0.89–0.98 against a 1.4x consumer), so the player starved and the
-answer broke up while the wall-clock duration stayed at 1x. AOQ therefore keeps
-the SDK renderer — and its hardware AEC reference — and plays at 1x; the rate is
-a WebSocket feature. WebRTC has no local rate control either: the `org.webrtc`
-audio device owns playback. Bluetooth headsets are selected as the
-capture route on WebSocket voice mode when Android exposes a matching
-communication input.
+**Speech speed**: the pace comes from the prompt, not from the client. The
+vendor ignores every server-side hint (measured: `speech_rate` 1.0/1.5/2.0 and
+nested variants like `audio.output.speech_rate` and `voice_settings.speed` all
+produced ~9.7 s of audio for the same sentence), `AudioTrack.playbackParams` is
+rejected by the Pixel 10 with `IllegalArgumentException: arguments out of
+range` for every configuration, and a client-side WSOLA stretcher (the old
+`TimeStretcher`) cannot work on a live AOQ feed because the SDK hands the
+decoded stream over at exactly 1x — the player starved and the answer broke up
+(measured frame delivery 0.89–0.98x against a 1.4x consumer). The slider, the
+`speechRate` setting, `SessionConfig.speechRate`, `setPlaybackSpeed` and the
+stretcher were therefore removed. Both the system prompt and the session
+instructions ask for a brisk conversational delivery ("Speak at a faster
+rate"), which is what the models actually follow.
 
 ## Transports
 
-- **WebSocket** — full feature set: mic capture, streaming TTS playback with
-  pitch-preserving speed control, barge-in, images, tools, works on emulators.
-  The on-device voice gate is WebSocket-only. The realtime API ignores every
-  server-side speech-rate hint (verified by measuring audio duration at
-  `speech_rate` 1.0/1.5/2.0 and nested variants), and `AudioTrack.playbackParams`
-  is rejected by the device, so the app stretches its own PCM with
-  `TimeStretcher` before playback.
+- **WebSocket** — full feature set: mic capture, streaming TTS playback,
+  barge-in, images, tools, works on emulators. The on-device voice gate is
+  WebSocket-only. Playback is plain `PcmPlayer` at the received rate; the pace
+  comes from the prompt (see "Speech speed").
 - **WebRTC** — lowest latency media path; `org.webrtc` owns mic, AEC, noise
   suppression and playback, so `PcmRecorder`/`PcmPlayer` are not used. VAD
   turns only. Attachments are not supported (protocol carries images on the
   video track, which this app does not publish). Surface that limitation in
-  the UI instead of failing silently. Speech speed is not available for WebRTC
-  because the vendor stack controls playback timing.
+  the UI instead of failing silently.
 - **AOQ** — implemented in `realtime/aoq/` with Alibaba's
   `AoqClientSdk-release.aar` (v1.4.0) and `libPluginOpus.so` (in
   `app/libs` / `app/src/main/jniLibs`). The SDK owns capture, Opus, AEC and the
   QUIC relay; realtime events travel as Data messages using the same payloads
-  as WebSocket. The SDK renders the received audio itself at 1x and keeps its
-  hardware AEC reference; local speed control is not possible because the SDK
-  emits the decoded stream frame by frame in real time (see "Speech speed").
+  as WebSocket. The SDK renders the received audio itself and keeps its
+  hardware AEC reference.
   - **Token authentication**: production puts this call on an AppServer so the
     API key never reaches the device. This private build performs the AppServer
     step in-process (`AoqTokenClient`): `POST /api/v1/webrtc/realtime?model=…`
@@ -548,9 +543,17 @@ recovers on its own instead of ending the chat:
   recap is capped (12 turns, 4 000 chars) and marked as already-said, so the
   model continues instead of restarting. `stop()` clears the transcript: an
   explicit stop, a new chat or a settings change starts a clean conversation.
-- **Network changes retry immediately.** `AppViewModel` registers a default
-  network callback and calls `nudgeReconnect()` on `onAvailable`, which wakes
-  the backoff instead of waiting it out.
+- **Network changes are handled, not waited out.** `AppViewModel` registers a
+  default network callback. `onAvailable` compares the new default network with
+  the last one: on a switch (Wi-Fi → mobile, mobile → Wi-Fi, hotspot, VPN) it
+  waits `NETWORK_SETTLE_MS` (600 ms) for the interface to validate and calls
+  `RealtimeSession.onNetworkChanged()`, which redials on the new interface
+  through the recovery loop; on the same network it only calls
+  `nudgeReconnect()`. `onLost` logs the loss and keeps `lastNetwork` so the next
+  `onAvailable` can still tell a switch from a retry. Redialling is
+  intentional: the old socket was bound to the route that just disappeared and
+  would otherwise sit dead until the 20 s keep-alive fired, while the recap
+  keeps the conversation and live mode comes back with the new transport.
 - **Keep-alive** is OkHttp's WebSocket ping (`pingInterval` 10 s on
   `realtimeClient`), so an idle socket is not reaped and a dead link fails into
   the recovery path within ~20 s. AOQ/WebRTC keep their link inside the vendor
@@ -597,7 +600,7 @@ recovers on its own instead of ending the chat:
   when audio is received, blue while VAD detects the user speaking, amber when
   connected but silent, gray when disconnected.
 - Settings: connection (transport, model, voice, workspace host, API key),
-  conversation (system prompt + presets, speech speed slider, VAD, on-device
+  conversation (system prompt + presets, preferred language, VAD, on-device
   voice gate + trigger, transcription, client tools + native search),
   deep reasoning (model, budget, timeout, context, speculative voice),
   metrics/cost rates, debug categories + log viewer.
@@ -624,15 +627,16 @@ Unit tests live in `app/src/test`. Cover: event parsing (including unknown
 events and redaction), URL/session-config building, cost/TTFT math, tool
 argument handling, text-turn vs voice-turn modality policy, the handoff request
 shape (`Authorization`, thinking mode per model), the speculative warm-call
-lifecycle, and the `SpeechGate` state machine (silence dropped, pre-roll
-flushed, tail silence, adaptive floor, disabled pass-through). UI tests are not
-required; verify screens on the emulator with `adb` screenshots.
+lifecycle, the news section mapping and recency window, result-date parsing,
+and the `SpeechGate` state machine (silence dropped, pre-roll flushed, tail
+silence, adaptive floor, disabled pass-through). UI tests are not required;
+verify screens on the emulator with `adb` screenshots.
 
 ## Known limitations / roadmap
 
 - AOQ requires an arm64/armv7 device; the emulator is x86_64.
-- Speech rate is WebSocket-only. AOQ hands the decoded audio over in real time
-  and WebRTC's vendor stack owns playback timing, so both play at 1x.
+- Speech pace is prompt-only: the vendor ignores server-side speed hints and
+  the device rejects AudioTrack rate changes, so there is no speed slider.
 - WebRTC sessions cannot send image attachments yet.
 - Image turns pause live mode: they need manual commits on WebSocket. Camera
   shots are sent as still images; no video track is published.

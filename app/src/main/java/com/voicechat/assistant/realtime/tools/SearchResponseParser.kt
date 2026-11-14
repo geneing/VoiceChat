@@ -61,4 +61,24 @@ object SearchResponseParser {
             }
         }
     }
+
+    /** Brave News answers under a top-level `results` array, not `web.results`. */
+    fun braveNews(response: String): List<SearchResult> {
+        val results = json.parseToJsonElement(response).jsonObject["results"] as? JsonArray
+            ?: return emptyList()
+        return results.mapNotNull { element ->
+            val result = element.jsonObject
+            val title = result["title"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val url = result["url"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val snippet = result["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val published = result["page_age"]?.jsonPrimitive?.contentOrNull
+                ?.takeIf { it.isNotBlank() }
+                ?: result["age"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            if (title.isBlank() && url.isBlank() && snippet.isBlank()) {
+                null
+            } else {
+                SearchResult(title, url, snippet, published)
+            }
+        }
+    }
 }

@@ -28,12 +28,14 @@ Voice input ──► Qwen realtime session ──► spoken answer + live trans
 - **Audio traffic indicator** — media sent/received per current session in
   B/KB/MB, plus a top-bar dot that is green while receiving audio, blue while
   the user is speaking, amber during VAD silence and gray when disconnected.
-- **Speech speed** — a delivery instruction includes the selected rate, and
-  WebSocket playback applies pitch-preserving time-stretching to the PCM stream
-  in-app (0.75×–2.0× slider in Settings). The realtime API ignores server-side
-  `speech_rate` hints, and `AudioTrack.playbackParams` is rejected by the
-  device, so rate control is done by `TimeStretcher`; WebRTC/AOQ use the vendor
-  audio stack and do not expose local playback-rate control.
+- **Speech pace** — comes from the system prompt ("Speak at a faster rate"):
+  the realtime API ignores server-side `speech_rate` hints, `AudioTrack`
+  rejects playback-rate changes on this device, and a live AOQ/WebRTC stream
+  cannot be time-stretched locally without starving.
+- **News tool** — `get_news` fetches dated world, market and AI stories in one
+  call (Exa news search, Brave News, DuckDuckGo freshness as fallbacks), so
+  "what's the news today" is answered from recent articles rather than a cached
+  homepage snippet.
 - **Text mode** — type in the same session; sending stops the microphone,
   answers are requested as text and audio is suppressed even if the server
   streams it. Voice only resumes from the sound-wave button.

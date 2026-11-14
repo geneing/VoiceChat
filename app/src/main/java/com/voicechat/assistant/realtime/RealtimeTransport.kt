@@ -29,11 +29,5 @@ interface RealtimeTransport {
 
     fun setSpeakerMuted(muted: Boolean)
 
-    /**
-     * Playback speed multiplier for transports that render audio themselves.
-     * SDK-owned audio paths (WebRTC, AOQ) ignore it.
-     */
-    fun setPlaybackSpeed(speed: Float) = Unit
-
     fun close()
 }

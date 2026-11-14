@@ -13,6 +13,9 @@ import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.data.model.SearchProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -24,11 +27,14 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLDecoder
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -62,11 +68,25 @@ class ToolRegistry(
         val rejected: Boolean = false,
     )
 
+    /** One requested section of `get_news`. */
+    private data class NewsSection(
+        val name: String,
+        val provider: String,
+        val results: List<SearchResult>,
+    )
+
+    private data class CachedNews(val at: Long, val section: NewsSection)
+
+    private val newsCache = java.util.concurrent.ConcurrentHashMap<String, CachedNews>()
+
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         val DIRECT_EXECUTOR = Executor { runnable -> runnable.run() }
         const val FIX_TIMEOUT_MS = 3_500L
         const val MAX_LOCATION_AGE_MS = 120_000L
+        const val NEWS_ITEMS_PER_SECTION = 5
+        const val NEWS_SNIPPET_CHARS = 220
+        const val NEWS_CACHE_TTL_MS = 10 * 60_000L
     }
 
     fun definitions(includeWebSearch: Boolean, includeHandoff: Boolean = false): String =
@@ -86,6 +106,7 @@ class ToolRegistry(
                 "get_location" -> location()
                 "get_weather" -> weather()
                 "web_search" -> webSearch(argumentsJson, searchProvider)
+                "get_news" -> news(argumentsJson, searchProvider)
                 else -> errorResult("Unknown tool: $name")
             }
         }.getOrElse { error ->
@@ -383,8 +404,147 @@ class ToolRegistry(
         }.toString()
     }
 
-    private fun reportRejected(provider: SearchProvider) {
-        if (!reportedProviders.add(provider)) return
+    /**
+     * `get_news`: one focused search per requested section, in parallel, so a
+     * "what's the news" turn costs one tool call and arrives dated and grouped.
+     * Repeated asks within [NEWS_CACHE_TTL_MS] reuse the section, which makes a
+     * follow-up ("and the markets?") instant and stops the model re-inventing it.
+     */
+    private suspend fun news(argumentsJson: String, provider: SearchProvider): String {
+        val requested = runCatching {
+            json.parseToJsonElement(argumentsJson).jsonObject["section"]?.jsonPrimitive?.content
+        }.getOrNull()
+        val sections = NewsSections.parse(requested)
+        val fetched = coroutineScope {
+            sections.map { section ->
+                async(Dispatchers.IO) { newsSection(section, provider) }
+            }.awaitAll()
+        }
+        if (fetched.all { it.results.isEmpty() }) {
+            return errorResult(
+                "No news provider returned recent items. Check the Exa or Brave key, " +
+                    "or ask again in a minute.",
+            )
+        }
+        return buildJsonObject {
+            put("as_of", LocalDate.now().toString())
+            fetched.forEach { section ->
+                putJsonObject(section.name) {
+                    put("provider", section.provider)
+                    putJsonArray("items") {
+                        section.results.forEach { item ->
+                            add(
+                                buildJsonObject {
+                                    put("title", item.title)
+                                    put("source", sourceOf(item.url))
+                                    item.published?.let { put("published", it.take(10)) }
+                                    put("snippet", item.snippet.take(NEWS_SNIPPET_CHARS))
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }.toString()
+    }
+
+    private fun newsSection(name: String, provider: SearchProvider): NewsSection {
+        val key = "${provider.name}:$name"
+        val now = System.currentTimeMillis()
+        val cached = newsCache[key]
+        if (cached != null && now - cached.at < NEWS_CACHE_TTL_MS) return cached.section
+        val section = fetchNewsSection(name, provider)
+        if (section.results.isNotEmpty()) newsCache[key] = CachedNews(now, section)
+        AppLog.info(
+            LogCategory.TOOLS,
+            "News section ${section.name}",
+            "${section.results.size} items from ${section.provider}",
+        )
+        return section
+    }
+
+    private fun fetchNewsSection(name: String, provider: SearchProvider): NewsSection {
+        val query = NewsSections.queryFor(name)
+        val chain = searchFallbackChain(
+            selected = provider,
+            hasExaKey = exaApiKey.isNotBlank(),
+            hasBraveKey = BuildConfig.BRAVE_SEARCH_API_KEY.isNotBlank(),
+            rejected = rejectedProviders.toSet(),
+        )
+        chain.forEach { candidate ->
+            val results = when (candidate) {
+                SearchProvider.EXA -> searchExaNews(query)
+                SearchProvider.BRAVE -> searchBraveNews(query)
+                SearchProvider.DUCKDUCKGO -> searchDuckDuckGo(query, freshness = "d")
+            }
+            if (results.isNotEmpty()) {
+                return NewsSection(name, candidate.name.lowercase(), results.take(NEWS_ITEMS_PER_SECTION))
+            }
+        }
+        return NewsSection(name, "none", emptyList())
+    }
+
+    /** Exa's news category: dated articles only, fetched live rather than cached. */
+    private fun searchExaNews(query: String): List<SearchResult> {
+        val cutoff = ZonedDateTime.now().minusDays(NewsSections.WINDOW_DAYS).toInstant().toString()
+        val body = buildJsonObject {
+            put("query", query)
+            put("type", "auto")
+            put("category", "news")
+            put("numResults", NEWS_ITEMS_PER_SECTION + 1)
+            put("startPublishedDate", cutoff)
+            put("contents", buildJsonObject {
+                put("highlights", true)
+                put("text", false)
+                put("livecrawl", "always")
+            })
+        }.toString()
+        val request = Request.Builder()
+            .url("https://api.exa.ai/search")
+            .header("x-api-key", exaApiKey)
+            .header("Content-Type", "application/json")
+            .post(body.toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        return httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                AppLog.warn(LogCategory.TOOLS, "Exa news failed", "status=${response.code}")
+                if (response.code == 401 || response.code == 403) {
+                    rejectedProviders.add(SearchProvider.EXA)
+                    reportRejected(SearchProvider.EXA)
+                }
+                return emptyList()
+            }
+            SearchResponseParser.exa(response.body?.string().orEmpty())
+        }
+    }
+
+    /** Brave News endpoint with `freshness=pd` (past day), when the plan allows it. */
+    private fun searchBraveNews(query: String): List<SearchResult> {
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val url = "https://api.search.brave.com/res/v1/news/search?q=$encoded&count=$NEWS_ITEMS_PER_SECTION&freshness=pd"
+        val request = Request.Builder()
+            .url(url)
+            .header("X-Subscription-Token", BuildConfig.BRAVE_SEARCH_API_KEY)
+            .header("Accept", "application/json")
+            .build()
+        return httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                AppLog.warn(LogCategory.TOOLS, "Brave news failed", "status=${response.code}")
+                if (response.code == 401 || response.code == 403) {
+                    rejectedProviders.add(SearchProvider.BRAVE)
+                    reportRejected(SearchProvider.BRAVE)
+                }
+                return emptyList()
+            }
+            SearchResponseParser.braveNews(response.body?.string().orEmpty())
+        }
+    }
+
+    private fun sourceOf(url: String): String = runCatching {
+        java.net.URI(url).host?.removePrefix("www.").orEmpty()
+    }.getOrDefault("")
+
+    private fun reportRejected(provider: SearchProvider) {        if (!reportedProviders.add(provider)) return
         AppLog.warn(
             LogCategory.TOOLS,
             "Search provider rejected its API key",
@@ -458,8 +618,10 @@ class ToolRegistry(
         }
     }
 
-    private fun searchDuckDuckGo(query: String): List<SearchResult> {
-        val url = "https://html.duckduckgo.com/html/?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
+    private fun searchDuckDuckGo(query: String, freshness: String? = null): List<SearchResult> {
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val window = freshness?.let { "&df=$it" }.orEmpty()
+        val url = "https://html.duckduckgo.com/html/?q=$encoded$window"
         val request = Request.Builder()
             .url(url)
             .header(

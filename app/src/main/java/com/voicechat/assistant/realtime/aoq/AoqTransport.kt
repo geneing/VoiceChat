@@ -79,19 +79,6 @@ class AoqTransport(
     override val audioTraffic: StateFlow<AudioTraffic> = traffic.state
 
     @Volatile
-    private var playbackSpeed = 1f
-
-    /**
-     * A live AOQ downlink arrives frame by frame in real time (measured: ten
-     * 10 ms frames per second of audio), so a local time stretcher that consumes
-     * 1.4x of that feed can only starve and chop the answer. The SDK therefore
-     * renders at 1x here and the speech rate stays a WebSocket feature; see
-     * "Speech speed" in AGENTS.md.
-     */
-    @Volatile
-    private var speedNoticeLogged = false
-
-    @Volatile
     private var engine: AoqClientEngine? = null
 
     @Volatile
@@ -165,7 +152,6 @@ class AoqTransport(
         }
         engine = created
         AppLog.info(LogCategory.TRANSPORT, "AOQ engine ${AoqClientEngine.getVersion()}")
-        playbackSpeed = config.speechRate.toFloat().coerceIn(MIN_SPEED, MAX_SPEED)
 
         applyCodecConfigs(created)
         runCatching {
@@ -269,27 +255,6 @@ class AoqTransport(
         speakerMuted = muted
         if (muted) stopPlayer() else if (_state.value == TransportState.CONNECTED) startPlayer()
         AppLog.debug(LogCategory.AUDIO, if (muted) "AOQ playback stopped" else "AOQ playback started")
-    }
-
-    /**
-     * The SDK's own renderer owns playback timing: it hands the decoded stream
-     * over in real time, so a local stretcher would starve and the answer would
-     * break up (measured: 0.89-0.98x frame delivery against a 1.4x consumer).
-     * The audio stays at 1x and the rate is applied by the WebSocket transport.
-     */
-    override fun setPlaybackSpeed(speed: Float) {
-        val value = speed.coerceIn(MIN_SPEED, MAX_SPEED)
-        if (value == playbackSpeed) return
-        playbackSpeed = value
-        if (abs(value - 1f) >= 0.01f && !speedNoticeLogged) {
-            speedNoticeLogged = true
-            AppLog.info(
-                LogCategory.AUDIO,
-                "AOQ speech rate not available",
-                "the SDK renders the live stream in real time; playing at 1x. " +
-                    "Use WebSocket for ${value}x.",
-            )
-        }
     }
 
     override fun close() {
@@ -611,9 +576,5 @@ class AoqTransport(
 
     private companion object {
         const val CONNECT_TIMEOUT_MS = 25_000L
-
-        /** Matches the range PcmPlayer and TimeStretcher can render. */
-        const val MIN_SPEED = 0.5f
-        const val MAX_SPEED = 2.5f
     }
 }

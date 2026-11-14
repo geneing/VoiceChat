@@ -69,9 +69,8 @@ object SessionPayloads {
             append(now.format(DATE_FORMAT))
             append(". Use it for anything time-dependent and never call an older " +
                 "story today's news.")
-            // The pacing is applied locally to the decoded PCM; the realtime API
-            // ignores every server-side speed hint, so asking for a rate here
-            // only produced the same normal-speed audio.
+            // Speech pace lives in the prompt: the realtime API ignores every
+            // server-side speed hint and the platform has no usable rate control.
             append(
                 "\n\nDelivery: natural phrasing and crisp articulation at a brisk " +
                     "conversational pace.",
@@ -94,19 +93,34 @@ object SessionPayloads {
                         "offer to use a city name instead.",
                 )
             }
+            if (config.toolsJson?.contains("\"name\":\"get_news\"") == true) {
+                val hasWebSearch = config.toolsJson.contains("\"name\":\"web_search\"")
+                append(
+                    "\n\nNews: call get_news for every request about the news, " +
+                        "headlines, what happened today or the market, before answering. " +
+                        "Never answer news from memory" +
+                        (if (hasWebSearch) " and never use web_search for it" else "") +
+                        ". get_news returns dated items per section: lead with the top " +
+                        "three world stories, then today's market conditions and what " +
+                        "moved them, then five AI items (papers, model releases, " +
+                        "open-source models, library changes). Say how old a story is when " +
+                        "it is not from today, never present an older story as today's " +
+                        "news, and say plainly when a section came back empty.",
+                )
+            }
             if (config.toolsJson?.contains("\"name\":\"web_search\"") == true) {
                 append(
                     "\n\nMandatory web search: for any request about current or recent " +
-                        "facts—including news, headlines, weather, prices, or events—" +
-                        "call the web_search function before answering. Do not answer " +
-                        "from memory or claim you cannot access live information without " +
-                        "first calling it. After the results return, summarize them " +
-                        "concisely for speech and distinguish reported facts from " +
+                        "facts that are not news—prices, products, people, schedules, " +
+                        "events—call the web_search function before answering. Do not " +
+                        "answer from memory or claim you cannot access live information " +
+                        "without first calling it. After the results return, summarize " +
+                        "them concisely for speech and distinguish reported facts from " +
                         "uncertainty. Treat each result's published date as the age of " +
-                        "that story: a search snippet without a recent date is not today's " +
-                        "news, so leave it out or say how old it is instead of presenting " +
-                        "it as current. If the search returns no useful results, say the " +
-                        "search did not find enough information; never invent results.",
+                        "that story: a snippet without a recent date is not current, so " +
+                        "leave it out or say how old it is. If the search returns no " +
+                        "useful results, say the search did not find enough information; " +
+                        "never invent results.",
                 )
             } else if (config.nativeSearch) {
                 append(

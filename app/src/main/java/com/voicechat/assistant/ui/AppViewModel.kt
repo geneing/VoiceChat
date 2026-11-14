@@ -51,6 +51,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 
+/**
+ * How long to let a freshly switched network validate before reconnecting on
+ * it. Long enough for Android to finish DHCP/validation, short enough that a
+ * voice turn does not lose seconds of air.
+ */
+private const val NETWORK_SETTLE_MS = 600L
+
 data class StreamingMessage(val id: String, val text: String, val voice: Boolean)
 
 private data class PreparedOutgoing(
@@ -121,10 +128,41 @@ class AppViewModel(application: Application) :
         application.getSystemService(ConnectivityManager::class.java)
     }.getOrNull()
 
-    /** Retries a pending recovery as soon as a network is usable again. */
+    /** Last default network, kept across a loss so a switch can be recognised. */
+    private var lastNetwork: Network? = null
+
+    /**
+     * A phone that moves between Wi-Fi and mobile loses the interface its
+     * realtime socket was dialled on. Reconnecting on the new default network is
+     * what keeps a conversation alive across the switch; waiting for the
+     * keep-alive would leave 20 s of dead air, and the old socket never recovers
+     * because its route is gone.
+     */
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
-            session.nudgeReconnect()
+            val active = connectivity?.activeNetwork ?: network
+            val switched = lastNetwork != null && lastNetwork != active
+            lastNetwork = active
+            AppLog.info(
+                LogCategory.TRANSPORT,
+                if (switched) "Network switched" else "Network available",
+                "${active} (${connectivity?.getLinkProperties(active)?.interfaceName ?: "?"})",
+            )
+            if (switched) {
+                scope.launch {
+                    // Give the new interface a moment to validate before redialling.
+                    delay(NETWORK_SETTLE_MS)
+                    session.onNetworkChanged()
+                }
+            } else {
+                session.nudgeReconnect()
+            }
+        }
+
+        override fun onLost(network: Network) {
+            AppLog.info(LogCategory.TRANSPORT, "Network lost", "$network")
+            // Keep lastNetwork: the next onAvailable compares against it to tell
+            // a switch (Wi-Fi -> mobile) from a plain retry on the same network.
         }
     }
 
@@ -442,10 +480,6 @@ class AppViewModel(application: Application) :
                 _streaming.value = null
                 _uiEvents.tryEmit("Session settings changed. Reconnecting on the next turn.")
             }
-            // Speed is applied to the live player, so it must not force a reconnect.
-            if (before.speechRate != after.speechRate) {
-                session.setPlaybackSpeed(after.speechRate.toFloat())
-            }
         }
     }
 
@@ -619,11 +653,7 @@ class AppViewModel(application: Application) :
     private suspend fun ensureSession(config: SessionConfig): Result<Unit> {
         val state = session.state.value
         val current = session.currentConfig()
-        // Speed only affects local playback, so adjust it instead of reconnecting.
-        val unchanged = current != null &&
-            current.copy(speechRate = config.speechRate) == config
-        return if (state.connected && unchanged) {
-            session.setPlaybackSpeed(config.speechRate.toFloat())
+        return if (state.connected && current == config) {
             Result.success(Unit)
         } else {
             val live = state.liveEnabled
@@ -669,10 +699,6 @@ class AppViewModel(application: Application) :
             silenceMs = current.silenceMs,
             onDeviceVad = current.onDeviceVad,
             vadSensitivityDb = current.vadSensitivityDb,
-            speechRate = current.speechRate.coerceIn(
-                RealtimeDefaults.MIN_SPEECH_RATE.toDouble(),
-                RealtimeDefaults.MAX_SPEECH_RATE.toDouble(),
-            ),
             inputTranscription = current.inputTranscription,
             transcriptionModel = modelInfo.transcriptionModel,
             toolsJson = if (toolsEnabled) {

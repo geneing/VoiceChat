@@ -498,6 +498,27 @@ class RealtimeSession(
         }
     }
 
+    /**
+     * The device moved to a different default network (Wi-Fi to mobile or back).
+     * The socket was dialled on the previous interface and its route is gone, so
+     * the session is redialled on the new one instead of waiting for the
+     * keep-alive to time out. The transcript recap keeps the conversation going
+     * and live mode is restored with the new transport.
+     */
+    fun onNetworkChanged() {
+        if (recovering) {
+            recoveryWake?.trySend(Unit)
+            return
+        }
+        if (awaitingNetwork) {
+            nudgeReconnect()
+            return
+        }
+        if (!_state.value.active || config == null) return
+        AppLog.warn(LogCategory.TRANSPORT, "Network switch; reconnecting on the new interface")
+        scheduleRecovery("network switched")
+    }
+
 
     /**
      * Sends a typed turn. With [deepReasoning] the app consults the reasoning
@@ -613,11 +634,6 @@ class RealtimeSession(
 
     suspend fun setLiveMode(enabled: Boolean) = mutex.withLock {
         applyLiveMode(enabled)
-    }
-
-    /** Playback speed for the live player; safe to call while a turn is playing. */
-    fun setPlaybackSpeed(speed: Float) {
-        transport?.setPlaybackSpeed(speed)
     }
 
     suspend fun interrupt() = mutex.withLock {

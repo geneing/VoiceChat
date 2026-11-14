@@ -86,10 +86,10 @@ object ToolDefinitions {
             put(
                 "description",
                 "Search the public web before answering questions about current " +
-                    "or recent information, including news, today's headlines, " +
-                    "weather, prices, or events. Returns results with title, URL " +
-                    "and snippet; summarize these results and do not answer from " +
-                    "memory when fresh information is requested.",
+                    "or recent information that is not news — prices, products, people, " +
+                    "schedules, events. Returns results with title, URL and snippet; " +
+                    "summarize these results and do not answer from memory when fresh " +
+                    "information is requested. Use get_news for news, headlines or markets.",
             )
             putJsonObject("parameters") {
                 put("type", "object")
@@ -100,6 +100,46 @@ object ToolDefinitions {
                     }
                 }
                 putJsonArray("required") { add("query") }
+            }
+        }
+    }
+
+    /**
+     * A focused news digest instead of a generic web search: each section is
+     * fetched as recent, dated articles, so the model never has to guess whether
+     * a snippet is today's story.
+     */
+    private val news = buildJsonObject {
+        put("type", "function")
+        putJsonObject("function") {
+            put("name", "get_news")
+            put(
+                "description",
+                "Get today's news as dated items grouped by section: world (top " +
+                    "international stories), markets (stock market conditions and what " +
+                    "moved them) and ai (model releases, research papers, open-source " +
+                    "models and library changes). Call this for every request about the " +
+                    "news, headlines, what happened today or the market. \"all\" returns " +
+                    "the three sections together.",
+            )
+            putJsonObject("parameters") {
+                put("type", "object")
+                putJsonObject("properties") {
+                    putJsonObject("section") {
+                        put("type", "string")
+                        put(
+                            "description",
+                            "Section to fetch; all returns world, markets and ai together.",
+                        )
+                        putJsonArray("enum") {
+                            add(NewsSections.ALL)
+                            add(NewsSections.WORLD)
+                            add(NewsSections.MARKETS)
+                            add(NewsSections.AI)
+                        }
+                    }
+                }
+                putJsonArray("required") {}
             }
         }
     }
@@ -158,6 +198,7 @@ object ToolDefinitions {
         add(location)
         add(weather)
         if (includeWebSearch) add(webSearch)
+        add(news)
         if (includeHandoff) add(deepReasoning)
     }.toString()
 
