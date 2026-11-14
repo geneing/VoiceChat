@@ -88,7 +88,8 @@ Single Gradle module `app`, package `com.voicechat.assistant`.
 app/src/main/java/com/voicechat/assistant/
   VoiceChatApp.kt            Application, WebRTC init, AppContainer
   MainActivity.kt            single activity, permission wiring
-  core/                      AppLog, time/format helpers, Result helpers
+  core/                      AppLog, PromptCatalog (assets/prompts.json),
+                             time/format helpers, Result helpers
   data/
     db/                      Room entities, DAOs, database
     prefs/                   DataStore settings + usage totals
@@ -155,12 +156,32 @@ committed, `conversation.item.input_audio_transcription.*`,
 `item.type == "function_call"`, and `error`.
 
 Session defaults (see `RealtimeDefaults.kt` / `SessionConfig`): 16 kHz s16le
-mono input, 24 kHz PCM output, server-side turn detection, input audio
+mono input, 24 kHz PCM output, server-side turn detection with a 0.35 VAD
+threshold (lowered from 0.5 because the user had to speak up and repeat
+themselves), input audio
 transcription model `qwen3-asr-flash-realtime`. Qwen Audio 3.1 defaults to
 `smart_turn_v2` (semantic + acoustic, much less self-interruption). Every
-system prompt gets a delivery line asking for a brisk, slightly faster pace;
-the server-side `speech_rate` option is ignored, so speech rate is adjusted in
-local WebSocket playback instead.
+system prompt gets a delivery line asking for a brisk conversational pace;
+the server-side `speech_rate` option is ignored, so the rate is applied to the
+decoded PCM during playback instead (default 1.4x, WebSocket and AOQ).
+
+The default system prompt and the "Prompt preset" picker are data, not code:
+they ship as `app/src/main/assets/prompts.json` (`version`, `default`,
+`presets`, `knownDefaults`) and are read by `core/PromptCatalog`. A preset
+without `prompt` applies `default`; that is how "General assistant" stays in
+sync. Edit that file to change the wording, and bump `version` in the same
+change: `SettingsRepository.applyPromptMigration` rewrites a stored prompt that
+is still an empty value or an entry of `knownDefaults`, so an install that
+never customised the prompt gets the new wording, while a prompt the user wrote
+is left alone. `knownDefaults` therefore has to list every default an earlier
+build stored *plus the current one* (a bump then recognises a stored copy), but
+not preset texts — replacing a chosen preset with the default prompt would be
+wrong. `applyConversationDefaultsMigration` still owns the one-time
+VAD-threshold and speech-rate moves.
+
+`prompts.json` is the only prompt source: the fallback string in
+`PromptCatalog` covers a missing or invalid asset and must stay a one-liner,
+never a real prompt.
 
 WebSocket voice mode puts Android into `MODE_IN_COMMUNICATION`, selects a
 connected headset's communication device when available (otherwise loudspeaker),
@@ -179,6 +200,17 @@ Two vendor quirks this code compensates for:
   every session opens with the configured VAD, and live mode only starts/stops
   capture (`AOQ` additionally pauses media publishing). Reconnecting to switch
   modes would lose the conversation context.
+- `qwen3.8-omni-flash-realtime` sometimes ends a turn on a promise: the response
+  completes with only a `message` item ("I'll pull the latest info on that") and
+  never emits a `function_call`, so the user hears the preamble and waits
+  forever. `response.done` reports `completed` and nothing errors. `TurnProgress`
+  recognises the shape — the last sentence is a first-person promise of a lookup
+  (`I'll check …`, `I need to check …`, `let me look …`) with no question mark —
+  and
+  `RealtimeSession.retryDeadTurn` answers it with one corrective
+  `response.create` carrying per-response instructions; a second promise raises
+  an error instead of hanging. The `Response done` log line lists `items=[…]`, so
+  a missing `function_call` is visible in one line of the log.
 - libwebrtc rejects the SDP answer unless it uses CRLF line endings and ends with
   a newline. `WebRtcTransport.normalizeSdp` does that; without it
   `setRemoteDescription` fails with "SessionDescription is NULL".
@@ -273,10 +305,13 @@ Escalation has three triggers and one engine:
 1. **Voice, model-driven.** The session advertises a client tool
    `deep_reasoning` (`task`, `depth: brief|detailed`). The model calls it; the
    answer returns as `function_call_output`
-   `{"ok":true,"model":…,"spoken_summary":…,"answer":…,"reasoning_tokens":…,"elapsed_ms":…}`
+   `{"ok":true,"model":…,"spoken_summary":…,"answer_omitted":…,"reasoning_tokens":…,"elapsed_ms":…}`
    followed by the usual single `response.create` after `response.done`, with
-   `["text","audio"]` for a voice turn. The delivery instructions tell the model
-   to acknowledge in one short spoken sentence while it runs, lead with
+   `["text","audio"]` for a voice turn. A spoken turn gets `spoken_summary` only —
+   the full answer makes the realtime model read a wall of text aloud, so it stays
+   in the chat card (`HandoffPrompt.toolOutput(trace, includeAnswer = false)`); a
+   typed turn still receives `answer`. The delivery instructions tell the model to
+   acknowledge in one short spoken sentence while it runs, lead with
    `spoken_summary`, and never read `answer` verbatim.
 2. **Typed, model-driven (default).** Same tool; the answer is phrased as a text
    reply. `handoffHeuristic` additionally pre-reasons hard typed prompts in the
@@ -393,14 +428,17 @@ throws `IllegalArgumentException: arguments out of range`, so the platform time
 stretcher can never be enabled. The app therefore stretches its own PCM with
 `realtime/audio/TimeStretcher` (WSOLA: 20 ms Hann windows, 50 % overlap, ±10 ms
 similarity search) before writing to the track, which preserves pitch. The
-selected rate is also included in the session delivery instructions so the model
-phrases for that pace. Speed changes take effect immediately without
-reconnecting. WebRTC and AOQ playback follow the vendor audio stack and cannot
-be stretched locally. Settings expose a "Speech speed" slider (0.75×–2.0×,
-default 1.25×) that travels through `AppSettings.speechRate` →
-`SessionConfig.speechRate` → `WebSocketTransport.player.setSpeed()`. Bluetooth
-headsets are selected as the capture route on WebSocket voice mode when Android
-exposes a matching communication input.
+session instructions ask for a brisk pace but no longer promise a numeric rate,
+because the API ignores it. Speed changes take effect immediately without
+reconnecting. Settings expose a "Speech speed" slider (0.75×–2.0×, default
+1.4×) that travels through `AppSettings.speechRate` →
+`SessionConfig.speechRate` → the transport player. WebSocket always renders
+with `PcmPlayer`; AOQ switches to it (`isExternal` playback plus
+`onPlaybackAudioFrame`) whenever the rate is not 1.0, because the SDK's own
+renderer has no speed control. WebRTC still has no local rate control: the
+`org.webrtc` audio device owns playback. Bluetooth headsets are selected as the
+capture route on WebSocket voice mode when Android exposes a matching
+communication input.
 
 ## Transports
 
@@ -419,10 +457,14 @@ exposes a matching communication input.
   because the vendor stack controls playback timing.
 - **AOQ** — implemented in `realtime/aoq/` with Alibaba's
   `AoqClientSdk-release.aar` (v1.4.0) and `libPluginOpus.so` (in
-  `app/libs` / `app/src/main/jniLibs`). The SDK owns capture, Opus, playback,
-  AEC and the QUIC relay; realtime events travel as Data messages using the
-  same payloads as WebSocket. Speech speed is not available for AOQ because the
-  vendor SDK controls playback.
+  `app/libs` / `app/src/main/jniLibs`). The SDK owns capture, Opus, AEC and the
+  QUIC relay; realtime events travel as Data messages using the same payloads
+  as WebSocket. For speech rate ≠ 1 the transport starts the SDK player with
+  `isExternal = true`, subscribes to `AoqAudioSourcePlayback` frames
+  (`enableAudioFrameObserver`) and renders the 48 kHz PCM with `PcmPlayer` and
+  `TimeStretcher`, so the rate is pitch-preserving and changes live. At 1.0 the
+  SDK's own renderer is kept, which also preserves its hardware AEC reference
+  on the loudspeaker.
   - **Token authentication**: production puts this call on an AppServer so the
     API key never reaches the device. This private build performs the AppServer
     step in-process (`AoqTokenClient`): `POST /api/v1/webrtc/realtime?model=…`
@@ -458,9 +500,15 @@ recovers on its own instead of ending the chat:
   transport, so a chat keeps one session across turns.
 - **A dropped session** (`RealtimeEvent.Failure` with `recoverable = true`, or an
   unexpected `RealtimeEvent.Closed`) starts a recovery loop of
-  `ReconnectPolicy.RECOVERY_ATTEMPTS` attempts at 250 ms → 3 s backoff while
-  `LiveStatus.RECONNECTING` is shown. Live mode survives the reconnect: the new
-  transport is opened with the microphone enabled again.
+  `ReconnectPolicy.RECOVERY_ATTEMPTS` (10) attempts at 250 ms → 5 s backoff
+  (~30 s in total) while `LiveStatus.RECONNECTING` is shown. Live mode survives
+  the reconnect: the new transport is opened with the microphone enabled again.
+- **A network outage does not end the session.** When the loop runs out of
+  attempts (an unresolved host is the usual case) the session keeps
+  `active = true`, `liveEnabled` and `config`, records `awaitingNetwork`, and
+  shows the error banner. The next `onAvailable` calls `nudgeReconnect()`, which
+  restarts the recovery loop, so a DNS or Wi-Fi outage that outlasts the backoff
+  still resumes without the user tapping Retry. Only `stop()`/`start()` clear it.
 - **Every attempt is bounded** by `ReconnectPolicy.connectTimeoutMs` (20 s for a
   first attempt, 8 s for retries), so a dead network cannot make one attempt
   wait out the full TCP timeout and stall the loop.

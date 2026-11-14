@@ -20,6 +20,8 @@ sealed interface RealtimeEvent {
         val responseId: String?,
         val status: String?,
         val usage: TokenUsage?,
+        /** Types of the finished response's output items: `message`, `function_call`. */
+        val outputTypes: List<String> = emptyList(),
     ) : RealtimeEvent
 
     data class ResponseCancelled(val reason: String?) : RealtimeEvent

@@ -124,6 +124,10 @@ class RealtimeSession(
     private var turnUsage: TokenUsage? = null
     private var liveEnabled = false
     private var toolOutputsSent = false
+    /** True once the current turn executed or dispatched a tool call. */
+    private var turnUsedTool = false
+    /** True once a turn that ended on a promise has already been retried. */
+    private var nudgedThisTurn = false
     private val handledCalls = mutableSetOf<String>()
 
     /** Non-null while the automatic reconnect loop is running. */
@@ -135,6 +139,12 @@ class RealtimeSession(
     /** True while the current transport is being closed on purpose. */
     @Volatile
     private var closingTransport = false
+    /**
+     * Recovery ran out of attempts while the device had no network. Kept so a
+     * later network change revives the session without the user tapping Retry.
+     */
+    @Volatile
+    private var awaitingNetwork = false
 
     /** Conversation history handed to the reasoning model as context. */
     private val transcript = ArrayDeque<HandoffPrompt.Turn>()
@@ -156,6 +166,17 @@ class RealtimeSession(
         val TOOL_NAME = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"")
         val JSON = Json { ignoreUnknownKeys = true }
         const val MAX_TRANSCRIPT_TURNS = 16
+
+        /**
+         * Per-response instruction for a turn that ended on "I'll check that".
+         * It repeats the tool rule so the retry either calls the tool or
+         * answers; it never adds a user item to the conversation.
+         */
+        const val DEAD_TURN_NUDGE =
+            "Your previous response only announced an action and then ended. " +
+                "Do not announce anything now. If the answer needs a tool, call it " +
+                "immediately in this response; otherwise answer the user's question " +
+                "directly and completely."
     }
 
     private data class PendingHandoff(
@@ -329,6 +350,7 @@ class RealtimeSession(
         val currentConfig = config ?: return
         if (!_state.value.active) return
         recovering = true
+        awaitingNetwork = false
         val wake = Channel<Unit>(Channel.CONFLATED)
         recoveryWake = wake
         recoveryJob = scope.launch {
@@ -375,11 +397,14 @@ class RealtimeSession(
             recoveryJob = null
             if (!restored) {
                 AppLog.error(LogCategory.TRANSPORT, "Automatic recovery failed", lastError)
+                // Keep the session alive instead of tearing voice mode down: a
+                // DNS or interface outage is usually transient, and the network
+                // callback revives the loop (nudgeReconnect) when it ends.
+                awaitingNetwork = true
                 _state.update {
                     it.copy(
-                        active = false,
+                        active = true,
                         connected = false,
-                        liveEnabled = false,
                         status = LiveStatus.ERROR,
                         error = lastError,
                         reconnecting = false,
@@ -388,6 +413,11 @@ class RealtimeSession(
                     )
                 }
                 listener.onError("Connection lost: $lastError")
+                AppLog.info(
+                    LogCategory.TRANSPORT,
+                    "Waiting for the network",
+                    "recovery resumes when an interface comes back",
+                )
             }
         }
     }
@@ -413,6 +443,7 @@ class RealtimeSession(
 
     /** Cancels a running recovery loop, e.g. when the user stops the session. */
     private fun cancelRecovery(reason: String) {
+        awaitingNetwork = false
         val job = recoveryJob ?: return
         recoveryJob = null
         recoveryWake = null
@@ -423,10 +454,19 @@ class RealtimeSession(
 
     /**
      * Wakes the recovery loop so it retries immediately, for example when the
-     * device moves back onto Wi-Fi or a tunnel finally has signal.
+     * device moves back onto Wi-Fi or a tunnel finally has signal. If recovery
+     * already gave up during a network outage, this restarts it.
      */
     fun nudgeReconnect() {
-        if (recovering) recoveryWake?.trySend(Unit)
+        if (recovering) {
+            recoveryWake?.trySend(Unit)
+            return
+        }
+        if (awaitingNetwork && _state.value.active && config != null && !closingTransport) {
+            awaitingNetwork = false
+            AppLog.info(LogCategory.TRANSPORT, "Network is back; retrying the session")
+            scheduleRecovery("network available")
+        }
     }
 
 
@@ -677,8 +717,26 @@ class RealtimeSession(
         firstDeltaAt = 0L
         turnUsage = null
         toolOutputsSent = false
+        turnUsedTool = false
+        nudgedThisTurn = false
         handledCalls.clear()
         transport?.setSpeakerMuted(!voice)
+    }
+
+    /**
+     * Re-arms the turn state for a corrective `response.create` without
+     * counting a new user turn: the retry keeps [nudgedThisTurn] so a second
+     * empty promise cannot loop.
+     */
+    private fun armRetryTurn() {
+        responding = true
+        assistantStarted = false
+        buffer = StringBuilder()
+        deltaChannel = DeltaChannel.NONE
+        turnStartedAt = SystemClock.elapsedRealtime()
+        firstDeltaAt = 0L
+        turnUsage = null
+        transport?.setSpeakerMuted(!currentTurnVoice)
     }
 
     private suspend fun handleEvent(event: RealtimeEvent) = mutex.withLock {
@@ -793,12 +851,15 @@ class RealtimeSession(
                 val usage = event.usage
                 turnUsage = usage
                 val metrics = buildMetrics(usage)
-                val partial = event.status != null && event.status != "completed"
+                val completed = event.status == null || event.status == "completed"
+                val partial = !completed
+                // Captured before finishTurn clears it: the dead-turn guard needs
+                // the text this response actually produced.
+                val spoken = buffer.toString().trim()
                 finishTurn(partial = partial)
                 // A turn that ended without a handoff leaves the warm call
                 // unused; stop paying for it.
                 if (handoffJob?.isActive != true) cancelSpeculation("turn finished")
-                val completed = event.status == null || event.status == "completed"
                 val needsFollowUp = toolOutputsSent && completed
                 toolOutputsSent = false
                 if (needsFollowUp) {
@@ -812,6 +873,15 @@ class RealtimeSession(
                             turnCount = it.turnCount + 1,
                         )
                     }
+                } else if (completed &&
+                    !turnUsedTool &&
+                    spoken.isNotEmpty() &&
+                    TurnProgress.promisesAction(spoken)
+                ) {
+                    // The model promised a lookup and ended the response without
+                    // calling anything. Nothing else will arrive, so retry once
+                    // instead of leaving the user in silence.
+                    retryDeadTurn(spoken)
                 } else {
                     _state.update {
                         it.copy(
@@ -827,7 +897,8 @@ class RealtimeSession(
                 AppLog.info(
                     LogCategory.SESSION,
                     "Response done",
-                    "status=${event.status} ttft=${metrics.ttftMs}ms total=${metrics.totalMs}ms " +
+                    "status=${event.status} items=[${event.outputTypes.joinToString(",")}] " +
+                        "ttft=${metrics.ttftMs}ms total=${metrics.totalMs}ms " +
                         "tokens=${usage?.totalTokens ?: 0}",
                 )
             }
@@ -908,10 +979,48 @@ class RealtimeSession(
         }
     }
 
+    /**
+     * A completed response that only promised to act. Retry it once with a
+     * per-response instruction; a second promise is reported to the user
+     * instead of retried, so a broken model can never leave a silent turn.
+     */
+    private fun retryDeadTurn(spoken: String) {
+        if (nudgedThisTurn) {
+            AppLog.error(LogCategory.SESSION, "Turn ended on a promise twice", spoken.take(200))
+            listener.onError("The assistant ended that turn without answering. Please ask again.")
+            _state.update {
+                it.copy(
+                    status = if (liveEnabled) LiveStatus.LISTENING else LiveStatus.IDLE,
+                    speaking = false,
+                    speechActive = false,
+                )
+            }
+            return
+        }
+        nudgedThisTurn = true
+        val sent = transport?.send(
+            SessionPayloads.responseNudge(modalities(), DEAD_TURN_NUDGE),
+        ) == true
+        if (!sent) {
+            AppLog.error(LogCategory.SESSION, "Promise turn could not be retried", spoken.take(200))
+            listener.onError("The assistant did not answer. Please ask again.")
+            _state.update {
+                it.copy(status = if (liveEnabled) LiveStatus.LISTENING else LiveStatus.IDLE)
+            }
+            return
+        }
+        armRetryTurn()
+        _state.update {
+            it.copy(status = LiveStatus.THINKING, speaking = false, speechActive = false)
+        }
+        AppLog.warn(LogCategory.SESSION, "Turn ended on a promise; retrying", spoken.take(200))
+    }
+
     private suspend fun handleFunctionCall(event: RealtimeEvent.FunctionCall) {
         if (event.callId.isBlank() || event.name.isBlank()) return
         if (!handledCalls.add(event.callId)) return
         if (!_state.value.connected) return
+        turnUsedTool = true
         AppLog.info(LogCategory.TOOLS, "Model requested ${event.name}", event.arguments)
         if (event.name == ToolDefinitions.HANDOFF_NAME) {
             // A handoff runs for tens of seconds; it must never hold the mutex
@@ -1054,7 +1163,12 @@ class RealtimeSession(
         _state.update { it.copy(handoff = null) }
         val activeTransport = transport ?: return
         val trace = buildTrace(handoffConfig, task, result)
-        activeTransport.send(SessionPayloads.functionOutputItem(callId, HandoffPrompt.toolOutput(trace)))
+        // A spoken turn only needs the summary: sending the full answer invites
+        // the realtime model to read it aloud. The full text stays in the chat.
+        val includeAnswer = !currentTurnVoice
+        activeTransport.send(
+            SessionPayloads.functionOutputItem(callId, HandoffPrompt.toolOutput(trace, includeAnswer)),
+        )
         if (!responding) {
             activeTransport.send(SessionPayloads.responseCreate(modalities()))
             toolOutputsSent = false

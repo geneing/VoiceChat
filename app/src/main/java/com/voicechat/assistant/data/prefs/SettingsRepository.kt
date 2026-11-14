@@ -13,6 +13,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.voicechat.assistant.core.LogCategory
+import com.voicechat.assistant.core.PromptCatalog
 import com.voicechat.assistant.core.RealtimeDefaults
 import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
@@ -29,13 +30,17 @@ data class AppSettings(
     val transport: TransportKind = TransportKind.WEBSOCKET,
     val model: String = RealtimeDefaults.OMNI_MODEL,
     val voice: String = "Tina",
-    val instructions: String = RealtimeDefaults.DEFAULT_INSTRUCTIONS,
+    val instructions: String = PromptCatalog.defaultPrompt,
     val workspaceId: String = RealtimeDefaults.defaultWorkspaceId,
     val host: String = RealtimeDefaults.defaultHost,
     val apiKeyOverride: String = "",
     val aoqTokenUrl: String = "",
     val turnDetection: String = "semantic_vad",
-    val vadThreshold: Float = 0.5f,
+    /**
+     * Server VAD trigger. Lower is more sensitive: the user reported having to
+     * speak up and repeat themselves, so the default sits below the old 0.5.
+     */
+    val vadThreshold: Float = 0.35f,
     val silenceMs: Int = 600,
     val onDeviceVad: Boolean = true,
     val vadSensitivityDb: Float = 9f,
@@ -73,6 +78,12 @@ data class AppSettings(
 }
 
 class SettingsRepository(private val context: Context) {
+
+    private companion object {
+        /** Values that earlier builds wrote into preferences as defaults. */
+        const val LEGACY_VAD_THRESHOLD = 0.5f
+        const val LEGACY_SPEECH_RATE = 1.25
+    }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs -> toSettings(prefs) }
 
@@ -168,6 +179,60 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Moves an install off the previous VAD trigger and speech-rate defaults.
+     * Only values that still equal an old default are replaced, so a threshold
+     * the user tuned is left alone. The prompt is owned by
+     * [applyPromptMigration] now.
+     *
+     * The key was bumped after the first pass compared floats exactly: a slider
+     * had stored the "0.5" default as 0.50000006, which is why [near] compares
+     * with a tolerance instead.
+     */
+    suspend fun applyConversationDefaultsMigration() {
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.conversationDefaultsV3] == true) return@edit
+            val threshold = prefs[Keys.vadThreshold]
+            if (threshold == null || near(threshold.toDouble(), LEGACY_VAD_THRESHOLD.toDouble())) {
+                prefs[Keys.vadThreshold] = AppSettings().vadThreshold
+            }
+            val rate = prefs[Keys.speechRate]
+            if (rate == null || near(rate, LEGACY_SPEECH_RATE)) {
+                prefs[Keys.speechRate] = RealtimeDefaults.DEFAULT_SPEECH_RATE
+            }
+            prefs[Keys.conversationDefaultsV3] = true
+        }
+    }
+
+    /**
+     * Takes the default prompt from `assets/prompts.json` whenever the shipped
+     * file carries a version this install has not applied yet (a fresh install
+     * has none). A stored prompt that is still one of the file's known
+     * defaults is replaced, so new wording reaches the install; a prompt the
+     * user wrote is kept.
+     */
+    suspend fun applyPromptMigration() {
+        val catalog = PromptCatalog.current
+        if (catalog.version <= 0) return
+        context.dataStore.edit { prefs ->
+            if ((prefs[Keys.promptVersion] ?: 0) >= catalog.version) return@edit
+            val stored = prefs[Keys.instructions]
+            if (stored.isNullOrBlank() ||
+                catalog.knownDefaults.any { sameText(it, stored) }
+            ) {
+                prefs[Keys.instructions] = catalog.defaultPrompt
+            }
+            prefs[Keys.promptVersion] = catalog.version
+        }
+    }
+
+    /** Slider-committed floats carry rounding noise, so compare with a tolerance. */
+    private fun near(a: Double, b: Double): Boolean = kotlin.math.abs(a - b) < 0.001
+
+    /** Whitespace-insensitive comparison for prompt text. */
+    private fun sameText(a: String, b: String): Boolean =
+        a.trim().replace(Regex("\\s+"), " ") == b.trim().replace(Regex("\\s+"), " ")
+
     suspend fun update(transform: (AppSettings) -> AppSettings) {
         // Read inside the edit so a concurrent one-time migration (or another
         // writer) is never overwritten by a stale snapshot.
@@ -251,6 +316,8 @@ class SettingsRepository(private val context: Context) {
         val nativeSearch = booleanPreferencesKey("native_search")
         val searchDefaultMigrated = booleanPreferencesKey("search_default_migrated")
         val handoffLogMigrated = booleanPreferencesKey("handoff_log_migrated")
+        val conversationDefaultsV3 = booleanPreferencesKey("conversation_defaults_v3")
+        val promptVersion = intPreferencesKey("prompt_catalog_version")
         val searchSources = booleanPreferencesKey("search_sources")
         val searchProvider = stringPreferencesKey("search_provider")
         val languageHint = stringPreferencesKey("language_hint")

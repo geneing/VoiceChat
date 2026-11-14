@@ -20,7 +20,7 @@ class ReconnectPolicyTest {
     @Test
     fun `backoff is clamped for out of range attempts`() {
         assertEquals(ReconnectPolicy.delayMs(1), ReconnectPolicy.delayMs(0))
-        assertEquals(3_000L, ReconnectPolicy.delayMs(99))
+        assertEquals(5_000L, ReconnectPolicy.delayMs(99))
     }
 
     @Test
@@ -31,9 +31,10 @@ class ReconnectPolicyTest {
     }
 
     @Test
-    fun `total recovery stays within a few seconds`() {
+    fun `total recovery survives a short network outage`() {
         val total = (1..ReconnectPolicy.RECOVERY_ATTEMPTS).sumOf { ReconnectPolicy.delayMs(it) }
-        assertTrue("recovery budget was ${total}ms", total <= 11_000L)
+        assertTrue("recovery budget was ${total}ms", total >= 25_000L)
+        assertTrue("recovery budget was ${total}ms", total <= 45_000L)
     }
 
     @Test

@@ -66,31 +66,6 @@ import com.voicechat.assistant.realtime.handoff.ReasoningModels
 import com.voicechat.assistant.ui.AppViewModel
 import kotlinx.coroutines.delay
 
-private data class PromptPreset(val label: String, val text: String)
-
-private val PROMPT_PRESETS = listOf(
-    PromptPreset(
-        "General assistant",
-        RealtimeDefaults.DEFAULT_INSTRUCTIONS,
-    ),
-    PromptPreset(
-        "Concise voice companion",
-        "You are a warm, quick-witted voice companion. Keep answers under three " +
-            "sentences, speak naturally, and ask one short follow-up question when it helps.",
-    ),
-    PromptPreset(
-        "Language tutor",
-        "You are a patient language tutor. Answer in the language the user practices, " +
-            "gently correct mistakes by repeating the sentence correctly, and offer one new " +
-            "useful phrase per turn.",
-    ),
-    PromptPreset(
-        "Technical expert",
-        "You are a senior software engineer. Be precise and concrete, mention trade-offs, " +
-            "and prefer short code snippets or step lists. Ask for missing context instead of guessing.",
-    ),
-)
-
 @Composable
 fun SettingsScreen(
     viewModel: AppViewModel,
@@ -270,10 +245,10 @@ fun SettingsScreen(
                 DropdownSetting(
                     label = "Prompt preset",
                     value = "Apply a preset…",
-                    options = PROMPT_PRESETS.map { it.label to it.label },
+                    options = viewModel.promptPresets.map { it.label to it.label },
                     onSelect = { label ->
-                        PROMPT_PRESETS.firstOrNull { it.label == label }?.let { preset ->
-                            viewModel.updateSettings { it.copy(instructions = preset.text) }
+                        viewModel.promptPresets.firstOrNull { it.label == label }?.let { preset ->
+                            viewModel.updateSettings { it.copy(instructions = preset.prompt) }
                         }
                     },
                 )
@@ -288,7 +263,7 @@ fun SettingsScreen(
                     TextButton(
                         onClick = {
                             viewModel.updateSettings {
-                                it.copy(instructions = RealtimeDefaults.DEFAULT_INSTRUCTIONS)
+                                it.copy(instructions = viewModel.defaultPrompt)
                             }
                         },
                     ) {
@@ -315,15 +290,15 @@ fun SettingsScreen(
                     },
                 )
                 Text(
-                    if (settings.transport == TransportKind.WEBSOCKET) {
-                        "Applied on this device by stretching the audio with pitch " +
-                            "preserved. The realtime API ignores server-side speed hints, " +
-                            "and the platform AudioTrack rate control is rejected by this " +
-                            "device. WebRTC/AOQ cannot be stretched locally."
-                    } else {
-                        "Stored for WebSocket playback, but the current ${settings.transport} " +
-                            "vendor audio stack does not expose playback-rate control. " +
-                            "The realtime API ignores server-side speed hints."
+                    when (settings.transport) {
+                        TransportKind.WEBSOCKET, TransportKind.AOQ ->
+                            "Applied on this device by stretching the audio with pitch " +
+                                "preserved. The realtime API ignores server-side speed hints, " +
+                                "and the platform AudioTrack rate control is rejected by this device."
+                        TransportKind.WEBRTC ->
+                            "Stored for WebSocket/AOQ playback, but WebRTC's vendor audio stack " +
+                                "does not expose playback-rate control. The realtime API ignores " +
+                                "server-side speed hints."
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -13,9 +13,16 @@ object ReconnectPolicy {
     const val INITIAL_ATTEMPTS = 3
 
     /** Attempts made when an established session drops mid-conversation. */
-    const val RECOVERY_ATTEMPTS = 6
+    const val RECOVERY_ATTEMPTS = 10
 
-    private val DELAYS_MS = longArrayOf(250, 600, 1_200, 2_000, 3_000)
+    /**
+     * Backoff between recovery attempts. The tail is deliberately long: a phone
+     * that lost Wi-Fi or DNS needs tens of seconds, and giving up in ten (as the
+     * first version did) ended a live conversation on a transient outage.
+     */
+    private val DELAYS_MS = longArrayOf(
+        250, 600, 1_200, 2_000, 3_000, 3_000, 4_000, 5_000, 5_000, 5_000,
+    )
 
     /** Backoff before retry number [attempt] (1-based). */
     fun delayMs(attempt: Int): Long = DELAYS_MS[(attempt - 1).coerceIn(0, DELAYS_MS.lastIndex)]

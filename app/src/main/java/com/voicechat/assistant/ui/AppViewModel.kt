@@ -9,6 +9,8 @@ import androidx.lifecycle.viewModelScope
 import com.voicechat.assistant.VoiceChatApp
 import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
+import com.voicechat.assistant.core.PromptCatalog
+import com.voicechat.assistant.core.PromptPreset
 import com.voicechat.assistant.core.RealtimeDefaults
 import com.voicechat.assistant.data.model.Attachment
 import com.voicechat.assistant.data.model.AttachmentKind
@@ -400,6 +402,10 @@ class AppViewModel(application: Application) :
     }
 
     // ---- Settings ----------------------------------------------------------
+
+    /** Prompt presets and the reset target, from `assets/prompts.json`. */
+    val promptPresets: List<PromptPreset> get() = PromptCatalog.presets
+    val defaultPrompt: String get() = PromptCatalog.defaultPrompt
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) {
         scope.launch {

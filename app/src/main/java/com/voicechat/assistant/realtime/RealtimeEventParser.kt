@@ -2,6 +2,7 @@ package com.voicechat.assistant.realtime
 
 import com.voicechat.assistant.data.model.TokenUsage
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -63,6 +64,7 @@ object RealtimeEventParser {
                     responseId = response?.string("id"),
                     status = response?.string("status"),
                     usage = usage,
+                    outputTypes = outputTypes(response?.get("output")),
                 )
             }
 
@@ -127,6 +129,15 @@ object RealtimeEventParser {
 
             else -> RealtimeEvent.Unknown(type, raw.take(400))
         }
+    }
+
+    /**
+     * Item types of a finished response. A turn that announced work but ended
+     * without a `function_call` item shows up here as `[message]`.
+     */
+    private fun outputTypes(output: JsonElement?): List<String> {
+        val array = output as? JsonArray ?: return emptyList()
+        return array.mapNotNull { (it as? JsonObject)?.string("type") }
     }
 
     private fun parseUsage(obj: JsonObject?): TokenUsage? {

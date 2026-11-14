@@ -46,7 +46,7 @@ object HandoffPrompt {
         <the full answer, as detailed as the task needs>
 
         $SUMMARY_HEADING
-        <2-4 sentences the assistant can read aloud: lead with the result, keep
+        <3-6 sentences the assistant can read aloud: lead with the result, keep
         numbers and names exact, no markdown, no lists>
     """.trimIndent()
 
@@ -113,8 +113,15 @@ object HandoffPrompt {
         put("temperature", 0.3)
     }.toString()
 
-    /** `function_call_output` payload handed back to the realtime model. */
-    fun toolOutput(trace: HandoffTrace): String = buildJsonObject {
+    /**
+     * `function_call_output` payload handed back to the realtime model.
+     *
+     * For a spoken turn the full answer is left out ([includeAnswer] = false):
+     * the realtime model only reads `spoken_summary`, and a long answer in the
+     * tool result is what makes it read a wall of text aloud. The full answer is
+     * still stored in the chat card.
+     */
+    fun toolOutput(trace: HandoffTrace, includeAnswer: Boolean = true): String = buildJsonObject {
         put("ok", !trace.failed)
         put("model", trace.model)
         if (trace.failed) {
@@ -126,7 +133,11 @@ object HandoffPrompt {
             )
         } else {
             put("spoken_summary", trace.summary)
-            put("answer", trace.answer)
+            if (includeAnswer) {
+                put("answer", trace.answer)
+            } else {
+                put("answer_omitted", "shown in the chat")
+            }
         }
         put("reasoning_tokens", trace.reasoningTokens)
         put("elapsed_ms", trace.elapsedMs)

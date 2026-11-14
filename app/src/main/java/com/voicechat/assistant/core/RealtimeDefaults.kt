@@ -246,14 +246,12 @@ object RealtimeDefaults {
     const val ASR_MODEL = "qwen3-asr-flash-realtime"
 
     /** Default and bounds for the client-side speech speed setting. */
-    const val DEFAULT_SPEECH_RATE = 1.25
+    const val DEFAULT_SPEECH_RATE = 1.4
     const val MIN_SPEECH_RATE = 0.75f
     const val MAX_SPEECH_RATE = 2.0f
 
-    const val DEFAULT_INSTRUCTIONS = """You are VoiceChat, a concise, friendly personal assistant.
-Answer in the language the user speaks. Prefer concise, spoken-friendly answers
- unless the user asks for detail. When you use a tool, say what
-you are doing in one short sentence. Never invent tool results or current
-information; if a tool fails, say so plainly."""
+    // The default system prompt and the preset picker copy are data, not code:
+    // they live in `assets/prompts.json` and are read through `PromptCatalog`.
+
     val TURN_DETECTION_OPTIONS = listOf("semantic_vad", "semantic_vad_ec", "server_vad")
 }

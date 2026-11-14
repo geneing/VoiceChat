@@ -6,6 +6,7 @@ import com.voicechat.assistant.realtime.handoff.HandoffConfig
 import com.voicechat.assistant.realtime.tools.SearchResponseParser
 import com.voicechat.assistant.realtime.tools.ToolDefinitions
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Base64
@@ -42,6 +43,28 @@ class RealtimeEventParserTest {
         assertEquals(336, done.usage?.inputTokens)
         assertEquals(41, done.usage?.outputTokens)
         assertEquals(377, done.usage?.totalTokens)
+    }
+
+    @Test
+    fun `parses response done output item types`() {
+        val done = RealtimeEventParser.parse(
+            """
+            {"type":"response.done","response":{"id":"resp_2","status":"completed",
+             "output":[{"type":"message","role":"assistant"},{"type":"function_call","name":"web_search"}]}}
+            """.trimIndent(),
+        ) as RealtimeEvent.ResponseDone
+        assertEquals(listOf("message", "function_call"), done.outputTypes)
+    }
+
+    @Test
+    fun `a promise turn reports a message item only`() {
+        val done = RealtimeEventParser.parse(
+            """
+            {"type":"response.done","response":{"id":"resp_3","status":"completed",
+             "output":[{"type":"message","role":"assistant"}]}}
+            """.trimIndent(),
+        ) as RealtimeEvent.ResponseDone
+        assertEquals(listOf("message"), done.outputTypes)
     }
 
     @Test
@@ -139,9 +162,12 @@ class SessionPayloadsTest {
     )
 
     @Test
-    fun `session update carries configured speech rate and audio formats`() {
+    fun `session update carries audio formats and keeps delivery out of the rate`() {
         val json = SessionPayloads.sessionUpdate(config.copy(speechRate = 1.5))
-        assertTrue(json.contains("speak at about 1.50 times normal speed"))
+        // Pacing is applied to the decoded PCM locally; a server-side rate is
+        // ignored, so the prompt must not promise one.
+        assertFalse(json.contains("1.50 times normal speed"))
+        assertTrue(json.contains("brisk conversational pace"))
         assertTrue(json.contains("\"type\":\"session.update\""))
         assertTrue(json.contains("\"sample_rate\":16000"))
         assertTrue(json.contains("\"sample_rate\":24000"))
@@ -213,6 +239,29 @@ class SessionPayloadsTest {
     }
 
     @Test
+    fun `tool sessions forbid ending a turn on a promise`() {
+        val json = SessionPayloads.sessionUpdate(
+            config.copy(toolsJson = ToolDefinitions.json(includeWebSearch = true)),
+        )
+        assertTrue(json.contains("never end a turn by saying you will look something up"))
+        assertTrue(json.contains("continues the previous request"))
+    }
+
+    @Test
+    fun `a session without tools carries no tool narration rule`() {
+        val json = SessionPayloads.sessionUpdate(config.copy(toolsJson = null))
+        assertTrue(!json.contains("never end a turn by saying you will look something up"))
+    }
+
+    @Test
+    fun `nudge asks for the tool call or the answer`() {
+        val payload = SessionPayloads.responseNudge(listOf("text", "audio"), "Answer now.")
+        assertTrue(payload.contains("\"type\":\"response.create\""))
+        assertTrue(payload.contains("\"modalities\":[\"text\",\"audio\"]"))
+        assertTrue(payload.contains("\"instructions\":\"Answer now.\""))
+    }
+
+    @Test
     fun `parses Exa search results`() {
         val results = SearchResponseParser.exa(
             """{"results":[{"title":"Headline","url":"https://example.com/story","highlights":["First highlight.","Second highlight."]}]}""",
@@ -259,7 +308,7 @@ class SessionPayloadsTest {
         assertTrue(json.contains("\"type\":\"smart_turn_v2\""))
         assertTrue(!json.contains("\"silence_duration_ms\""))
         assertTrue(!json.contains("\"prefix_padding_ms\""))
-        assertTrue(json.contains("about 1.00 times normal speed"))
+        assertTrue(json.contains("brisk conversational pace"))
     }
 
     @Test

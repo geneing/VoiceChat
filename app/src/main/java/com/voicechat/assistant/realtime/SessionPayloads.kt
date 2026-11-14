@@ -58,9 +58,12 @@ object SessionPayloads {
     fun sessionUpdate(config: SessionConfig): String {
         val instructions = buildString {
             append(config.instructions.trim())
+            // The pacing is applied locally to the decoded PCM; the realtime API
+            // ignores every server-side speed hint, so asking for a rate here
+            // only produced the same normal-speed audio.
             append(
-                "\n\nDelivery: speak at about ${"%.2f".format(java.util.Locale.US, config.speechRate)} " +
-                    "times normal speed, with natural phrasing and articulation.",
+                "\n\nDelivery: natural phrasing and crisp articulation at a brisk " +
+                    "conversational pace.",
             )
             if (config.toolsJson?.contains("\"name\":\"get_weather\"") == true) {
                 append(
@@ -112,9 +115,23 @@ object SessionPayloads {
                         "\"let me work that through\" is fine while it runs. When the " +
                         "result returns, lead with the conclusion from spoken_summary, " +
                         "keep the reply short for speech, and use answer only for the " +
-                        "detail the user asked for; never read it out verbatim. If it " +
+                        "detail the user asked for; never read it out verbatim. A spoken " +
+                        "turn receives spoken_summary only, so speak that; the full answer " +
+                        "stays in the chat. If it " +
                         "fails, answer from your own knowledge and say briefly that " +
                         "deep reasoning was unavailable.",
+                )
+            }
+            if (!config.toolsJson.isNullOrBlank()) {
+                append(
+                    "\n\nTool use: do not announce a tool. If you say one short sentence " +
+                        "while working, it belongs to the same response as the function " +
+                        "call — never end a turn by saying you will look something up, " +
+                        "and never promise a result you have not fetched. After a tool " +
+                        "returns, answer the question; do not narrate the tool again. A " +
+                        "short fragment or continuation from the user (\"I mean, X\", " +
+                        "\"in Reddit\") continues the previous request: act on it instead " +
+                        "of asking what they meant.",
                 )
             }
             if (config.languageHint.isNotBlank()) {
@@ -223,6 +240,20 @@ object SessionPayloads {
             put("modalities", buildJsonArray { modalities.forEach { add(JsonPrimitive(it)) } })
         })
     }.toString()
+
+    /**
+     * A corrective `response.create`: the previous response ended on a promise
+     * to act without calling a tool, so the follow-up carries a per-response
+     * instruction instead of a new user item.
+     */
+    fun responseNudge(modalities: List<String>, instructions: String): String =
+        buildJsonObject {
+            put("type", "response.create")
+            put("response", buildJsonObject {
+                put("modalities", buildJsonArray { modalities.forEach { add(JsonPrimitive(it)) } })
+                put("instructions", instructions)
+            })
+        }.toString()
 
     fun functionOutputItem(callId: String, outputJson: String): String = buildJsonObject {
         put("type", "conversation.item.create")

@@ -117,6 +117,16 @@ class HandoffPromptTest {
     }
 
     @Test
+    fun `a spoken turn gets the summary without the full answer`() {
+        val output = Json.parseToJsonElement(
+            HandoffPrompt.toolOutput(successTrace(), includeAnswer = false),
+        ).jsonObject
+        assertEquals("It is 391.", output["spoken_summary"]?.jsonPrimitive?.content)
+        assertFalse(output.containsKey("answer"))
+        assertEquals("shown in the chat", output["answer_omitted"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `failed tool output tells the model to answer from its own knowledge`() {
         val failed = successTrace().copy(answer = "", summary = "", error = "Timed out.")
         val output = Json.parseToJsonElement(HandoffPrompt.toolOutput(failed)).jsonObject
