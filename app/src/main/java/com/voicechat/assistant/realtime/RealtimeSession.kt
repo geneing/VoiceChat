@@ -18,10 +18,13 @@ import com.voicechat.assistant.realtime.handoff.HandoffUiState
 import com.voicechat.assistant.realtime.handoff.ReasoningClient
 import com.voicechat.assistant.realtime.handoff.ReasoningResult
 import com.voicechat.assistant.realtime.handoff.SpeculativeHandoff
+import com.voicechat.assistant.realtime.tools.NewsSections
+import com.voicechat.assistant.realtime.tools.SearchRecency
 import com.voicechat.assistant.realtime.tools.ToolDefinitions
 import com.voicechat.assistant.realtime.tools.ToolRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -839,6 +842,7 @@ class RealtimeSession(
                 if (transcript.isNotBlank()) {
                     rememberTurn("user", transcript)
                     startSpeculation(transcript)
+                    prefetchNews(transcript)
                     listener.onUserTranscriptFinal(transcript)
                 }
             }
@@ -1248,6 +1252,21 @@ class RealtimeSession(
         job.cancel()
         _state.update { it.copy(handoff = null) }
         AppLog.info(LogCategory.HANDOFF, "Handoff cancelled", reason)
+    }
+
+    /**
+     * Warms the world section of `get_news` while the realtime model decides to
+     * call the tool. Speech starts on the world stories first (see the news
+     * instruction), and a warm cache turns that first call into a lookup instead
+     * of a network round trip. Repeat asks inside the cache window cost nothing.
+     */
+    private fun prefetchNews(transcript: String) {
+        val current = config ?: return
+        val registry = tools ?: return
+        if (!SearchRecency.isNewsQuery(transcript)) return
+        scope.launch(Dispatchers.IO) {
+            registry.warmNews(NewsSections.WORLD, current.searchProvider)
+        }
     }
 
     /**

@@ -84,8 +84,7 @@ class ToolRegistry(
         val DIRECT_EXECUTOR = Executor { runnable -> runnable.run() }
         const val FIX_TIMEOUT_MS = 3_500L
         const val MAX_LOCATION_AGE_MS = 120_000L
-        const val NEWS_ITEMS_PER_SECTION = 5
-        const val NEWS_SNIPPET_CHARS = 220
+        const val NEWS_SNIPPET_CHARS = 160
         const val NEWS_CACHE_TTL_MS = 10 * 60_000L
     }
 
@@ -465,6 +464,7 @@ class ToolRegistry(
 
     private fun fetchNewsSection(name: String, provider: SearchProvider): NewsSection {
         val query = NewsSections.queryFor(name)
+        val wanted = NewsSections.itemsFor(name)
         val chain = searchFallbackChain(
             selected = provider,
             hasExaKey = exaApiKey.isNotBlank(),
@@ -473,25 +473,36 @@ class ToolRegistry(
         )
         chain.forEach { candidate ->
             val results = when (candidate) {
-                SearchProvider.EXA -> searchExaNews(query)
-                SearchProvider.BRAVE -> searchBraveNews(query)
+                SearchProvider.EXA -> searchExaNews(query, wanted)
+                SearchProvider.BRAVE -> searchBraveNews(query, wanted)
                 SearchProvider.DUCKDUCKGO -> searchDuckDuckGo(query, freshness = "d")
             }
             if (results.isNotEmpty()) {
-                return NewsSection(name, candidate.name.lowercase(), results.take(NEWS_ITEMS_PER_SECTION))
+                return NewsSection(name, candidate.name.lowercase(), results.take(wanted))
             }
         }
         return NewsSection(name, "none", emptyList())
     }
 
+    /**
+     * Fills the section cache ahead of the model's tool call. Safe to call from
+     * any thread: a section already inside the cache window is not fetched again.
+     */
+    fun warmNews(section: String, provider: SearchProvider) {
+        val key = "${provider.name}:$section"
+        val cached = newsCache[key]
+        if (cached != null && System.currentTimeMillis() - cached.at < NEWS_CACHE_TTL_MS) return
+        runCatching { newsSection(section, provider) }
+    }
+
     /** Exa's news category: dated articles only, fetched live rather than cached. */
-    private fun searchExaNews(query: String): List<SearchResult> {
+    private fun searchExaNews(query: String, wanted: Int): List<SearchResult> {
         val cutoff = ZonedDateTime.now().minusDays(NewsSections.WINDOW_DAYS).toInstant().toString()
         val body = buildJsonObject {
             put("query", query)
             put("type", "auto")
             put("category", "news")
-            put("numResults", NEWS_ITEMS_PER_SECTION + 1)
+            put("numResults", wanted + 1)
             put("startPublishedDate", cutoff)
             put("contents", buildJsonObject {
                 put("highlights", true)
@@ -519,9 +530,9 @@ class ToolRegistry(
     }
 
     /** Brave News endpoint with `freshness=pd` (past day), when the plan allows it. */
-    private fun searchBraveNews(query: String): List<SearchResult> {
+    private fun searchBraveNews(query: String, wanted: Int): List<SearchResult> {
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val url = "https://api.search.brave.com/res/v1/news/search?q=$encoded&count=$NEWS_ITEMS_PER_SECTION&freshness=pd"
+        val url = "https://api.search.brave.com/res/v1/news/search?q=$encoded&count=$wanted&freshness=pd"
         val request = Request.Builder()
             .url(url)
             .header("X-Subscription-Token", BuildConfig.BRAVE_SEARCH_API_KEY)

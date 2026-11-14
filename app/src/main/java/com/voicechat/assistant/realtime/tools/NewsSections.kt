@@ -39,4 +39,14 @@ object NewsSections {
                 "open-source models library changes"
         else -> "top world news today"
     }
+
+    /**
+     * Items fetched per section. The world section is the one spoken first, so
+     * it stays small to keep the first answer fast; AI carries the five items
+     * the news recipe asks for.
+     */
+    fun itemsFor(section: String): Int = when (section) {
+        AI -> 5
+        else -> 4
+    }
 }

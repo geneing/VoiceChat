@@ -119,8 +119,10 @@ object ToolDefinitions {
                     "international stories), markets (stock market conditions and what " +
                     "moved them) and ai (model releases, research papers, open-source " +
                     "models and library changes). Call this for every request about the " +
-                    "news, headlines, what happened today or the market. \"all\" returns " +
-                    "the three sections together.",
+                    "news, headlines, what happened today or the market. For a general " +
+                    "news request call it with section \"world\" first (it is the fastest " +
+                    "and is spoken first), then again for \"markets\" and \"ai\". \"all\" " +
+                    "returns the three sections in one result.",
             )
             putJsonObject("parameters") {
                 put("type", "object")

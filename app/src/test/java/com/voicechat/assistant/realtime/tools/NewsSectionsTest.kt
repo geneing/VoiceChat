@@ -37,6 +37,13 @@ class NewsSectionsTest {
     }
 
     @Test
+    fun `the world section is the small one because it is spoken first`() {
+        assertEquals(4, NewsSections.itemsFor("world"))
+        assertEquals(4, NewsSections.itemsFor("markets"))
+        assertEquals(5, NewsSections.itemsFor("ai"))
+    }
+
+    @Test
     fun `exa news window reaches back two days`() {
         assertEquals(2L, NewsSections.WINDOW_DAYS)
         assertEquals("2026-11-12T10:00:00Z", now.minusDays(NewsSections.WINDOW_DAYS).toInstant().toString())

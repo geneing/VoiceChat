@@ -100,12 +100,14 @@ object SessionPayloads {
                         "headlines, what happened today or the market, before answering. " +
                         "Never answer news from memory" +
                         (if (hasWebSearch) " and never use web_search for it" else "") +
-                        ". get_news returns dated items per section: lead with the top " +
-                        "three world stories, then today's market conditions and what " +
-                        "moved them, then five AI items (papers, model releases, " +
-                        "open-source models, library changes). Say how old a story is when " +
-                        "it is not from today, never present an older story as today's " +
-                        "news, and say plainly when a section came back empty.",
+                        ". Work in stages so the user is not left waiting: for a general " +
+                        "news request call get_news with section \"world\" first and say " +
+                        "the top world stories in one short paragraph, then call it for " +
+                        "\"markets\" and \"ai\" and continue with the market conditions " +
+                        "(and what moved them) and the AI items in the same turn. Say how " +
+                        "old a story is when it is not from today, never present an older " +
+                        "story as today's news, and say plainly when a section came back " +
+                        "empty.",
                 )
             }
             if (config.toolsJson?.contains("\"name\":\"web_search\"") == true) {
