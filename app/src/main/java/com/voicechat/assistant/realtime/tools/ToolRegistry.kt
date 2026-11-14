@@ -339,6 +339,7 @@ class ToolRegistry(
                 return buildJsonObject {
                     put("query", query)
                     put("provider", candidate.name.lowercase())
+                    put("today", java.time.LocalDate.now().toString())
                     if (rejected.isNotEmpty()) {
                         put(
                             "provider_warnings",
@@ -354,6 +355,7 @@ class ToolRegistry(
                                         put("title", item.title)
                                         put("url", item.url)
                                         put("snippet", item.snippet)
+                                        item.published?.let { put("published", it) }
                                     },
                                 )
                             }
@@ -400,15 +402,29 @@ class ToolRegistry(
     }
 
     private fun searchExa(query: String): SearchAttempt {
+        val cutoff = SearchRecency.startPublishedDate(query)
         val body = buildJsonObject {
             put("query", query)
             put("type", "auto")
             put("numResults", 5)
+            // Preference over the provider's cached crawl: a stale homepage
+            // snapshot reads as today's news to the model.
+            cutoff?.let { put("startPublishedDate", it) }
             put("contents", buildJsonObject {
                 put("highlights", true)
                 put("text", false)
+                // Fetch the page now instead of answering from an index entry
+                // that can be days or months old.
+                put("livecrawl", "always")
             })
         }.toString()
+        if (cutoff != null) {
+            AppLog.debug(
+                LogCategory.TOOLS,
+                "Exa search limited to recent pages",
+                "published since $cutoff",
+            )
+        }
         val request = Request.Builder()
             .url("https://api.exa.ai/search")
             .header("x-api-key", exaApiKey)

@@ -162,6 +162,23 @@ class SessionPayloadsTest {
     )
 
     @Test
+    fun `session update carries the current date for time dependent answers`() {
+        val json = SessionPayloads.sessionUpdate(
+            config,
+            now = java.time.LocalDate.of(2026, 11, 14),
+        )
+        assertTrue(json.contains("Today is Saturday, 14 November 2026"))
+        assertTrue(json.contains("never call an older story today's news"))
+    }
+
+    @Test
+    fun `web search instructions refuse undated snippets as today's news`() {
+        val json = SessionPayloads.sessionUpdate(config)
+        assertTrue(json.contains("published date"))
+        assertTrue(json.contains("is not today's news"))
+    }
+
+    @Test
     fun `session update carries audio formats and keeps delivery out of the rate`() {
         val json = SessionPayloads.sessionUpdate(config.copy(speechRate = 1.5))
         // Pacing is applied to the decoded PCM locally; a server-side rate is

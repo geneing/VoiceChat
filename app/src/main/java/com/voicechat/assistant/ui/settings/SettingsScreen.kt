@@ -291,12 +291,16 @@ fun SettingsScreen(
                 )
                 Text(
                     when (settings.transport) {
-                        TransportKind.WEBSOCKET, TransportKind.AOQ ->
+                        TransportKind.WEBSOCKET ->
                             "Applied on this device by stretching the audio with pitch " +
                                 "preserved. The realtime API ignores server-side speed hints, " +
                                 "and the platform AudioTrack rate control is rejected by this device."
+                        TransportKind.AOQ ->
+                            "WebSocket only. AOQ's SDK hands the decoded audio over in real " +
+                                "time, so stretching it locally starved the player and chopped " +
+                                "the answer; AOQ playback now runs at 1x."
                         TransportKind.WEBRTC ->
-                            "Stored for WebSocket/AOQ playback, but WebRTC's vendor audio stack " +
+                            "Stored for WebSocket playback, but WebRTC's vendor audio stack " +
                                 "does not expose playback-rate control. The realtime API ignores " +
                                 "server-side speed hints."
                     },

@@ -13,10 +13,6 @@ import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqCreateConfig
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqDataMsg
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqEncoderType
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqErrorCode
-import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqAudioFrameData
-import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqAudioObserverConfig
-import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqAudioObserverMode
-import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqAudioSource
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqRelayEndpoint
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqTrackParam
 import com.alibaba.aoq.clientsdk.AoqClientEngine.AoqTrackType
@@ -31,7 +27,6 @@ import com.voicechat.assistant.realtime.RealtimeEventParser
 import com.voicechat.assistant.realtime.RealtimeTransport
 import com.voicechat.assistant.realtime.SessionConfig
 import com.voicechat.assistant.realtime.TransportState
-import com.voicechat.assistant.realtime.audio.PcmPlayer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
@@ -46,7 +41,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.Executors
 import kotlin.math.abs
 
 /**
@@ -84,33 +78,18 @@ class AoqTransport(
     private val traffic = AudioTrafficMeter()
     override val audioTraffic: StateFlow<AudioTraffic> = traffic.state
 
-    /**
-     * Renders received audio ourselves so the speech rate can be applied to the
-     * PCM with [com.voicechat.assistant.realtime.audio.TimeStretcher]. Only used
-     * in external playback mode; at normal speed the SDK keeps its own output
-     * path (and its own AEC reference).
-     */
-    private val player = PcmPlayer(PLAYBACK_SAMPLE_RATE)
-
-    /** Serialises blocking player start/stop off the caller's thread. */
-    private val audioExecutor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "aoq-audio")
-    }
-
     @Volatile
     private var playbackSpeed = 1f
 
+    /**
+     * A live AOQ downlink arrives frame by frame in real time (measured: ten
+     * 10 ms frames per second of audio), so a local time stretcher that consumes
+     * 1.4x of that feed can only starve and chop the answer. The SDK therefore
+     * renders at 1x here and the speech rate stays a WebSocket feature; see
+     * "Speech speed" in AGENTS.md.
+     */
     @Volatile
-    private var externalPlayback = false
-
-    @Volatile
-    private var observerEnabled = false
-
-    @Volatile
-    private var playbackFrames = 0L
-
-    @Volatile
-    private var firstPlaybackFrameAt = 0L
+    private var speedNoticeLogged = false
 
     @Volatile
     private var engine: AoqClientEngine? = null
@@ -187,7 +166,6 @@ class AoqTransport(
         engine = created
         AppLog.info(LogCategory.TRANSPORT, "AOQ engine ${AoqClientEngine.getVersion()}")
         playbackSpeed = config.speechRate.toFloat().coerceIn(MIN_SPEED, MAX_SPEED)
-        player.setSpeed(playbackSpeed)
 
         applyCodecConfigs(created)
         runCatching {
@@ -289,42 +267,34 @@ class AoqTransport(
     override fun setSpeakerMuted(muted: Boolean) {
         if (muted == speakerMuted) return
         speakerMuted = muted
-        if (externalPlayback) {
-            // The SDK keeps decoding; muting drops the frames instead of tearing
-            // the player down, so the next voice turn starts without a restart.
-            player.setMuted(muted)
-            AppLog.debug(
-                LogCategory.AUDIO,
-                if (muted) "AOQ external playback muted" else "AOQ external playback unmuted",
-            )
-            return
-        }
         if (muted) stopPlayer() else if (_state.value == TransportState.CONNECTED) startPlayer()
         AppLog.debug(LogCategory.AUDIO, if (muted) "AOQ playback stopped" else "AOQ playback started")
     }
 
     /**
-     * Speech rate for the received audio. The SDK's own renderer ignores speed,
-     * so a rate other than 1 switches playback to [PcmPlayer], which stretches
-     * the decoded frames with pitch preserved.
+     * The SDK's own renderer owns playback timing: it hands the decoded stream
+     * over in real time, so a local stretcher would starve and the answer would
+     * break up (measured: 0.89-0.98x frame delivery against a 1.4x consumer).
+     * The audio stays at 1x and the rate is applied by the WebSocket transport.
      */
     override fun setPlaybackSpeed(speed: Float) {
         val value = speed.coerceIn(MIN_SPEED, MAX_SPEED)
         if (value == playbackSpeed) return
         playbackSpeed = value
-        player.setSpeed(value)
-        AppLog.info(LogCategory.AUDIO, "AOQ speech rate set", "${value}x")
-        if (playerStarted && !speakerMuted && usesExternalPlayback() != externalPlayback) {
-            // Switching between SDK rendering and our own needs a player restart.
-            stopPlayer()
-            if (_state.value == TransportState.CONNECTED) startPlayer()
+        if (abs(value - 1f) >= 0.01f && !speedNoticeLogged) {
+            speedNoticeLogged = true
+            AppLog.info(
+                LogCategory.AUDIO,
+                "AOQ speech rate not available",
+                "the SDK renders the live stream in real time; playing at 1x. " +
+                    "Use WebSocket for ${value}x.",
+            )
         }
     }
 
     override fun close() {
         closing = true
         closeEngine()
-        audioExecutor.shutdown()
         _state.value = TransportState.DISCONNECTED
         _micLevel.value = 0f
     }
@@ -340,7 +310,6 @@ class AoqTransport(
         mediaEnabled = false
         val current = engine
         engine = null
-        stopExternalPlayback(current)
         if (current != null) {
             runCatching { current.stopAudioCapture() }
             runCatching { current.stopAudioPlayer() }
@@ -423,37 +392,16 @@ class AoqTransport(
         // VoIP mode is only needed for the loudspeaker, where hardware AEC keeps
         // the assistant's own voice out of the microphone.
         voipMode = !externalOutput
-        externalPlayback = usesExternalPlayback()
-        if (externalPlayback) {
-            val observer = runCatching { current.setAudioFrameObserver(playbackFrameListener) }
-                .getOrDefault(-1)
-            when {
-                observer < 0 -> {
-                    AppLog.warn(
-                        LogCategory.AUDIO,
-                        "AOQ playback frame listener rejected",
-                        errorName(observer),
-                    )
-                    externalPlayback = false
-                }
-
-                // Without frames from the SDK nothing would reach the speaker.
-                !enablePlaybackObserver(current) -> externalPlayback = false
-            }
-        }
-        if (externalPlayback) {
-            player.setSpeed(playbackSpeed)
-            startExternalPlayer()
-        }
         val config = AoqAudioPlaybackConfig().apply {
             isVoipMode = voipMode
             isDefaultSpeaker = !externalOutput
-            isExternal = externalPlayback
+            // The SDK renders the stream itself: its playout clock is the only
+            // source for the frames, so it cannot be sped up locally.
+            isExternal = false
             channel = 1
         }
         val code = runCatching { current.startAudioPlayer(config) }.getOrDefault(-1)
         if (code < 0) {
-            stopExternalPlayback(current)
             emit(RealtimeEvent.Failure("AOQ audio playback could not start (${errorName(code)})."))
             return
         }
@@ -527,124 +475,11 @@ class AoqTransport(
 
     private fun stopPlayer() {
         val current = engine ?: return
-        stopExternalPlayback(current)
         // Drop whatever is queued so a text turn's downlink audio never leaks
         // into the next spoken answer.
         runCatching { current.interruptAudioPlayer(AoqTrackType.AoqTrackTypeAudio, 0) }
         runCatching { current.stopAudioPlayer() }
         playerStarted = false
-    }
-
-    /**
-     * True when the decoded frames should be rendered by [PcmPlayer] so the
-     * speech rate can be applied. At exactly 1x the SDK's own renderer is kept,
-     * which preserves its hardware AEC reference on the loudspeaker.
-     */
-    private fun usesExternalPlayback(): Boolean = abs(playbackSpeed - 1f) >= 0.01f
-
-    private fun startExternalPlayer() {
-        onAudioThread { player.start() }
-    }
-
-    private fun stopExternalPlayback(current: AoqClientEngine?) {
-        externalPlayback = false
-        playbackFrames = 0
-        if (current != null) disablePlaybackObserver(current)
-        onAudioThread { player.stop() }
-    }
-
-    /** Player lifecycle is blocking, so it never runs on the caller's thread. */
-    private fun onAudioThread(block: () -> Unit) {
-        runCatching {
-            audioExecutor.execute { runCatching(block) }
-        }
-    }
-
-    /** Subscribes to the SDK's decoded playback frames (48 kHz mono PCM). */
-    private fun enablePlaybackObserver(current: AoqClientEngine): Boolean {
-        if (observerEnabled) return true
-        val config = AoqAudioObserverConfig().apply {
-            sampleRate = PLAYBACK_SAMPLE_RATE
-            channels = 1
-            mode = AoqAudioObserverMode.AoqAudioObserverModeReadOnly
-        }
-        val code = runCatching {
-            current.enableAudioFrameObserver(
-                true,
-                AoqAudioSource.AoqAudioSourcePlayback,
-                config,
-            )
-        }.getOrDefault(-1)
-        if (code < 0) {
-            AppLog.warn(
-                LogCategory.AUDIO,
-                "AOQ external playback unavailable",
-                "enableAudioFrameObserver=${errorName(code)}",
-            )
-            return false
-        }
-        observerEnabled = true
-        playbackFrames = 0
-        AppLog.info(
-            LogCategory.AUDIO,
-            "AOQ external playback enabled",
-            "${PLAYBACK_SAMPLE_RATE}Hz speed=${playbackSpeed}x",
-        )
-        return true
-    }
-
-    private fun disablePlaybackObserver(current: AoqClientEngine) {
-        if (!observerEnabled) return
-        observerEnabled = false
-        val config = AoqAudioObserverConfig().apply {
-            sampleRate = PLAYBACK_SAMPLE_RATE
-            channels = 1
-        }
-        runCatching {
-            current.enableAudioFrameObserver(
-                false,
-                AoqAudioSource.AoqAudioSourcePlayback,
-                config,
-            )
-        }
-    }
-
-    /**
-     * Decoded remote audio. The SDK calls this on its own thread and
-     * [AoqAudioFrameData.dataPtr] is only valid during the callback, so the
-     * bytes are copied before they are queued.
-     */
-    private val playbackFrameListener = object : AoqClientListener.AoqAudioFrameListener {
-        override fun onPlaybackAudioFrame(frame: AoqAudioFrameData) {
-            if (!externalPlayback || speakerMuted) return
-            val data = frame.dataPtr ?: return
-            val size = frame.dataSize
-            if (size <= 0 || size > data.size) return
-            val count = playbackFrames + 1
-            playbackFrames = count
-            val now = android.os.SystemClock.elapsedRealtime()
-            if (count == 1L) {
-                firstPlaybackFrameAt = now
-                AppLog.info(
-                    LogCategory.AUDIO,
-                    "AOQ playback frames arrived",
-                    "sampleRate=${frame.samplesPerSec} channels=${frame.numOfChannels} " +
-                        "bytesPerSample=${frame.bytesPerSample} bytes=$size",
-                )
-            }
-            // Pacing check: ten 10 ms frames per second of audio means the SDK
-            // hands over the stream in real time and cannot be sped up.
-            if (count % 200 == 0L) {
-                val wall = now - firstPlaybackFrameAt
-                AppLog.info(
-                    LogCategory.AUDIO,
-                    "AOQ playback pacing",
-                    "frames=$count audioMs=${count * size * 1000 / 2 / PLAYBACK_SAMPLE_RATE} " +
-                        "wallMs=$wall ratio=${"%.2f".format(java.util.Locale.US, count * size * 1000.0 / 2 / PLAYBACK_SAMPLE_RATE / wall)}",
-                )
-            }
-            player.enqueue(data.copyOf(size))
-        }
     }
 
     private fun ensureOpusPlugin(workDir: File) {
@@ -776,9 +611,6 @@ class AoqTransport(
 
     private companion object {
         const val CONNECT_TIMEOUT_MS = 25_000L
-
-        /** Rate of the PCM the SDK decoder hands to the observer. */
-        const val PLAYBACK_SAMPLE_RATE = 48_000
 
         /** Matches the range PcmPlayer and TimeStretcher can render. */
         const val MIN_SPEED = 0.5f

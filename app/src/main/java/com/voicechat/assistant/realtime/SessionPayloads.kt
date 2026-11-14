@@ -7,7 +7,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.Base64
+import java.util.Locale
 
 /**
  * Builds the client → server events. Keeping this pure makes protocol changes
@@ -24,6 +27,7 @@ object SessionPayloads {
     private const val MAX_RECAP_TURNS = 12
     private const val MAX_RECAP_TURN_CHARS = 600
     private const val MAX_RECAP_CHARS = 4_000
+    private val DATE_FORMAT = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", Locale.US)
 
     /**
      * A reconnected session is a *new* server conversation, so the turns this
@@ -55,9 +59,16 @@ object SessionPayloads {
         }
     }
 
-    fun sessionUpdate(config: SessionConfig): String {
+    fun sessionUpdate(config: SessionConfig, now: LocalDate = LocalDate.now()): String {
         val instructions = buildString {
             append(config.instructions.trim())
+            // The models have no clock of their own, so every "today" question
+            // (news, prices, events) needs the date in the prompt or the answer
+            // drifts to whatever the training data calls recent.
+            append("\n\nToday is ")
+            append(now.format(DATE_FORMAT))
+            append(". Use it for anything time-dependent and never call an older " +
+                "story today's news.")
             // The pacing is applied locally to the decoded PCM; the realtime API
             // ignores every server-side speed hint, so asking for a rate here
             // only produced the same normal-speed audio.
@@ -91,7 +102,10 @@ object SessionPayloads {
                         "from memory or claim you cannot access live information without " +
                         "first calling it. After the results return, summarize them " +
                         "concisely for speech and distinguish reported facts from " +
-                        "uncertainty. If the search returns no useful results, say the " +
+                        "uncertainty. Treat each result's published date as the age of " +
+                        "that story: a search snippet without a recent date is not today's " +
+                        "news, so leave it out or say how old it is instead of presenting " +
+                        "it as current. If the search returns no useful results, say the " +
                         "search did not find enough information; never invent results.",
                 )
             } else if (config.nativeSearch) {

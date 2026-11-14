@@ -161,23 +161,26 @@ threshold (lowered from 0.5 because the user had to speak up and repeat
 themselves), input audio
 transcription model `qwen3-asr-flash-realtime`. Qwen Audio 3.1 defaults to
 `smart_turn_v2` (semantic + acoustic, much less self-interruption). Every
-system prompt gets a delivery line asking for a brisk conversational pace;
+system prompt gets a delivery line asking for a brisk conversational pace and
+the current date ("Today is …"), because the models have no clock of their own;
 the server-side `speech_rate` option is ignored, so the rate is applied to the
-decoded PCM during playback instead (default 1.4x, WebSocket and AOQ).
+decoded PCM during playback instead (default 1.4x, WebSocket only).
 
 The default system prompt and the "Prompt preset" picker are data, not code:
 they ship as `app/src/main/assets/prompts.json` (`version`, `default`,
 `presets`, `knownDefaults`) and are read by `core/PromptCatalog`. A preset
 without `prompt` applies `default`; that is how "General assistant" stays in
-sync. Edit that file to change the wording, and bump `version` in the same
-change: `SettingsRepository.applyPromptMigration` rewrites a stored prompt that
-is still an empty value or an entry of `knownDefaults`, so an install that
-never customised the prompt gets the new wording, while a prompt the user wrote
-is left alone. `knownDefaults` therefore has to list every default an earlier
-build stored *plus the current one* (a bump then recognises a stored copy), but
-not preset texts — replacing a chosen preset with the default prompt would be
-wrong. `applyConversationDefaultsMigration` still owns the one-time
-VAD-threshold and speech-rate moves.
+sync — its news recipe (top 3 world stories, today's market, 5 technical AI
+items, every story dated) lives in `default`, so an install that never opened
+the preset picker still gets it. Edit that file to change the wording, and bump
+`version` in the same change: `SettingsRepository.applyPromptMigration` rewrites
+a stored prompt that is still an empty value or an entry of `knownDefaults`, so
+an install that never customised the prompt gets the new wording, while a prompt
+the user wrote is left alone. `knownDefaults` therefore has to list every
+default an earlier build stored *plus the current one* (a bump then recognises a
+stored copy), but not preset texts — replacing a chosen preset with the default
+prompt would be wrong. `applyConversationDefaultsMigration` still owns the
+one-time VAD-threshold and speech-rate moves.
 
 `prompts.json` is the only prompt source: the fallback string in
 `PromptCatalog` covers a missing or invalid asset and must stay a one-liner,
@@ -264,6 +267,17 @@ Function calling: tool results go back as
   (`searchFallbackChain`), so an empty result still answers. A provider that
   answers 401/403 is remembered as rejected for the session and reported to the
   user once (`onSearchIssue` → snackbar) instead of failing silently.
+- A "top news today" search must never be answered from a cached page. Exa used
+  to return the `apnews.com` homepage as an undated *highlight*, whose sidebar
+  still carried months-old stories (the Lindsay Clancy trial, a Bartiromo
+  ouster), and the realtime model read that out as today's news. `searchExa`
+  now sends `contents.livecrawl = "always"` and, when `SearchRecency` recognises
+  a news-ish query ("news", "today", "latest", "this weekend", …),
+  `startPublishedDate` three days back; every result's publication date is
+  passed on as `published` (Brave's `page_age`) and the tool result carries
+  `today`, so the model can date what it reports. The session instructions say
+  to treat an undated snippet as stale instead of as today's news, and the
+  system prompt asks for the news recipe by section.
 - `get_location` resolves the device position (network provider first, then GPS)
   and falls back to a fresh `LocationManager.getCurrentLocation` fix when the
   last-known location is older than 2 minutes. It also reverse-geocodes a place
@@ -432,11 +446,15 @@ session instructions ask for a brisk pace but no longer promise a numeric rate,
 because the API ignores it. Speed changes take effect immediately without
 reconnecting. Settings expose a "Speech speed" slider (0.75×–2.0×, default
 1.4×) that travels through `AppSettings.speechRate` →
-`SessionConfig.speechRate` → the transport player. WebSocket always renders
-with `PcmPlayer`; AOQ switches to it (`isExternal` playback plus
-`onPlaybackAudioFrame`) whenever the rate is not 1.0, because the SDK's own
-renderer has no speed control. WebRTC still has no local rate control: the
-`org.webrtc` audio device owns playback. Bluetooth headsets are selected as the
+`SessionConfig.speechRate` → the transport player. Only WebSocket renders the
+audio itself, with `PcmPlayer`. AOQ used to switch to that path (`isExternal`
+playback plus `onPlaybackAudioFrame`) for a rate other than 1.0, but the SDK
+hands the decoded stream over at 1x (measured: ten 10 ms frames per second of
+audio, ratio 0.89–0.98 against a 1.4x consumer), so the player starved and the
+answer broke up while the wall-clock duration stayed at 1x. AOQ therefore keeps
+the SDK renderer — and its hardware AEC reference — and plays at 1x; the rate is
+a WebSocket feature. WebRTC has no local rate control either: the `org.webrtc`
+audio device owns playback. Bluetooth headsets are selected as the
 capture route on WebSocket voice mode when Android exposes a matching
 communication input.
 
@@ -459,12 +477,9 @@ communication input.
   `AoqClientSdk-release.aar` (v1.4.0) and `libPluginOpus.so` (in
   `app/libs` / `app/src/main/jniLibs`). The SDK owns capture, Opus, AEC and the
   QUIC relay; realtime events travel as Data messages using the same payloads
-  as WebSocket. For speech rate ≠ 1 the transport starts the SDK player with
-  `isExternal = true`, subscribes to `AoqAudioSourcePlayback` frames
-  (`enableAudioFrameObserver`) and renders the 48 kHz PCM with `PcmPlayer` and
-  `TimeStretcher`, so the rate is pitch-preserving and changes live. At 1.0 the
-  SDK's own renderer is kept, which also preserves its hardware AEC reference
-  on the loudspeaker.
+  as WebSocket. The SDK renders the received audio itself at 1x and keeps its
+  hardware AEC reference; local speed control is not possible because the SDK
+  emits the decoded stream frame by frame in real time (see "Speech speed").
   - **Token authentication**: production puts this call on an AppServer so the
     API key never reaches the device. This private build performs the AppServer
     step in-process (`AoqTokenClient`): `POST /api/v1/webrtc/realtime?model=…`
@@ -498,6 +513,13 @@ recovers on its own instead of ending the chat:
 - **Opening a session** (`start`) tries `ReconnectPolicy.INITIAL_ATTEMPTS` times
   (250 ms, 600 ms backoff). `ensureSession` in `AppViewModel` reuses a connected
   transport, so a chat keeps one session across turns.
+- **A failed open that a retry can fix keeps retrying.** After those three
+  attempts the session no longer drops to a dead error state: a non-permanent
+  failure (a DNS or interface blip — "Unable to resolve host" is the usual one,
+  measured as a 36 s dead microphone while the user tapped voice mode and the
+  app had already given up in 1 s) enters the same recovery loop a dropped
+  session uses, so it retries for ~30 s and then waits for the network. Only
+  `ReconnectPolicy.isPermanent` failures end the session immediately.
 - **A dropped session** (`RealtimeEvent.Failure` with `recoverable = true`, or an
   unexpected `RealtimeEvent.Closed`) starts a recovery loop of
   `ReconnectPolicy.RECOVERY_ATTEMPTS` (10) attempts at 250 ms → 5 s backoff
@@ -509,6 +531,10 @@ recovers on its own instead of ending the chat:
   shows the error banner. The next `onAvailable` calls `nudgeReconnect()`, which
   restarts the recovery loop, so a DNS or Wi-Fi outage that outlasts the backoff
   still resumes without the user tapping Retry. Only `stop()`/`start()` clear it.
+  `nudgeReconnect` must not be gated on `closingTransport`: that flag is still
+  true from the last failed open, and gating on it left a phone that regained
+  Wi-Fi with an idle "Connection problem" banner for as long as the app stayed
+  open (observed 11 minutes after the interface came back).
 - **Every attempt is bounded** by `ReconnectPolicy.connectTimeoutMs` (20 s for a
   first attempt, 8 s for retries), so a dead network cannot make one attempt
   wait out the full TCP timeout and stall the loop.
@@ -605,6 +631,8 @@ required; verify screens on the emulator with `adb` screenshots.
 ## Known limitations / roadmap
 
 - AOQ requires an arm64/armv7 device; the emulator is x86_64.
+- Speech rate is WebSocket-only. AOQ hands the decoded audio over in real time
+  and WebRTC's vendor stack owns playback timing, so both play at 1x.
 - WebRTC sessions cannot send image attachments yet.
 - Image turns pause live mode: they need manual commits on WebSocket. Camera
   shots are sent as still images; no video track is published.

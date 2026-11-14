@@ -216,6 +216,31 @@ class RealtimeSession(
             delay(wait)
         }
         val message = failure?.message ?: "Connection failed"
+        if (!ReconnectPolicy.isPermanent(message)) {
+            // A DNS or interface glitch while opening the session is usually
+            // transient. Give up on this turn but keep the session alive and let
+            // the recovery loop (and the network callback through
+            // nudgeReconnect) restore it, instead of leaving voice mode dead
+            // until the user finds the microphone button again.
+            _state.update {
+                it.copy(
+                    active = true,
+                    connected = false,
+                    status = LiveStatus.RECONNECTING,
+                    error = message,
+                    reconnecting = true,
+                    reconnectAttempt = 0,
+                )
+            }
+            AppLog.warn(
+                LogCategory.TRANSPORT,
+                "Initial connect failed; retrying in the background",
+                message,
+            )
+            scheduleRecovery(message)
+            listener.onError(message)
+            return Result.failure(failure ?: IllegalStateException(message))
+        }
         _state.update {
             it.copy(
                 active = true,
@@ -462,7 +487,11 @@ class RealtimeSession(
             recoveryWake?.trySend(Unit)
             return
         }
-        if (awaitingNetwork && _state.value.active && config != null && !closingTransport) {
+        // `awaitingNetwork` is only set once the transport has been torn down, so
+        // a restart is always safe here. The old `closingTransport` gate kept a
+        // phone that got its network back dead until the user tapped the
+        // microphone again: that flag is still true from the last failed open.
+        if (awaitingNetwork && _state.value.active && config != null) {
             awaitingNetwork = false
             AppLog.info(LogCategory.TRANSPORT, "Network is back; retrying the session")
             scheduleRecovery("network available")
