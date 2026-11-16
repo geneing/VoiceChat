@@ -199,7 +199,7 @@ class SessionPayloadsTest {
         )
         assertTrue(json.contains("call get_news"))
         assertTrue(json.contains("never use web_search for it"))
-        assertTrue(json.contains("say plainly when a section came back empty"))
+        assertTrue(json.contains("say plainly when the digest says a section was empty"))
     }
 
     @Test

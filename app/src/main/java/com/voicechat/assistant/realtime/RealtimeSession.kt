@@ -4,6 +4,7 @@ import android.os.SystemClock
 import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.data.model.CostCalculator
+import com.voicechat.assistant.data.model.NewsSearchMode
 import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TokenUsage
 import com.voicechat.assistant.data.model.TransportKind
@@ -15,10 +16,10 @@ import com.voicechat.assistant.realtime.handoff.HandoffPrompt
 import com.voicechat.assistant.realtime.handoff.HandoffRouter
 import com.voicechat.assistant.realtime.handoff.HandoffTrace
 import com.voicechat.assistant.realtime.handoff.HandoffUiState
+import com.voicechat.assistant.realtime.handoff.NewsPrompt
 import com.voicechat.assistant.realtime.handoff.ReasoningClient
 import com.voicechat.assistant.realtime.handoff.ReasoningResult
 import com.voicechat.assistant.realtime.handoff.SpeculativeHandoff
-import com.voicechat.assistant.realtime.tools.NewsSections
 import com.voicechat.assistant.realtime.tools.SearchRecency
 import com.voicechat.assistant.realtime.tools.ToolDefinitions
 import com.voicechat.assistant.realtime.tools.ToolRegistry
@@ -39,10 +40,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.io.IOException
+import java.time.LocalDate
 import kotlin.coroutines.coroutineContext
 
 enum class LiveStatus { IDLE, CONNECTING, RECONNECTING, LISTENING, THINKING, RESPONDING, ERROR }
@@ -154,6 +158,9 @@ class RealtimeSession(
     private var handoffJob: Job? = null
     private var handoffStartedAt = 0L
     private var handoffCancelled = false
+    /** Digest request in flight; `get_news` runs off the session mutex. */
+    private var newsJob: Job? = null
+    private var newsCancelled = false
     /** True while a typed turn is being reasoned about, before it is sent. */
     private var preReasoning = false
     /** Warm reasoning call started from a hard voice transcript. */
@@ -453,6 +460,7 @@ class RealtimeSession(
     private suspend fun reopenLocked(config: SessionConfig, live: Boolean): Result<Unit> {
         finishTurn(partial = true)
         cancelSpeculation("connection lost")
+        cancelNews("connection lost")
         eventsJob?.cancel()
         eventsJob = null
         levelJob?.cancel()
@@ -646,6 +654,7 @@ class RealtimeSession(
             // Nothing has been sent to the server for this turn yet, so there is
             // no response to cancel: just stop paying for the reasoning call.
             cancelHandoff("interrupted")
+            cancelNews("interrupted")
             finishTurn(partial = true)
             _state.update {
                 it.copy(status = if (liveEnabled) LiveStatus.LISTENING else LiveStatus.IDLE, speaking = false)
@@ -671,6 +680,7 @@ class RealtimeSession(
     fun shutdown() {
         cancelRecovery("shutdown")
         cancelHandoff("shutdown")
+        cancelNews("shutdown")
         cancelSpeculation("shutdown")
         reasoner?.cancelAll()
         eventsJob?.cancel()
@@ -705,7 +715,10 @@ class RealtimeSession(
 
     private fun applyLiveMode(enabled: Boolean) {
         liveEnabled = enabled
-        if (!enabled) cancelSpeculation("live mode off")
+        if (!enabled) {
+            cancelSpeculation("live mode off")
+            cancelNews("live mode off")
+        }
         // Never change turn_detection on an established session: the server
         // rejects it ("cannot change turn detection") and the conversation
         // context would be lost by reconnecting. The session is always opened
@@ -738,6 +751,7 @@ class RealtimeSession(
     /** Tears the transport down but keeps the transcript so recovery can restore it. */
     private fun closeTransportLocked() {
         cancelHandoff("session stopped")
+        cancelNews("session stopped")
         cancelSpeculation("session stopped")
         finishTurn(partial = true)
         eventsJob?.cancel()
@@ -800,6 +814,7 @@ class RealtimeSession(
             is RealtimeEvent.SpeechStarted -> {
                 AppLog.debug(LogCategory.SESSION, "Speech started (barge-in)")
                 cancelHandoff("barge-in")
+                cancelNews("barge-in")
                 cancelSpeculation("barge-in")
                 transport?.setSpeakerMuted(true)
                 if (responding) {
@@ -1077,6 +1092,11 @@ class RealtimeSession(
             startHandoff(event)
             return
         }
+        if (event.name == ToolDefinitions.NEWS_NAME) {
+            // Same reason: the digest model plus the app search can take a while.
+            startNews(event)
+            return
+        }
         val activeTransport = transport ?: return
         listener.onToolCall(event.name, event.arguments, null)
         _state.update { it.copy(status = LiveStatus.THINKING) }
@@ -1255,17 +1275,193 @@ class RealtimeSession(
     }
 
     /**
-     * Warms the world section of `get_news` while the realtime model decides to
-     * call the tool. Speech starts on the world stories first (see the news
-     * instruction), and a warm cache turns that first call into a lookup instead
-     * of a network round trip. Repeat asks inside the cache window cost nothing.
+     * Runs `get_news`: the app collects dated items (when the mode is APP),
+     * then the large text model writes one digest. Launched off the session
+     * mutex, like the handoff, so barge-in stays responsive.
+     */
+    private fun startNews(event: RealtimeEvent.FunctionCall) {
+        val news = config?.news
+        val reasonerClient = reasoner
+        val apiKey = config?.apiKey.orEmpty()
+        val registry = tools
+        val provider = config?.searchProvider ?: SearchProvider.EXA
+        if (newsJob?.isActive == true) {
+            replyToNews(
+                event.callId,
+                NewsPrompt.toolOutput("", "", LocalDate.now(), "A news request is already running."),
+            )
+            return
+        }
+        newsCancelled = false
+        AppLog.info(
+            LogCategory.TOOLS,
+            "News digest started",
+            "model=${news?.model?.resolvedModel ?: "none"} search=${news?.search ?: "none"}",
+        )
+        newsJob = scope.launch {
+            val today = LocalDate.now()
+            // The app search runs for APP mode, and lazily as the fallback when
+            // MODEL mode turns out not to search.
+            var reference: String? = null
+            suspend fun appReference(): String? {
+                if (reference == null && registry != null) {
+                    reference = runCatching { registry.newsReference(provider) }.getOrNull()
+                }
+                return reference
+            }
+            val result = if (news != null && reasonerClient != null) {
+                // Every call is billed where it returns, including the refused
+                // native-search attempt before the retry.
+                suspend fun digest(
+                    mode: NewsSearchMode,
+                    user: String,
+                    native: Boolean,
+                ): Result<ReasoningResult> {
+                    val attempt = reasonerClient.complete(
+                        apiKey = apiKey,
+                        config = news.model,
+                        system = NewsPrompt.system(today, mode),
+                        user = user,
+                        nativeSearch = native,
+                    )
+                    if (attempt.isSuccess) billReasoning(news.model, attempt)
+                    return attempt
+                }
+                when (news.search) {
+                    NewsSearchMode.APP -> digest(
+                        NewsSearchMode.APP,
+                        NewsPrompt.user(today, appReference()),
+                        native = false,
+                    )
+                    NewsSearchMode.OFF -> digest(
+                        NewsSearchMode.OFF,
+                        NewsPrompt.user(today, null),
+                        native = false,
+                    )
+                    NewsSearchMode.MODEL -> {
+                        val first = digest(
+                            NewsSearchMode.MODEL,
+                            NewsPrompt.user(today, null),
+                            native = true,
+                        )
+                        val refused = first.getOrNull()?.let {
+                            NewsPrompt.looksUnverified(it.answer)
+                        } ?: true
+                        if (!refused) {
+                            first
+                        } else {
+                            // This model ignored the search flag and answered that
+                            // it has no live access; retry from the app's items.
+                            AppLog.warn(
+                                LogCategory.TOOLS,
+                                "News model did not search; retrying with app search",
+                                first.exceptionOrNull()?.message
+                                    ?: first.getOrNull()?.answer?.take(160),
+                            )
+                            val fallback = appReference()
+                            if (fallback == null) {
+                                first
+                            } else {
+                                digest(
+                                    NewsSearchMode.APP,
+                                    NewsPrompt.user(today, fallback),
+                                    native = false,
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                Result.failure(HandoffException("The news model is not configured."))
+            }
+            if (!isActive) return@launch
+            mutex.withLock {
+                finishNewsLocked(event.callId, news, result, reference, today)
+            }
+            newsJob = null
+        }
+    }
+
+    private fun finishNewsLocked(
+        callId: String,
+        news: NewsConfig?,
+        result: Result<ReasoningResult>,
+        reference: String?,
+        today: LocalDate,
+    ) {
+        if (newsCancelled) return
+        val activeTransport = transport ?: return
+        val output = result.fold(
+            onSuccess = { digest ->
+                NewsPrompt.toolOutput(digest.answer, digest.model, today)
+            },
+            onFailure = { error ->
+                AppLog.warn(LogCategory.TOOLS, "News digest failed", error.message)
+                // The app search may still have dated items: hand those to the
+                // realtime model the way the plain news tool used to.
+                if (!reference.isNullOrBlank() && !reference.contains("\"error\"")) {
+                    buildJsonObject {
+                        put("ok", true)
+                        put("as_of", today.toString())
+                        put("fallback", "digest model unavailable; summarize these dated items")
+                        put("items", Json.parseToJsonElement(reference))
+                    }.toString()
+                } else {
+                    NewsPrompt.toolOutput(
+                        "",
+                        news?.model?.resolvedModel ?: "news",
+                        today,
+                        error.message ?: "News digest failed.",
+                    )
+                }
+            },
+        )
+        activeTransport.send(SessionPayloads.functionOutputItem(callId, output))
+        if (!responding) {
+            activeTransport.send(SessionPayloads.responseCreate(modalities()))
+            toolOutputsSent = false
+            _state.update { it.copy(status = LiveStatus.THINKING) }
+        } else {
+            toolOutputsSent = true
+        }
+    }
+
+    /** Answers a news call that cannot run, off the event-processing thread. */
+    private fun replyToNews(callId: String, output: String) {
+        scope.launch {
+            mutex.withLock {
+                val activeTransport = transport ?: return@withLock
+                activeTransport.send(SessionPayloads.functionOutputItem(callId, output))
+                if (!responding) {
+                    activeTransport.send(SessionPayloads.responseCreate(modalities()))
+                } else {
+                    toolOutputsSent = true
+                }
+            }
+        }
+    }
+
+    private fun cancelNews(reason: String) {
+        val job = newsJob ?: return
+        newsCancelled = true
+        newsJob = null
+        // Cancelling the job aborts its HTTP call too.
+        job.cancel()
+        AppLog.info(LogCategory.TOOLS, "News digest cancelled", reason)
+    }
+
+    /**
+     * Warms the news sections while the realtime model decides to call the
+     * tool. A warm cache turns the app search inside `get_news` into a lookup.
+     * Repeat asks inside the cache window cost nothing.
      */
     private fun prefetchNews(transcript: String) {
         val current = config ?: return
         val registry = tools ?: return
+        if (current.news?.search != NewsSearchMode.APP) return
         if (!SearchRecency.isNewsQuery(transcript)) return
         scope.launch(Dispatchers.IO) {
-            registry.warmNews(NewsSections.WORLD, current.searchProvider)
+            registry.warmNews(current.searchProvider)
         }
     }
 

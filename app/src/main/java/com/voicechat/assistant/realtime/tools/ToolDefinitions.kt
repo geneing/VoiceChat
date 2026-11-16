@@ -105,9 +105,9 @@ object ToolDefinitions {
     }
 
     /**
-     * A focused news digest instead of a generic web search: each section is
-     * fetched as recent, dated articles, so the model never has to guess whether
-     * a snippet is today's story.
+     * A focused news digest instead of a generic web search. The app composes it
+     * (search plus the news model), so the tool takes no arguments and is called
+     * once per news request.
      */
     private val news = buildJsonObject {
         put("type", "function")
@@ -115,32 +115,15 @@ object ToolDefinitions {
             put("name", "get_news")
             put(
                 "description",
-                "Get today's news as dated items grouped by section: world (top " +
-                    "international stories), markets (stock market conditions and what " +
-                    "moved them) and ai (model releases, research papers, open-source " +
-                    "models and library changes). Call this for every request about the " +
-                    "news, headlines, what happened today or the market. For a general " +
-                    "news request call it with section \"world\" first (it is the fastest " +
-                    "and is spoken first), then again for \"markets\" and \"ai\". \"all\" " +
-                    "returns the three sections in one result.",
+                "Get today's news digest: the top world stories, today's market " +
+                    "conditions with what moved them, and five technical AI items " +
+                    "(model releases, research papers, open-source models, library " +
+                    "changes). Call this once for any request about the news, headlines, " +
+                    "what happened today or the market.",
             )
             putJsonObject("parameters") {
                 put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("section") {
-                        put("type", "string")
-                        put(
-                            "description",
-                            "Section to fetch; all returns world, markets and ai together.",
-                        )
-                        putJsonArray("enum") {
-                            add(NewsSections.ALL)
-                            add(NewsSections.WORLD)
-                            add(NewsSections.MARKETS)
-                            add(NewsSections.AI)
-                        }
-                    }
-                }
+                putJsonObject("properties") {}
                 putJsonArray("required") {}
             }
         }
@@ -208,4 +191,5 @@ object ToolDefinitions {
     val all: String by lazy { json(includeWebSearch = true) }
 
     const val HANDOFF_NAME = "deep_reasoning"
+    const val NEWS_NAME = "get_news"
 }

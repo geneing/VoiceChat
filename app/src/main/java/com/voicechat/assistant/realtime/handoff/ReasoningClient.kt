@@ -73,11 +73,12 @@ class ReasoningClient(
         apiKey: String,
         config: HandoffConfig,
         messages: List<HandoffPrompt.Turn>,
+        nativeSearch: Boolean = false,
     ): Request = Request.Builder()
         .url(completionsUrl())
         .header("Authorization", "Bearer $apiKey")
         .post(
-            HandoffPrompt.requestBody(config, messages)
+            HandoffPrompt.requestBody(config, messages, nativeSearch)
                 .toRequestBody("application/json; charset=utf-8".toMediaType()),
         )
         .build()
@@ -91,6 +92,37 @@ class ReasoningClient(
         task: String,
         depth: String = "detailed",
         onProgress: (Int) -> Unit = {},
+    ): Result<ReasoningResult> {
+        val messages = HandoffPrompt.messages(transcript, task, config.contextTurns, depth)
+        return stream(apiKey, config, messages, nativeSearch = false, sections = true, onProgress)
+    }
+
+    /**
+     * One plain completion for the news digest: no handoff dossier, no
+     * `## Answer` sections, and optionally the vendor's own web search.
+     */
+    suspend fun complete(
+        apiKey: String,
+        config: HandoffConfig,
+        system: String,
+        user: String,
+        nativeSearch: Boolean,
+    ): Result<ReasoningResult> = stream(
+        apiKey = apiKey,
+        config = config,
+        messages = listOf(HandoffPrompt.Turn("system", system), HandoffPrompt.Turn("user", user)),
+        nativeSearch = nativeSearch,
+        sections = false,
+        onProgress = {},
+    )
+
+    private suspend fun stream(
+        apiKey: String,
+        config: HandoffConfig,
+        messages: List<HandoffPrompt.Turn>,
+        nativeSearch: Boolean,
+        sections: Boolean,
+        onProgress: (Int) -> Unit,
     ): Result<ReasoningResult> = withContext(Dispatchers.IO) {
         if (!configured) {
             return@withContext Result.failure(
@@ -100,8 +132,7 @@ class ReasoningClient(
         if (apiKey.isBlank()) {
             return@withContext Result.failure(HandoffException("API key is not configured."))
         }
-        val messages = HandoffPrompt.messages(transcript, task, config.contextTurns, depth)
-        val request = request(apiKey, config, messages)
+        val request = request(apiKey, config, messages, nativeSearch)
         val timeoutClient = client.newBuilder()
             .readTimeout(config.timeoutMs.toLong(), TimeUnit.MILLISECONDS)
             .callTimeout(config.timeoutMs.toLong(), TimeUnit.MILLISECONDS)
@@ -130,7 +161,7 @@ class ReasoningClient(
                         HandoffException("Deep reasoning returned no response."),
                     )
                 coroutineContext.ensureActive()
-                parseStream(source, config.resolvedModel, startedAt, onProgress)
+                parseStream(source, config.resolvedModel, startedAt, onProgress, sections)
             }
         } catch (error: IOException) {
             if (call.isCanceled() || !coroutineContext.isActive) {
@@ -150,6 +181,7 @@ class ReasoningClient(
         model: String,
         startedAt: Long,
         onProgress: (Int) -> Unit,
+        sections: Boolean,
     ): Result<ReasoningResult> {
         val answer = StringBuilder()
         val reasoning = StringBuilder()
@@ -204,8 +236,9 @@ class ReasoningClient(
 
         val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
         onProgress(reasoning.length)
-        val sections = HandoffPrompt.parseSections(answer.toString())
-        if (sections.answer.isBlank()) {
+        val text = answer.toString().trim()
+        val parsed = if (sections) HandoffPrompt.parseSections(text) else HandoffPrompt.Sections(text, "")
+        if (parsed.answer.isBlank()) {
             return Result.failure(
                 HandoffException("Deep reasoning returned an empty answer after ${elapsedMs}ms."),
             )
@@ -224,8 +257,8 @@ class ReasoningClient(
         return Result.success(
             ReasoningResult(
                 model = model,
-                answer = sections.answer,
-                summary = sections.summary.ifBlank { HandoffPrompt.fallbackSummary(sections.answer) },
+                answer = parsed.answer,
+                summary = parsed.summary.ifBlank { HandoffPrompt.fallbackSummary(parsed.answer) },
                 reasoning = reasoning.toString().trim(),
                 usage = usage,
                 reasoningTokens = reasoningTokens,

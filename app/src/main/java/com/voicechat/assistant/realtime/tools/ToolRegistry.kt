@@ -68,7 +68,7 @@ class ToolRegistry(
         val rejected: Boolean = false,
     )
 
-    /** One requested section of `get_news`. */
+    /** One section of the news reference, or the digest the news model wrote. */
     private data class NewsSection(
         val name: String,
         val provider: String,
@@ -105,7 +105,6 @@ class ToolRegistry(
                 "get_location" -> location()
                 "get_weather" -> weather()
                 "web_search" -> webSearch(argumentsJson, searchProvider)
-                "get_news" -> news(argumentsJson, searchProvider)
                 else -> errorResult("Unknown tool: $name")
             }
         }.getOrElse { error ->
@@ -404,18 +403,15 @@ class ToolRegistry(
     }
 
     /**
-     * `get_news`: one focused search per requested section, in parallel, so a
-     * "what's the news" turn costs one tool call and arrives dated and grouped.
-     * Repeated asks within [NEWS_CACHE_TTL_MS] reuse the section, which makes a
-     * follow-up ("and the markets?") instant and stops the model re-inventing it.
+     * Dated world, market and AI items for the news digest, fetched in parallel.
+     * The digest model receives this as its only source of facts when the news
+     * search mode is [com.voicechat.assistant.data.model.NewsSearchMode.APP],
+     * and the realtime model falls back to it when the digest model fails.
+     * Repeated asks within [NEWS_CACHE_TTL_MS] reuse a section.
      */
-    private suspend fun news(argumentsJson: String, provider: SearchProvider): String {
-        val requested = runCatching {
-            json.parseToJsonElement(argumentsJson).jsonObject["section"]?.jsonPrimitive?.content
-        }.getOrNull()
-        val sections = NewsSections.parse(requested)
+    suspend fun newsReference(provider: SearchProvider): String {
         val fetched = coroutineScope {
-            sections.map { section ->
+            NewsSections.order.map { section ->
                 async(Dispatchers.IO) { newsSection(section, provider) }
             }.awaitAll()
         }
@@ -445,6 +441,17 @@ class ToolRegistry(
                 }
             }
         }.toString()
+    }
+
+    /** Warms every news section in the background; cached hits cost nothing. */
+    suspend fun warmNews(provider: SearchProvider) {
+        coroutineScope {
+            NewsSections.order.map { section ->
+                async(Dispatchers.IO) {
+                    runCatching { newsSection(section, provider) }
+                }
+            }.awaitAll()
+        }
     }
 
     private fun newsSection(name: String, provider: SearchProvider): NewsSection {
@@ -482,17 +489,6 @@ class ToolRegistry(
             }
         }
         return NewsSection(name, "none", emptyList())
-    }
-
-    /**
-     * Fills the section cache ahead of the model's tool call. Safe to call from
-     * any thread: a section already inside the cache window is not fetched again.
-     */
-    fun warmNews(section: String, provider: SearchProvider) {
-        val key = "${provider.name}:$section"
-        val cached = newsCache[key]
-        if (cached != null && System.currentTimeMillis() - cached.at < NEWS_CACHE_TTL_MS) return
-        runCatching { newsSection(section, provider) }
     }
 
     /** Exa's news category: dated articles only, fetched live rather than cached. */

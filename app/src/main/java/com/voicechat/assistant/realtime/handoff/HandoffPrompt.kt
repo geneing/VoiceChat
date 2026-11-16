@@ -87,7 +87,11 @@ object HandoffPrompt {
     }
 
     /** OpenAI-compatible streaming body for `/chat/completions`. */
-    fun requestBody(config: HandoffConfig, messages: List<Turn>): String = buildJsonObject {
+    fun requestBody(
+        config: HandoffConfig,
+        messages: List<Turn>,
+        nativeSearch: Boolean = false,
+    ): String = buildJsonObject {
         put("model", config.resolvedModel)
         putJsonArray("messages") {
             messages.forEach { message ->
@@ -108,6 +112,18 @@ object HandoffPrompt {
                 put("enable_thinking", false)
             }
             ThinkingMode.ALWAYS, ThinkingMode.NONE -> Unit
+        }
+        // Vendor-side web search. DashScope runs the agent loop itself and
+        // returns sources, so the news digest needs no client search. The flag
+        // is DashScope-specific: its endpoint rejects an OpenRouter `plugins`
+        // array, so the body carries only this. `forced_search` matters because
+        // a model otherwise decides it has no live access and refuses.
+        if (nativeSearch) {
+            put("enable_search", true)
+            putJsonObject("search_options") {
+                put("enable_source", true)
+                put("forced_search", true)
+            }
         }
         put("max_tokens", config.maxAnswerTokens)
         put("temperature", 0.3)

@@ -268,22 +268,28 @@ Function calling: tool results go back as
   (`searchFallbackChain`), so an empty result still answers. A provider that
   answers 401/403 is remembered as rejected for the session and reported to the
   user once (`onSearchIssue` → snackbar) instead of failing silently.
-- **News uses its own tool, not web search.** A generic search for "top news
-  today" ranks a homepage first, and its cached highlight mixed a fresh story
-  with months-old sidebar text (the Lindsay Clancy trial, a Bartiromo ouster)
-  that the realtime model read out as today's news. `get_news` (`NewsSections`
-  + `ToolRegistry.news`) asks the providers for *news* published in the last
-  two days, in parallel per section: `world` ("top world news today"),
-  `markets` ("stock market today … what moved the market") and `ai` (releases,
-  papers, open-source models, library changes). Exa is asked with
-  `category=news` + `startPublishedDate` + `livecrawl=always`, Brave with
-  `/res/v1/news/search?freshness=pd`, DuckDuckGo with `df=d`. The result is
-  `{as_of, world:{items}, markets:{items}, ai:{items}}` where every item carries
-  `source`, `published` and a trimmed snippet, so the model reports dated
-  stories instead of guessing. Sections are cached for 10 minutes, so a
-  follow-up ("and the markets?") is instant. The tool is offered even when
-  server-side search is on; the session instruction routes news turns to it and
-  tells the model to say when a section is empty.
+- **News is composed by the large text model, not the realtime model.** A
+  generic search for "top news today" ranks a homepage first, and its cached
+  highlight mixed a fresh story with months-old sidebar text (the Lindsay Clancy
+  trial, a Bartiromo ouster) that the realtime model read out as today's news.
+  `get_news` (`ToolDefinitions.NEWS_NAME`, no arguments, called once) now runs
+  `RealtimeSession.startNews` off the session mutex: the app collects dated
+  items (`ToolRegistry.newsReference`, `NewsSections`: world "top world news
+  today", markets "stock market today … what moved the market", AI releases and
+  papers; Exa `category=news` + `startPublishedDate` two days + `livecrawl`,
+  Brave `/res/v1/news/search?freshness=pd`, DuckDuckGo `df=d`), and the reasoning
+  model writes one speak-ready digest (`NewsPrompt`) that the realtime model only
+  reads out. `NewsSearchMode` decides the facts: `APP` (default; the model gets
+  the app's dated items), `MODEL` (the request carries `enable_search` +
+  `search_options.forced_search`, so the vendor searches; verified on
+  `qwen-plus`, ignored by `qwen3.8-flash`, so a refusal
+  (`NewsPrompt.looksUnverified`) retries once with the app search) or `OFF`.
+  Every call is billed through `billReasoning`; a digest failure falls back to
+  handing the raw dated items to the realtime model, so news still answers.
+  Sections are cached for 10 minutes and warmed from a news-like transcript (and
+  from a typed news turn in `AppViewModel`), so the searches cost nothing at tool
+  time. Do not stage this into one call per section: three tool calls in a turn
+  produced garbled audio and no earlier speech.
 - `web_search` still covers everything that is not news (prices, products,
   people, schedules, events). `searchExa` livecrawls and, when `SearchRecency`
   recognises a news-ish query ("news", "today", "latest", "this weekend", …),

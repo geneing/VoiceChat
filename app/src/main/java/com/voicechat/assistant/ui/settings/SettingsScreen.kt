@@ -59,6 +59,7 @@ import com.voicechat.assistant.BuildConfig
 import com.voicechat.assistant.core.Formatters
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.core.RealtimeDefaults
+import com.voicechat.assistant.data.model.NewsSearchMode
 import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.prefs.AppSettings
@@ -427,6 +428,23 @@ fun SettingsScreen(
                     checked = settings.searchSources,
                     enabled = nativeSearchOn,
                     onCheckedChange = { value -> viewModel.updateSettings { it.copy(searchSources = value) } },
+                )
+                DropdownSetting(
+                    label = "News search",
+                    value = settings.newsSearch.label,
+                    enabled = settings.toolsEnabled,
+                    options = NewsSearchMode.entries.map { mode -> mode.label to mode.name },
+                    onSelect = { value ->
+                        NewsSearchMode.entries.firstOrNull { it.name == value }?.let { mode ->
+                            viewModel.updateSettings { it.copy(newsSearch = mode) }
+                        }
+                    },
+                )
+                Text(
+                    settings.newsSearch.detail + " The digest is written by the " +
+                        "deep-reasoning model, so news turns spend its tokens.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }

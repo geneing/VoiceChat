@@ -1,6 +1,7 @@
 package com.voicechat.assistant.realtime
 
 import com.voicechat.assistant.core.RealtimeDefaults
+import com.voicechat.assistant.data.model.NewsSearchMode
 import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.realtime.handoff.HandoffConfig
@@ -84,6 +85,11 @@ data class SessionConfig(
     val toolsJson: String? = null,
     /** Deep-reasoning handoff. `null` means the session has no such tool. */
     val handoff: HandoffConfig? = null,
+    /**
+     * News digest composition. `null` means `get_news` answers with the app's
+     * dated items only (no large-model digest).
+     */
+    val news: NewsConfig? = null,
     val nativeSearch: Boolean = false,
     val searchSources: Boolean = true,
     val searchProvider: SearchProvider = SearchProvider.EXA,
@@ -91,9 +97,7 @@ data class SessionConfig(
     val priceOutputPerMillion: Double = 0.0,
     val languageHint: String = "",
 ) {
-    val endpoint: String get() = ApiEndpoints.urlFor(this)
-
-    /**
+    val endpoint: String get() = ApiEndpoints.urlFor(this)    /**
      * How long the on-device gate keeps streaming after the last syllable. The
      * gate must never close a turn earlier than the server would, otherwise a
      * natural pause splits one sentence into two turns: `smart_turn` waits about
@@ -110,3 +114,13 @@ data class SessionConfig(
         private const val ACOUSTIC_HANGOVER_MARGIN_MS = 800
     }
 }
+
+/**
+ * How a news turn is composed: the large text model writes the digest, and
+ * [search] decides where its facts come from (app search, the model's own web
+ * search, or no search at all).
+ */
+data class NewsConfig(
+    val model: HandoffConfig,
+    val search: NewsSearchMode = NewsSearchMode.APP,
+)

@@ -19,11 +19,13 @@ import com.voicechat.assistant.data.model.ConversationStats
 import com.voicechat.assistant.data.model.Message
 import com.voicechat.assistant.data.model.MessageKind
 import com.voicechat.assistant.data.model.MessageRole
+import com.voicechat.assistant.data.model.NewsSearchMode
 import com.voicechat.assistant.data.model.TokenUsage
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.model.TurnMetrics
 import com.voicechat.assistant.data.model.UsageTotals
 import com.voicechat.assistant.data.prefs.AppSettings
+import com.voicechat.assistant.realtime.NewsConfig
 import com.voicechat.assistant.realtime.RealtimeSession
 import com.voicechat.assistant.realtime.SessionConfig
 import com.voicechat.assistant.realtime.SessionListener
@@ -33,7 +35,9 @@ import com.voicechat.assistant.realtime.handoff.HandoffPrompt
 import com.voicechat.assistant.realtime.handoff.HandoffRouter
 import com.voicechat.assistant.realtime.handoff.HandoffTrace
 import com.voicechat.assistant.realtime.handoff.ReasoningModels
+import com.voicechat.assistant.realtime.tools.SearchRecency
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -294,6 +298,14 @@ class AppViewModel(application: Application) :
             if (config.apiKey.isBlank()) {
                 _uiEvents.tryEmit("Add your Qwen API key in Settings first.")
                 return@launch
+            }
+            // Warm the news sections while the realtime model reads the turn and
+            // decides to call get_news; the searches then cost nothing at tool
+            // time. Same idea as the voice-side prefetch in RealtimeSession.
+            if (config.news?.search == NewsSearchMode.APP &&
+                SearchRecency.isNewsQuery(prepared.sentText)
+            ) {
+                launch(Dispatchers.IO) { container.tools.warmNews(config.searchProvider) }
             }
             val result = ensureSession(config)
             if (result.isFailure) {
@@ -710,6 +722,7 @@ class AppViewModel(application: Application) :
                 null
             },
             handoff = handoff,
+            news = buildNews(current),
             nativeSearch = nativeSearch,
             searchSources = current.searchSources,
             searchProvider = current.searchProvider,
@@ -739,6 +752,32 @@ class AppViewModel(application: Application) :
             speculativeVoice = current.handoffSpeculativeVoice,
             priceInputPerMillion = current.handoffPriceInputPerMillion,
             priceOutputPerMillion = current.handoffPriceOutputPerMillion,
+        )
+    }
+
+    /**
+     * News digest settings. Independent of the handoff switch: a user can want
+     * news composed by the big model without the `deep_reasoning` tool. `null`
+     * means the session has no reasoning endpoint, so `get_news` answers with
+     * the app's dated items only.
+     */
+    private fun buildNews(current: AppSettings): NewsConfig? {
+        if (!container.reasoner.configured) return null
+        return NewsConfig(
+            model = HandoffConfig(
+                model = ReasoningModels.resolve(current.handoffModel),
+                thinkingBudget = current.handoffThinkingBudget.coerceIn(
+                    ReasoningModels.MIN_THINKING_BUDGET,
+                    ReasoningModels.MAX_THINKING_BUDGET,
+                ),
+                timeoutMs = current.handoffTimeoutMs.coerceIn(
+                    ReasoningModels.MIN_TIMEOUT_MS,
+                    ReasoningModels.MAX_TIMEOUT_MS,
+                ),
+                priceInputPerMillion = current.handoffPriceInputPerMillion,
+                priceOutputPerMillion = current.handoffPriceOutputPerMillion,
+            ),
+            search = current.newsSearch,
         )
     }
 

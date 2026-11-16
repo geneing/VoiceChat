@@ -96,18 +96,14 @@ object SessionPayloads {
             if (config.toolsJson?.contains("\"name\":\"get_news\"") == true) {
                 val hasWebSearch = config.toolsJson.contains("\"name\":\"web_search\"")
                 append(
-                    "\n\nNews: call get_news for every request about the news, " +
+                    "\n\nNews: call get_news once for any request about the news, " +
                         "headlines, what happened today or the market, before answering. " +
                         "Never answer news from memory" +
                         (if (hasWebSearch) " and never use web_search for it" else "") +
-                        ". Work in stages so the user is not left waiting: for a general " +
-                        "news request call get_news with section \"world\" first and say " +
-                        "the top world stories in one short paragraph, then call it for " +
-                        "\"markets\" and \"ai\" and continue with the market conditions " +
-                        "(and what moved them) and the AI items in the same turn. Say how " +
-                        "old a story is when it is not from today, never present an older " +
-                        "story as today's news, and say plainly when a section came back " +
-                        "empty.",
+                        ". It returns a digest with the world stories first, then the " +
+                        "market conditions and the AI items; read it as the answer, keep " +
+                        "its dates, do not add stories of your own, and say plainly when " +
+                        "the digest says a section was empty.",
                 )
             }
             if (config.toolsJson?.contains("\"name\":\"web_search\"") == true) {
