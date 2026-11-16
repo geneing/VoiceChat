@@ -103,7 +103,10 @@ object SessionPayloads {
                         ". It returns a digest with the world stories first, then the " +
                         "market conditions and the AI items; read it as the answer, keep " +
                         "its dates, do not add stories of your own, and say plainly when " +
-                        "the digest says a section was empty.",
+                        "the digest says a section was empty. The digest takes several " +
+                        "seconds, so put one short spoken opener in the same response as " +
+                        "the call (\"let me check today's news\") instead of leaving the " +
+                        "user in silence.",
                 )
             }
             if (config.toolsJson?.contains("\"name\":\"web_search\"") == true) {

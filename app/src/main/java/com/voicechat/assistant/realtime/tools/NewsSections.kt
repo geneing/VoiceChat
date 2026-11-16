@@ -37,6 +37,6 @@ object NewsSections {
      */
     fun itemsFor(section: String): Int = when (section) {
         AI -> 5
-        else -> 4
+        else -> 3
     }
 }

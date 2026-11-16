@@ -766,10 +766,9 @@ class AppViewModel(application: Application) :
         return NewsConfig(
             model = HandoffConfig(
                 model = ReasoningModels.resolve(current.handoffModel),
-                thinkingBudget = current.handoffThinkingBudget.coerceIn(
-                    ReasoningModels.MIN_THINKING_BUDGET,
-                    ReasoningModels.MAX_THINKING_BUDGET,
-                ),
+                // A digest is summarization, not reasoning: a thinking trace only
+                // adds seconds to the wait before the assistant can speak.
+                thinkingBudget = 0,
                 timeoutMs = current.handoffTimeoutMs.coerceIn(
                     ReasoningModels.MIN_TIMEOUT_MS,
                     ReasoningModels.MAX_TIMEOUT_MS,

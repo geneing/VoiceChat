@@ -23,9 +23,9 @@ class NewsSectionsTest {
     }
 
     @Test
-    fun `the world section is small, the AI one carries five items`() {
-        assertEquals(4, NewsSections.itemsFor("world"))
-        assertEquals(4, NewsSections.itemsFor("markets"))
+    fun `the world and market sections are small, the AI one carries five items`() {
+        assertEquals(3, NewsSections.itemsFor("world"))
+        assertEquals(3, NewsSections.itemsFor("markets"))
         assertEquals(5, NewsSections.itemsFor("ai"))
     }
 }

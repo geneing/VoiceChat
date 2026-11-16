@@ -12,6 +12,7 @@ import com.voicechat.assistant.BuildConfig
 import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.data.model.SearchProvider
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -79,12 +80,16 @@ class ToolRegistry(
 
     private val newsCache = java.util.concurrent.ConcurrentHashMap<String, CachedNews>()
 
+    /** In-flight section fetches, so a prefetch and a tool call share one query. */
+    private val newsFlights =
+        java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<NewsSection>>()
+
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         val DIRECT_EXECUTOR = Executor { runnable -> runnable.run() }
         const val FIX_TIMEOUT_MS = 3_500L
         const val MAX_LOCATION_AGE_MS = 120_000L
-        const val NEWS_SNIPPET_CHARS = 160
+        const val NEWS_SNIPPET_CHARS = 140
         const val NEWS_CACHE_TTL_MS = 10 * 60_000L
     }
 
@@ -454,19 +459,38 @@ class ToolRegistry(
         }
     }
 
-    private fun newsSection(name: String, provider: SearchProvider): NewsSection {
+    /**
+     * One section, fetched at most once at a time. The prefetch and the tool
+     * call race on a news turn; without this the same Exa query ran twice,
+     * doubled the wait and made both responses slower.
+     */
+    private suspend fun newsSection(name: String, provider: SearchProvider): NewsSection {
         val key = "${provider.name}:$name"
-        val now = System.currentTimeMillis()
         val cached = newsCache[key]
-        if (cached != null && now - cached.at < NEWS_CACHE_TTL_MS) return cached.section
-        val section = fetchNewsSection(name, provider)
-        if (section.results.isNotEmpty()) newsCache[key] = CachedNews(now, section)
-        AppLog.info(
-            LogCategory.TOOLS,
-            "News section ${section.name}",
-            "${section.results.size} items from ${section.provider}",
-        )
-        return section
+        if (cached != null && System.currentTimeMillis() - cached.at < NEWS_CACHE_TTL_MS) {
+            return cached.section
+        }
+        val flight = CompletableDeferred<NewsSection>()
+        val existing = newsFlights.putIfAbsent(key, flight)
+        if (existing != null) return existing.await()
+        try {
+            val section = fetchNewsSection(name, provider)
+            if (section.results.isNotEmpty()) {
+                newsCache[key] = CachedNews(System.currentTimeMillis(), section)
+            }
+            AppLog.info(
+                LogCategory.TOOLS,
+                "News section ${section.name}",
+                "${section.results.size} items from ${section.provider}",
+            )
+            flight.complete(section)
+            return section
+        } catch (error: Throwable) {
+            flight.completeExceptionally(error)
+            throw error
+        } finally {
+            newsFlights.remove(key, flight)
+        }
     }
 
     private fun fetchNewsSection(name: String, provider: SearchProvider): NewsSection {
