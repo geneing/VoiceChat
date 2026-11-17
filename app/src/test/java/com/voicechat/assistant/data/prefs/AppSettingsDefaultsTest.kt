@@ -80,4 +80,11 @@ class AppSettingsDefaultsTest {
         val settings = AppSettings()
         assertTrue(settings.vadThreshold < 0.5f)
     }
+
+    @Test
+    fun `device memory is on and needs no service`() {
+        val settings = AppSettings()
+        assertTrue(settings.memoryEnabled)
+        assertTrue(settings.memoryPerTurn)
+    }
 }

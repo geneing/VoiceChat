@@ -50,6 +50,14 @@ data class AppSettings(
     val searchSources: Boolean = true,
     val searchProvider: SearchProvider = SearchProvider.EXA,
     val languageHint: String = "",
+    /**
+     * Remember durable facts about the user between chats. The facts are stored
+     * in the app's own database, ranked on the device and injected as prompt
+     * text; no extra model or service is involved.
+     */
+    val memoryEnabled: Boolean = true,
+    /** Attach the most relevant remembered facts to typed turns. */
+    val memoryPerTurn: Boolean = true,
     val priceInputPerMillion: Double = 0.0,
     val priceOutputPerMillion: Double = 0.0,
     /** Hand a hard turn to a stronger reasoning model instead of answering shallowly. */
@@ -110,6 +118,8 @@ class SettingsRepository(private val context: Context) {
                 SearchProvider.entries.firstOrNull { it.name == stored }
             } ?: defaults.searchProvider,
             languageHint = prefs[Keys.languageHint] ?: defaults.languageHint,
+            memoryEnabled = prefs[Keys.memoryEnabled] ?: defaults.memoryEnabled,
+            memoryPerTurn = prefs[Keys.memoryPerTurn] ?: defaults.memoryPerTurn,
             priceInputPerMillion = prefs[Keys.priceIn] ?: defaults.priceInputPerMillion,
             priceOutputPerMillion = prefs[Keys.priceOut] ?: defaults.priceOutputPerMillion,
             handoffEnabled = prefs[Keys.handoffEnabled] ?: defaults.handoffEnabled,
@@ -172,6 +182,22 @@ class SettingsRepository(private val context: Context) {
                 prefs[Keys.debugCategories] = stored + LogCategory.HANDOFF.name
             }
             prefs[Keys.handoffLogMigrated] = true
+        }
+    }
+
+    /**
+     * Installs that stored their debug categories before the `MEMORY` category
+     * existed would silently drop memory logging, so add it once. Categories the
+     * user deselected stay deselected.
+     */
+    suspend fun applyMemoryLogMigration() {
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.memoryLogMigrated] == true) return@edit
+            val stored = prefs[Keys.debugCategories]
+            if (stored != null) {
+                prefs[Keys.debugCategories] = stored + LogCategory.MEMORY.name
+            }
+            prefs[Keys.memoryLogMigrated] = true
         }
     }
 
@@ -270,6 +296,8 @@ class SettingsRepository(private val context: Context) {
         prefs[Keys.searchSources] = s.searchSources
         prefs[Keys.searchProvider] = s.searchProvider.name
         prefs[Keys.languageHint] = s.languageHint
+        prefs[Keys.memoryEnabled] = s.memoryEnabled
+        prefs[Keys.memoryPerTurn] = s.memoryPerTurn
         prefs[Keys.priceIn] = s.priceInputPerMillion
         prefs[Keys.priceOut] = s.priceOutputPerMillion
         prefs[Keys.handoffEnabled] = s.handoffEnabled
@@ -311,6 +339,9 @@ class SettingsRepository(private val context: Context) {
         val searchSources = booleanPreferencesKey("search_sources")
         val searchProvider = stringPreferencesKey("search_provider")
         val languageHint = stringPreferencesKey("language_hint")
+        val memoryEnabled = booleanPreferencesKey("memory_enabled")
+        val memoryPerTurn = booleanPreferencesKey("memory_per_turn")
+        val memoryLogMigrated = booleanPreferencesKey("memory_log_migrated")
         val priceIn = doublePreferencesKey("price_input_per_million")
         val priceOut = doublePreferencesKey("price_output_per_million")
         val handoffEnabled = booleanPreferencesKey("handoff_enabled")

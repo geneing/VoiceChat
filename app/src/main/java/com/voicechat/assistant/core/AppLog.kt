@@ -19,6 +19,7 @@ enum class LogCategory {
     AUDIO,
     TOOLS,
     HANDOFF,
+    MEMORY,
     SESSION,
     COST,
     UI,

@@ -43,3 +43,29 @@ data class MessageEntity(
     val ttftMs: Long = -1,
     val costUsd: Double = 0.0,
 )
+
+/**
+ * One remembered fact about the user.
+ *
+ * Deliberately plain: no foreign key, so deleting a chat never deletes what was
+ * learned from it, and no vector column, because the whole table is small enough
+ * to rank with a single lexical pass in memory.
+ */
+@Entity(
+    tableName = "memory_facts",
+    indices = [Index(value = ["kind", "subject"], unique = true)],
+)
+data class MemoryFactEntity(
+    @PrimaryKey val id: String,
+    val kind: String,
+    val subject: String,
+    val text: String,
+    val keywords: String = "",
+    val confidence: Float = 0.6f,
+    val pinned: Boolean = false,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val lastUsedAt: Long = 0L,
+    val useCount: Int = 0,
+    val sourceChatId: String? = null,
+)

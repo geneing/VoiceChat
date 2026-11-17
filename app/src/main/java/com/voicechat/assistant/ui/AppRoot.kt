@@ -56,11 +56,12 @@ import com.voicechat.assistant.ui.chat.ChatScreen
 import com.voicechat.assistant.ui.chat.ConnectionDot
 import com.voicechat.assistant.ui.drawer.ChatDrawer
 import com.voicechat.assistant.ui.logs.LogsScreen
+import com.voicechat.assistant.ui.memory.MemoryScreen
 import com.voicechat.assistant.ui.metrics.UsageDialog
 import com.voicechat.assistant.ui.settings.SettingsScreen
 import kotlinx.coroutines.launch
 
-private enum class Route { CHAT, SETTINGS, LOGS }
+private enum class Route { CHAT, SETTINGS, LOGS, MEMORY }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -256,9 +257,15 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                         ),
                     )
 
-                    Route.SETTINGS, Route.LOGS -> CenterAlignedTopAppBar(
+                    Route.SETTINGS, Route.LOGS, Route.MEMORY -> CenterAlignedTopAppBar(
                         title = {
-                            Text(if (route == Route.SETTINGS) "Settings" else "Debug logs")
+                            Text(
+                                when (route) {
+                                    Route.SETTINGS -> "Settings"
+                                    Route.MEMORY -> "Memory"
+                                    else -> "Debug logs"
+                                },
+                            )
                         },
                         navigationIcon = {
                             IconButton(onClick = { routeName = Route.CHAT.name }) {
@@ -288,7 +295,10 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                         viewModel = viewModel,
                         onOpenLogs = { routeName = Route.LOGS.name },
                         onOpenUsage = { showUsage = true },
+                        onOpenMemory = { routeName = Route.MEMORY.name },
                     )
+
+                    Route.MEMORY -> MemoryScreen(viewModel = viewModel)
 
                     Route.LOGS -> LogsScreen()
                 }

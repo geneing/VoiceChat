@@ -71,6 +71,7 @@ fun SettingsScreen(
     viewModel: AppViewModel,
     onOpenLogs: () -> Unit,
     onOpenUsage: () -> Unit,
+    onOpenMemory: () -> Unit,
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val usage by viewModel.usageTotals.collectAsStateWithLifecycle()
@@ -473,6 +474,43 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+
+        item {
+            SettingsSection("Memory", "What the assistant remembers about you") {
+                SwitchSetting(
+                    title = "Remember facts between chats",
+                    subtitle = "Your name, home, preferences, people, routines and projects " +
+                        "are learned on the device and reused later. No model runs locally; " +
+                        "nothing is uploaded as memory.",
+                    checked = settings.memoryEnabled,
+                    onCheckedChange = { value ->
+                        viewModel.updateSettings { it.copy(memoryEnabled = value) }
+                    },
+                )
+                SwitchSetting(
+                    title = "Use memory in typed turns",
+                    subtitle = "The few facts relevant to a typed message ride along with it. " +
+                        "Voice turns use the session context and the recall_memory tool, " +
+                        "because the server transcribes what you say.",
+                    checked = settings.memoryPerTurn,
+                    enabled = settings.memoryEnabled,
+                    onCheckedChange = { value ->
+                        viewModel.updateSettings { it.copy(memoryPerTurn = value) }
+                    },
+                )
+                Text(
+                    "Facts are stored in the app's database and never sent anywhere as a " +
+                        "collection. The ones used in a turn travel to the model as prompt " +
+                        "text; passwords, keys and card numbers are never stored.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onOpenMemory) { Text("Manage memory") }
+                    OutlinedButton(onClick = viewModel::clearMemory) { Text("Erase all") }
+                }
             }
         }
 

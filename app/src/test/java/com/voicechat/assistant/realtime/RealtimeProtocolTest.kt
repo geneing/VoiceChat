@@ -263,6 +263,50 @@ class SessionPayloadsTest {
     }
 
     @Test
+    fun `remembered facts ride in the instructions before the date`() {
+        val json = SessionPayloads.sessionUpdate(
+            config,
+            memoryBlock = "What you remember about the user:\n- The user lives in Berlin.",
+        )
+
+        assertTrue(json.contains("The user lives in Berlin."))
+        assertTrue(
+            json.indexOf("The user lives in Berlin.") < json.indexOf("Today is"),
+        )
+    }
+
+    @Test
+    fun `memory tools are offered with required arguments`() {
+        val json = SessionPayloads.sessionUpdate(
+            config.copy(
+                toolsJson = ToolDefinitions.json(
+                    includeWebSearch = true,
+                    includeMemory = true,
+                ),
+            ),
+        )
+
+        assertTrue(json.contains("recall_memory"))
+        assertTrue(json.contains("remember_fact"))
+        assertTrue(json.contains("forget_fact"))
+        assertTrue(json.contains("\"required\":[\"fact\"]"))
+        assertTrue(json.contains("\"required\":[\"query\"]"))
+        assertTrue(json.contains("Device memory:"))
+        assertTrue(json.contains("never a password, key or card number"))
+    }
+
+    @Test
+    fun `memory tools and instructions stay out when memory is off`() {
+        val json = SessionPayloads.sessionUpdate(
+            config.copy(toolsJson = ToolDefinitions.json(includeWebSearch = true)),
+        )
+
+        assertTrue(!json.contains("recall_memory"))
+        assertTrue(!json.contains("remember_fact"))
+        assertTrue(!json.contains("Device memory:"))
+    }
+
+    @Test
     fun `tool sessions forbid ending a turn on a promise`() {
         val json = SessionPayloads.sessionUpdate(
             config.copy(toolsJson = ToolDefinitions.json(includeWebSearch = true)),

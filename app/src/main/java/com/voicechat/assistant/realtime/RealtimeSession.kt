@@ -107,6 +107,16 @@ class RealtimeSession(
     private val listener: SessionListener,
     /** Consulted for `deep_reasoning`; `null` disables the handoff entirely. */
     private val reasoner: ReasoningClient? = null,
+    /**
+     * The facts remembered from earlier chats, read once when a session opens.
+     *
+     * A lambda rather than a field in [SessionConfig]: memory changes while a
+     * conversation runs (a `remember_fact` call writes a row), and a changing
+     * config would make `ensureSession` restart the session and lose its
+     * context. Refresh happens on the next open, which is also when the server
+     * conversation is new anyway.
+     */
+    private val memory: suspend () -> String = { "" },
 ) {
 
     private val _state = MutableStateFlow(SessionUiState())
@@ -323,7 +333,8 @@ class RealtimeSession(
                 instructions = SessionPayloads.resumeInstructions(config.instructions, transcript.toList()),
             )
         }
-        if (!newTransport.send(SessionPayloads.sessionUpdate(payloadConfig))) {
+        val memoryBlock = readMemory()
+        if (!newTransport.send(SessionPayloads.sessionUpdate(payloadConfig, memoryBlock = memoryBlock))) {
             AppLog.warn(LogCategory.SESSION, "session.update could not be sent")
         }
         _state.update {
@@ -346,6 +357,19 @@ class RealtimeSession(
                 "restoredTurns=${transcript.size} tools=${toolNames(config.toolsJson)}",
         )
         return Result.success(Unit)
+    }
+
+    /**
+     * Memory is optional context: a database problem must never stop a session
+     * from opening.
+     */
+    private suspend fun readMemory(): String = try {
+        memory()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        AppLog.warn(LogCategory.MEMORY, "Could not read device memory", e.message)
+        ""
     }
 
     private fun attachCollectors(newTransport: RealtimeTransport) {

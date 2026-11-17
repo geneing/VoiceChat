@@ -26,6 +26,7 @@ class VoiceChatApp : Application() {
             container.settings.applyPromptMigration()
             container.settings.applySearchDefaultMigration()
             container.settings.applyHandoffLogMigration()
+            container.settings.applyMemoryLogMigration()
             container.settings.applyConversationDefaultsMigration()
         }
     }

@@ -96,6 +96,9 @@ app/src/main/java/com/voicechat/assistant/
     repo/                    ChatRepository (chats, messages, titles)
     attachments/             AttachmentManager (copy, scale, base64, text)
     model/                   UI/domain models, attachments, metrics
+  memory/                    MemoryStore (CRUD, caps), MemoryExtractor (rules),
+                             MemoryRanker (lexical scoring), MemoryPrompt (blocks,
+                             tool JSON), MemoryGuard (sanitize, redact)
   realtime/
     SessionConfig.kt         endpoint + config snapshot
     SessionPayloads.kt       client → server JSON builders (pure)
@@ -389,6 +392,57 @@ array; `ModelInfo.resolveNativeSearch` already falls back to the client
 `web_search` in that case, so enabling the handoff keeps working instead of
 silently never firing.
 
+## Device memory
+
+The assistant remembers durable facts about the user between chats: name, home,
+preferences and dislikes, allergies, people, places, routines, projects and
+anything the user explicitly asked to remember. Memory is a **device** feature —
+SQLite rows plus string work in `memory/`. No model runs locally, no embedding is
+computed, no vector runtime is bundled, and nothing is uploaded as a collection.
+The facts that a turn uses do travel to the vendor as prompt text, exactly like
+the system prompt; say that plainly in Settings rather than calling the feature
+"private".
+
+- **Storage**: Room table `memory_facts` (`AppDatabase` v2, `MIGRATION_1_2`).
+  Never bump the version without a migration: `fallbackToDestructiveMigration`
+  would wipe every chat. There is no FTS table on purpose — a few hundred rows
+  are ranked in one pass, which also handles scripts written without spaces.
+- **Extraction** (`MemoryExtractor`, pure): narrow regex families run over each
+  final user turn — typed or the server's voice transcript — in `AppViewModel`
+  and, off the turn path, in `MemoryStore.learn`. `cleanValue` stops a capture at
+  the first conjunction (speech has no punctuation), rejects pronoun objects
+  ("I like that idea"), and `MemoryGuard` refuses secrets, card numbers and
+  paragraphs. Facts dedupe on `kind:subject`, so saying the same thing twice
+  updates the row; preference polarity lives in the subject (`likes:` /
+  `dislikes:` / `allergy:`), so changing your mind does not leave both behind.
+- **Ranking** (`MemoryRanker`): token IDF over the corpus with a pinned boost,
+  a 30-day recency half-life and a use-count term. Stopwords plus the "user"
+  word itself keep generic text from matching. CJK tokens are bigrammed. There is
+  no absolute score floor — one real word hit is signal in a small corpus, and
+  the block size is the cap.
+- **Injection**: `SessionPayloads.sessionUpdate(…, memoryBlock = …)` appends the
+  standing block after the prompt and before the date/tool rules. It is read by a
+  lambda passed to `RealtimeSession`, deliberately not carried in `SessionConfig`:
+  a `remember_fact` call during a conversation changes memory, and a changing
+  config would make `ensureSession` restart the session and drop its context.
+  Refresh happens on the next open or reconnect.
+- **Typed turns** also carry the top matching facts in the same user item
+  (`MemoryPrompt.withTurnContext`). Voice turns cannot: the server transcribes
+  them, so they rely on the session block and the `recall_memory` tool.
+- **Tools**: `recall_memory`, `remember_fact`, `forget_fact` in
+  `ToolDefinitions`/`ToolRegistry`, gated on the memory setting *and* client tools.
+  Their instructions live in `SessionPayloads` and are gated on the schema's own
+  name, like weather and location. Every schema carries a `required` array.
+- **Caps**: 400 facts (`MemoryStore.MAX_FACTS`, least used unpinned pruned first),
+  12 facts / 700 chars in the session block, 4 facts / 340 chars per turn.
+- **Settings**: `memoryEnabled` (learn, inject, tools) and `memoryPerTurn` (typed
+  turns only). `memoryEnabled` is in `sessionKey()`, so switching it restarts the
+  session; `memoryPerTurn` is read per turn. The Memory screen lists facts with
+  edit, delete and erase-all.
+- **Failures are never fatal**: a read or lookup error logs under `MEMORY` and
+  yields an empty block; learning is fire-and-forget on `Dispatchers.IO` so it can
+  never delay a reply. Cancellation propagates.
+
 ## On-device voice gate
 
 Android exposes no public VAD API, so `realtime/audio/SpeechGate` derives speech
@@ -609,8 +663,9 @@ recovers on its own instead of ending the chat:
 - Settings: connection (transport, model, voice, workspace host, API key),
   conversation (system prompt + presets, preferred language, VAD, on-device
   voice gate + trigger, transcription, client tools + native search),
-  deep reasoning (model, budget, timeout, context, speculative voice),
-  metrics/cost rates, debug categories + log viewer.
+  memory (remember between chats, use in typed turns, manage/erase), deep
+  reasoning (model, budget, timeout, context, speculative voice), metrics/cost
+  rates, debug categories + log viewer.
 - Keep strings in `res/values/strings.xml` when reused; UI copy may also be
   inline for one-off labels. No hard-coded colours outside the theme.
 
@@ -635,9 +690,10 @@ events and redaction), URL/session-config building, cost/TTFT math, tool
 argument handling, text-turn vs voice-turn modality policy, the handoff request
 shape (`Authorization`, thinking mode per model), the speculative warm-call
 lifecycle, the news section mapping and recency window, result-date parsing,
-and the `SpeechGate` state machine (silence dropped, pre-roll flushed, tail
-silence, adaptive floor, disabled pass-through). UI tests are not required;
-verify screens on the emulator with `adb` screenshots.
+memory extraction/dedupe/secret rejection, memory ranking and block caps, and the
+`SpeechGate` state machine (silence dropped, pre-roll flushed, tail silence,
+adaptive floor, disabled pass-through). UI tests are not required; verify screens
+on the emulator with `adb` screenshots.
 
 ## Known limitations / roadmap
 
@@ -655,4 +711,10 @@ verify screens on the emulator with `adb` screenshots.
 - No wake word or background/locked-screen service: voice mode keeps the screen
   awake instead (see "Connection resilience").
 - The on-device voice gate only covers the WebSocket transport.
+- Memory extraction is rule-based, so a fact stated in an unusual paraphrase is
+  missed (it is never wrong, which matters more: a bad fact is injected into
+  every later session). A batched text-model pass over a finished chat is the
+  next step, not a per-turn one.
+- Voice turns get the session block and `recall_memory`, not a per-turn memory
+  block: the server transcribes them, so the app cannot extend the user item.
 - No release signing, by design.

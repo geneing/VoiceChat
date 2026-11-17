@@ -24,6 +24,8 @@ import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.model.TurnMetrics
 import com.voicechat.assistant.data.model.UsageTotals
 import com.voicechat.assistant.data.prefs.AppSettings
+import com.voicechat.assistant.memory.MemoryFact
+import com.voicechat.assistant.memory.MemoryPrompt
 import com.voicechat.assistant.realtime.NewsConfig
 import com.voicechat.assistant.realtime.RealtimeSession
 import com.voicechat.assistant.realtime.SessionConfig
@@ -84,6 +86,11 @@ class AppViewModel(application: Application) :
         .stateIn(scope, SharingStarted.Eagerly, UsageTotals())
 
     val chats: StateFlow<List<Chat>> = container.chats.chats
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /** Facts remembered across chats, newest first for the memory screen. */
+    val memoryFacts: StateFlow<List<MemoryFact>> = container.memory.facts
+        .map { facts -> facts.sortedByDescending { it.updatedAt } }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val _currentChatId = MutableStateFlow<String?>(null)
@@ -175,6 +182,11 @@ class AppViewModel(application: Application) :
         tools = container.tools,
         listener = this,
         reasoner = container.reasoner,
+        memory = {
+            // Read at open time, so a fact learned during this conversation
+            // reaches the next session instead of restarting this one.
+            if (settings.value.memoryEnabled) container.memory.sessionBlock() else ""
+        },
     )
 
     val sessionState: StateFlow<SessionUiState> = session.state
@@ -293,6 +305,7 @@ class AppViewModel(application: Application) :
                 ),
             )
             _pendingAttachments.value = emptyList()
+            learnFromUserTurn(typed, chatId)
             val config = buildConfig()
             if (config.apiKey.isBlank()) {
                 _uiEvents.tryEmit("Add your Qwen API key in Settings first.")
@@ -316,7 +329,14 @@ class AppViewModel(application: Application) :
                 config = config.handoff,
                 documentAttached = attachments.any { it.kind == AttachmentKind.DOCUMENT },
             )
-            session.sendText(prepared.sentText, prepared.images, deepReasoning)
+            session.sendText(
+                text = MemoryPrompt.withTurnContext(
+                    prepared.sentText,
+                    relevantMemory(prepared.sentText),
+                ),
+                images = prepared.images,
+                deepReasoning = deepReasoning,
+            )
                 .onFailure { error ->
                     if (error !is CancellationException) {
                         _uiEvents.tryEmit("Could not send the message: ${error.message}")
@@ -499,6 +519,29 @@ class AppViewModel(application: Application) :
         }
     }
 
+    // ---- Memory ------------------------------------------------------------
+
+    fun deleteMemory(fact: MemoryFact) {
+        scope.launch {
+            container.memory.delete(fact.id)
+            _uiEvents.tryEmit("Fact forgotten.")
+        }
+    }
+
+    fun updateMemory(fact: MemoryFact, text: String) {
+        scope.launch {
+            container.memory.update(fact.id, text)
+            _uiEvents.tryEmit("Fact updated.")
+        }
+    }
+
+    fun clearMemory() {
+        scope.launch {
+            container.memory.clear()
+            _uiEvents.tryEmit("Memory erased.")
+        }
+    }
+
     fun clearLogs() = AppLog.clear()
 
     fun exportLogs(): String = AppLog.export()
@@ -525,6 +568,7 @@ class AppViewModel(application: Application) :
                     streaming = false,
                 ),
             )
+            learnFromUserTurn(text, chatId)
         }
     }
 
@@ -659,6 +703,45 @@ class AppViewModel(application: Application) :
         return id
     }
 
+    /**
+     * Facts worth attaching to one typed turn. Empty when memory is off, the
+     * per-turn block is disabled, nothing matches, or the database fails: a
+     * failed lookup must never cost the user their message.
+     *
+     * Voice turns cannot be extended this way — the server transcribes them — so
+     * they rely on the session block and the `recall_memory` tool instead.
+     */
+    private suspend fun relevantMemory(text: String): String {
+        val current = settings.value
+        if (!current.memoryEnabled || !current.memoryPerTurn || text.isBlank()) return ""
+        return try {
+            container.memory.turnBlock(text)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLog.warn(LogCategory.MEMORY, "Memory lookup failed", e.message)
+            ""
+        }
+    }
+
+    /**
+     * Learns from a user turn on the device. Fire and forget: extraction is
+     * regex work on one sentence, but it still runs off the turn so it can never
+     * delay a reply.
+     */
+    private fun learnFromUserTurn(text: String, chatId: String?) {
+        if (text.isBlank() || !settings.value.memoryEnabled) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                container.memory.learn(text, chatId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLog.warn(LogCategory.MEMORY, "Could not learn from a turn", e.message)
+            }
+        }
+    }
+
     private suspend fun ensureSession(config: SessionConfig): Result<Unit> {
         val state = session.state.value
         val current = session.currentConfig()
@@ -714,6 +797,7 @@ class AppViewModel(application: Application) :
                 container.tools.definitions(
                     includeWebSearch = !nativeSearch,
                     includeHandoff = handoff != null,
+                    includeMemory = current.memoryEnabled,
                 )
             } else {
                 null
@@ -846,4 +930,5 @@ private fun AppSettings.sessionKey(): List<Any> = listOf(
     searchSources,
     searchProvider,
     languageHint,
+    memoryEnabled,
 )

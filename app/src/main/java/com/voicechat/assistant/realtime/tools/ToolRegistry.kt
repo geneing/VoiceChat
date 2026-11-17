@@ -12,6 +12,9 @@ import com.voicechat.assistant.BuildConfig
 import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.data.model.SearchProvider
+import com.voicechat.assistant.memory.MemoryKind
+import com.voicechat.assistant.memory.MemoryPrompt
+import com.voicechat.assistant.memory.MemoryStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -53,6 +56,7 @@ class ToolRegistry(
     private val context: Context,
     private val httpClient: OkHttpClient,
     private val exaApiKey: String = BuildConfig.EXA_API_KEY,
+    private val memory: MemoryStore? = null,
 ) {
 
     private val json = Json { prettyPrint = false }
@@ -91,10 +95,15 @@ class ToolRegistry(
         const val MAX_LOCATION_AGE_MS = 120_000L
         const val NEWS_SNIPPET_CHARS = 140
         const val NEWS_CACHE_TTL_MS = 10 * 60_000L
+        const val RECALL_TOOL_LIMIT = 6
+        const val NO_MEMORY = "Device memory is not available in this session."
     }
 
-    fun definitions(includeWebSearch: Boolean, includeHandoff: Boolean = false): String =
-        ToolDefinitions.json(includeWebSearch, includeHandoff)
+    fun definitions(
+        includeWebSearch: Boolean,
+        includeHandoff: Boolean = false,
+        includeMemory: Boolean = false,
+    ): String = ToolDefinitions.json(includeWebSearch, includeHandoff, includeMemory)
 
     val definitionsJson: String get() = ToolDefinitions.all
 
@@ -110,6 +119,9 @@ class ToolRegistry(
                 "get_location" -> location()
                 "get_weather" -> weather()
                 "web_search" -> webSearch(argumentsJson, searchProvider)
+                ToolDefinitions.RECALL_NAME -> recallMemory(argumentsJson)
+                ToolDefinitions.REMEMBER_NAME -> rememberFact(argumentsJson)
+                ToolDefinitions.FORGET_NAME -> forgetFact(argumentsJson)
                 else -> errorResult("Unknown tool: $name")
             }
         }.getOrElse { error ->
@@ -118,6 +130,46 @@ class ToolRegistry(
         AppLog.info(LogCategory.TOOLS, "Tool result: $name", result.take(600))
         result
     }
+
+    /**
+     * Device memory tools. They run against the local database only: the model
+     * asks in words, the app ranks the stored facts and answers with JSON.
+     */
+    private suspend fun recallMemory(argumentsJson: String): String {
+        val store = memory ?: return MemoryPrompt.error(NO_MEMORY)
+        val query = argument(argumentsJson, "query")
+        if (query.isBlank()) return MemoryPrompt.error("A query is required.")
+        return MemoryPrompt.recallResult(store.recall(query, RECALL_TOOL_LIMIT), query)
+    }
+
+    private suspend fun rememberFact(argumentsJson: String): String {
+        val store = memory ?: return MemoryPrompt.error(NO_MEMORY)
+        val fact = argument(argumentsJson, "fact")
+        if (fact.isBlank()) return MemoryPrompt.error("The fact is required.")
+        val kind = argument(argumentsJson, "kind").takeIf { it.isNotBlank() }?.let { requested ->
+            MemoryKind.entries.firstOrNull { it.name.equals(requested, ignoreCase = true) }
+        }
+        val stored = store.remember(fact, kind, chatId = null)
+            ?: return MemoryPrompt.error(
+                "That was not stored: it looks like a credential, an identifier or a " +
+                    "paragraph. Keep facts short and free of secrets.",
+            )
+        return MemoryPrompt.rememberResult(stored)
+    }
+
+    private suspend fun forgetFact(argumentsJson: String): String {
+        val store = memory ?: return MemoryPrompt.error(NO_MEMORY)
+        val query = argument(argumentsJson, "query")
+        if (query.isBlank()) return MemoryPrompt.error("A query is required.")
+        val forgotten = store.forget(query)
+            ?: return MemoryPrompt.error("No stored fact matches that.")
+        return MemoryPrompt.forgetResult(forgotten)
+    }
+
+    /** One string argument from a tool call, tolerant of a missing or malformed body. */
+    private fun argument(argumentsJson: String, name: String): String = runCatching {
+        json.parseToJsonElement(argumentsJson).jsonObject[name]?.jsonPrimitive?.content
+    }.getOrNull().orEmpty().trim()
 
     private fun currentDateTime(argumentsJson: String): String {
         val requested = runCatching {

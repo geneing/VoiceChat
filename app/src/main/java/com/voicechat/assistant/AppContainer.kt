@@ -5,6 +5,7 @@ import com.voicechat.assistant.data.attachments.AttachmentManager
 import com.voicechat.assistant.data.db.AppDatabase
 import com.voicechat.assistant.data.prefs.SettingsRepository
 import com.voicechat.assistant.data.repo.ChatRepository
+import com.voicechat.assistant.memory.MemoryStore
 import com.voicechat.assistant.realtime.RealtimeTransport
 import com.voicechat.assistant.realtime.aoq.AoqTransport
 import com.voicechat.assistant.realtime.handoff.ReasoningClient
@@ -29,6 +30,9 @@ class AppContainer(context: Context) {
 
     val attachments: AttachmentManager by lazy { AttachmentManager(appContext) }
 
+    /** Facts the assistant remembers between chats, stored in the same database. */
+    val memory: MemoryStore by lazy { MemoryStore(database.memoryDao()) }
+
     private val apiClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
@@ -48,7 +52,7 @@ class AppContainer(context: Context) {
             .build()
     }
 
-    val tools: ToolRegistry by lazy { ToolRegistry(appContext, apiClient) }
+    val tools: ToolRegistry by lazy { ToolRegistry(appContext, apiClient, memory = memory) }
 
     /** Higher-reasoning text model consulted for hard turns. */
     val reasoner: ReasoningClient by lazy { ReasoningClient(apiClient) }
