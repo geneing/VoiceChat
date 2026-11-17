@@ -409,9 +409,8 @@ class ToolRegistry(
 
     /**
      * Dated world, market and AI items for the news digest, fetched in parallel.
-     * The digest model receives this as its only source of facts when the news
-     * search mode is [com.voicechat.assistant.data.model.NewsSearchMode.APP],
-     * and the realtime model falls back to it when the digest model fails.
+     * The digest model receives these as its only source of facts, and the
+     * realtime model falls back to them when the digest fails.
      * Repeated asks within [NEWS_CACHE_TTL_MS] reuse a section.
      */
     suspend fun newsReference(provider: SearchProvider): String {

@@ -115,11 +115,12 @@ object ToolDefinitions {
             put("name", "get_news")
             put(
                 "description",
-                "Get today's news digest: the top world stories, today's market " +
-                    "conditions with what moved them, and five technical AI items " +
-                    "(model releases, research papers, open-source models, library " +
-                    "changes). Call this once for any request about the news, headlines, " +
-                    "what happened today or the market.",
+                "Get today's news digest: the most impactful world news, the most " +
+                    "impactful US and world market news (indices, bonds, technology and " +
+                    "the trends behind them), and a longer AI section (papers, model " +
+                    "releases, open-source models, library changes). Call this once for " +
+                    "any request about the news, headlines, what happened today or the " +
+                    "market.",
             )
             putJsonObject("parameters") {
                 put("type", "object")

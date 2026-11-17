@@ -32,10 +32,9 @@ Voice input ──► Qwen realtime session ──► spoken answer + live trans
   the realtime API ignores server-side `speech_rate` hints, `AudioTrack`
   rejects playback-rate changes on this device, and a live AOQ/WebRTC stream
   cannot be time-stretched locally without starving.
-- **News digest** — `get_news` has the large text model write today's world,
+- **News digest** - `get_news` has the large text model write today's world,
   market and AI digest from dated search results (Exa news search, Brave News,
-  DuckDuckGo freshness), then the realtime model reads it out. A setting picks
-  whether the app searches, the model searches itself, or neither.
+  DuckDuckGo freshness), then the realtime model reads it out.
 - **Text mode** — type in the same session; sending stops the microphone,
   answers are requested as text and audio is suppressed even if the server
   streams it. Voice only resumes from the sound-wave button.

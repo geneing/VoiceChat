@@ -100,8 +100,8 @@ object SessionPayloads {
                         "headlines, what happened today or the market, before answering. " +
                         "Never answer news from memory" +
                         (if (hasWebSearch) " and never use web_search for it" else "") +
-                        ". It returns a digest with the world stories first, then the " +
-                        "market conditions and the AI items; read it as the answer, keep " +
+                        ". It returns a digest with the world news first, then the market " +
+                        "news and a longer AI section; read it as the answer, keep " +
                         "its dates, do not add stories of your own, and say plainly when " +
                         "the digest says a section was empty. The digest takes several " +
                         "seconds, so put one short spoken opener in the same response as " +

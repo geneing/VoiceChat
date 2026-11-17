@@ -19,7 +19,6 @@ import com.voicechat.assistant.data.model.ConversationStats
 import com.voicechat.assistant.data.model.Message
 import com.voicechat.assistant.data.model.MessageKind
 import com.voicechat.assistant.data.model.MessageRole
-import com.voicechat.assistant.data.model.NewsSearchMode
 import com.voicechat.assistant.data.model.TokenUsage
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.model.TurnMetrics
@@ -302,9 +301,7 @@ class AppViewModel(application: Application) :
             // Warm the news sections while the realtime model reads the turn and
             // decides to call get_news; the searches then cost nothing at tool
             // time. Same idea as the voice-side prefetch in RealtimeSession.
-            if (config.news?.search == NewsSearchMode.APP &&
-                SearchRecency.isNewsQuery(prepared.sentText)
-            ) {
+            if (config.news != null && SearchRecency.isNewsQuery(prepared.sentText)) {
                 launch(Dispatchers.IO) { container.tools.warmNews(config.searchProvider) }
             }
             val result = ensureSession(config)
@@ -776,7 +773,6 @@ class AppViewModel(application: Application) :
                 priceInputPerMillion = current.handoffPriceInputPerMillion,
                 priceOutputPerMillion = current.handoffPriceOutputPerMillion,
             ),
-            search = current.newsSearch,
         )
     }
 

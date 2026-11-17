@@ -278,18 +278,19 @@ Function calling: tool results go back as
   today", markets "stock market today … what moved the market", AI releases and
   papers; Exa `category=news` + `startPublishedDate` two days + `livecrawl`,
   Brave `/res/v1/news/search?freshness=pd`, DuckDuckGo `df=d`), and the reasoning
-  model writes one speak-ready digest (`NewsPrompt`) that the realtime model only
-  reads out. `NewsSearchMode` decides the facts: `APP` (default; the model gets
-  the app's dated items), `MODEL` (the request carries `enable_search` +
-  `search_options.forced_search`, so the vendor searches; verified on
-  `qwen-plus`, ignored by `qwen3.8-flash`, so a refusal
-  (`NewsPrompt.looksUnverified`) retries once with the app search) or `OFF`.
+  model writes one speak-ready digest (`NewsPrompt`: most impactful world news
+  in 5-6 sentences, US/world markets with bonds and technology trends in 5-6
+  sentences, then 2-3 AI paragraphs) that the realtime model only reads out.
+  There is no news-search setting: the app's dated items are always the facts,
+  and the vendor's own `enable_search` is not used (DashScope rejects the
+  OpenRouter `plugins` shape and only some models honour the flag).
   Every call is billed through `billReasoning`; a digest failure falls back to
   handing the raw dated items to the realtime model, so news still answers.
-  Sections are cached for 10 minutes and warmed from a news-like transcript (and
-  from a typed news turn in `AppViewModel`), so the searches cost nothing at tool
-  time. Do not stage this into one call per section: three tool calls in a turn
-  produced garbled audio and no earlier speech.
+  Sections are cached for 10 minutes, fetched at most once at a time (prefetch
+  and tool call share the query) and warmed from a news-like transcript (and
+  from a typed news turn in `AppViewModel`). Do not stage this into one call per
+  section: three tool calls in a turn produced garbled audio and no earlier
+  speech.
 - `web_search` still covers everything that is not news (prices, products,
   people, schedules, events). `searchExa` livecrawls and, when `SearchRecency`
   recognises a news-ish query ("news", "today", "latest", "this weekend", …),

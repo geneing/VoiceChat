@@ -73,12 +73,11 @@ class ReasoningClient(
         apiKey: String,
         config: HandoffConfig,
         messages: List<HandoffPrompt.Turn>,
-        nativeSearch: Boolean = false,
     ): Request = Request.Builder()
         .url(completionsUrl())
         .header("Authorization", "Bearer $apiKey")
         .post(
-            HandoffPrompt.requestBody(config, messages, nativeSearch)
+            HandoffPrompt.requestBody(config, messages)
                 .toRequestBody("application/json; charset=utf-8".toMediaType()),
         )
         .build()
@@ -94,24 +93,22 @@ class ReasoningClient(
         onProgress: (Int) -> Unit = {},
     ): Result<ReasoningResult> {
         val messages = HandoffPrompt.messages(transcript, task, config.contextTurns, depth)
-        return stream(apiKey, config, messages, nativeSearch = false, sections = true, onProgress)
+        return stream(apiKey, config, messages, sections = true, onProgress)
     }
 
     /**
-     * One plain completion for the news digest: no handoff dossier, no
-     * `## Answer` sections, and optionally the vendor's own web search.
+     * One plain completion for the news digest: no handoff dossier and no
+     * `## Answer` sections, because the whole reply is the digest.
      */
     suspend fun complete(
         apiKey: String,
         config: HandoffConfig,
         system: String,
         user: String,
-        nativeSearch: Boolean,
     ): Result<ReasoningResult> = stream(
         apiKey = apiKey,
         config = config,
         messages = listOf(HandoffPrompt.Turn("system", system), HandoffPrompt.Turn("user", user)),
-        nativeSearch = nativeSearch,
         sections = false,
         onProgress = {},
     )
@@ -120,7 +117,6 @@ class ReasoningClient(
         apiKey: String,
         config: HandoffConfig,
         messages: List<HandoffPrompt.Turn>,
-        nativeSearch: Boolean,
         sections: Boolean,
         onProgress: (Int) -> Unit,
     ): Result<ReasoningResult> = withContext(Dispatchers.IO) {
@@ -132,7 +128,7 @@ class ReasoningClient(
         if (apiKey.isBlank()) {
             return@withContext Result.failure(HandoffException("API key is not configured."))
         }
-        val request = request(apiKey, config, messages, nativeSearch)
+        val request = request(apiKey, config, messages)
         val timeoutClient = client.newBuilder()
             .readTimeout(config.timeoutMs.toLong(), TimeUnit.MILLISECONDS)
             .callTimeout(config.timeoutMs.toLong(), TimeUnit.MILLISECONDS)

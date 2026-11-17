@@ -15,7 +15,6 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.core.PromptCatalog
 import com.voicechat.assistant.core.RealtimeDefaults
-import com.voicechat.assistant.data.model.NewsSearchMode
 import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.model.UsageTotals
@@ -50,8 +49,6 @@ data class AppSettings(
     val nativeSearch: Boolean = true,
     val searchSources: Boolean = true,
     val searchProvider: SearchProvider = SearchProvider.EXA,
-    /** Where the news digest gets its facts from. */
-    val newsSearch: NewsSearchMode = NewsSearchMode.APP,
     val languageHint: String = "",
     val priceInputPerMillion: Double = 0.0,
     val priceOutputPerMillion: Double = 0.0,
@@ -112,9 +109,6 @@ class SettingsRepository(private val context: Context) {
             searchProvider = prefs[Keys.searchProvider]?.let { stored ->
                 SearchProvider.entries.firstOrNull { it.name == stored }
             } ?: defaults.searchProvider,
-            newsSearch = prefs[Keys.newsSearch]?.let { stored ->
-                NewsSearchMode.entries.firstOrNull { it.name == stored }
-            } ?: defaults.newsSearch,
             languageHint = prefs[Keys.languageHint] ?: defaults.languageHint,
             priceInputPerMillion = prefs[Keys.priceIn] ?: defaults.priceInputPerMillion,
             priceOutputPerMillion = prefs[Keys.priceOut] ?: defaults.priceOutputPerMillion,
@@ -275,7 +269,6 @@ class SettingsRepository(private val context: Context) {
         prefs[Keys.nativeSearch] = s.nativeSearch
         prefs[Keys.searchSources] = s.searchSources
         prefs[Keys.searchProvider] = s.searchProvider.name
-        prefs[Keys.newsSearch] = s.newsSearch.name
         prefs[Keys.languageHint] = s.languageHint
         prefs[Keys.priceIn] = s.priceInputPerMillion
         prefs[Keys.priceOut] = s.priceOutputPerMillion
@@ -317,7 +310,6 @@ class SettingsRepository(private val context: Context) {
         val promptVersion = intPreferencesKey("prompt_catalog_version")
         val searchSources = booleanPreferencesKey("search_sources")
         val searchProvider = stringPreferencesKey("search_provider")
-        val newsSearch = stringPreferencesKey("news_search")
         val languageHint = stringPreferencesKey("language_hint")
         val priceIn = doublePreferencesKey("price_input_per_million")
         val priceOut = doublePreferencesKey("price_output_per_million")

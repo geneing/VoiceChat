@@ -4,7 +4,6 @@ import android.os.SystemClock
 import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.data.model.CostCalculator
-import com.voicechat.assistant.data.model.NewsSearchMode
 import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TokenUsage
 import com.voicechat.assistant.data.model.TransportKind
@@ -1296,81 +1295,26 @@ class RealtimeSession(
         AppLog.info(
             LogCategory.TOOLS,
             "News digest started",
-            "model=${news?.model?.resolvedModel ?: "none"} search=${news?.search ?: "none"}",
+            "model=${news?.model?.resolvedModel ?: "none"}",
         )
         newsJob = scope.launch {
             val today = LocalDate.now()
-            // The app search runs for APP mode, and lazily as the fallback when
-            // MODEL mode turns out not to search.
-            var reference: String? = null
-            suspend fun appReference(): String? {
-                if (reference == null && registry != null) {
-                    reference = runCatching { registry.newsReference(provider) }.getOrNull()
-                }
-                return reference
+            val reference = if (registry != null) {
+                runCatching { registry.newsReference(provider) }.getOrNull()
+            } else {
+                null
             }
             val result = if (news != null && reasonerClient != null) {
-                // Every call is billed where it returns, including the refused
-                // native-search attempt before the retry.
-                suspend fun digest(
-                    mode: NewsSearchMode,
-                    user: String,
-                    native: Boolean,
-                ): Result<ReasoningResult> {
-                    val attempt = reasonerClient.complete(
+                reasonerClient
+                    .complete(
                         apiKey = apiKey,
                         config = news.model,
-                        system = NewsPrompt.system(today, mode),
-                        user = user,
-                        nativeSearch = native,
+                        system = NewsPrompt.system(today),
+                        user = NewsPrompt.user(today, reference),
                     )
-                    if (attempt.isSuccess) billReasoning(news.model, attempt)
-                    return attempt
-                }
-                when (news.search) {
-                    NewsSearchMode.APP -> digest(
-                        NewsSearchMode.APP,
-                        NewsPrompt.user(today, appReference()),
-                        native = false,
-                    )
-                    NewsSearchMode.OFF -> digest(
-                        NewsSearchMode.OFF,
-                        NewsPrompt.user(today, null),
-                        native = false,
-                    )
-                    NewsSearchMode.MODEL -> {
-                        val first = digest(
-                            NewsSearchMode.MODEL,
-                            NewsPrompt.user(today, null),
-                            native = true,
-                        )
-                        val refused = first.getOrNull()?.let {
-                            NewsPrompt.looksUnverified(it.answer)
-                        } ?: true
-                        if (!refused) {
-                            first
-                        } else {
-                            // This model ignored the search flag and answered that
-                            // it has no live access; retry from the app's items.
-                            AppLog.warn(
-                                LogCategory.TOOLS,
-                                "News model did not search; retrying with app search",
-                                first.exceptionOrNull()?.message
-                                    ?: first.getOrNull()?.answer?.take(160),
-                            )
-                            val fallback = appReference()
-                            if (fallback == null) {
-                                first
-                            } else {
-                                digest(
-                                    NewsSearchMode.APP,
-                                    NewsPrompt.user(today, fallback),
-                                    native = false,
-                                )
-                            }
-                        }
+                    .also { attempt ->
+                        if (attempt.isSuccess) billReasoning(news.model, attempt)
                     }
-                }
             } else {
                 Result.failure(HandoffException("The news model is not configured."))
             }
@@ -1458,7 +1402,7 @@ class RealtimeSession(
     private fun prefetchNews(transcript: String) {
         val current = config ?: return
         val registry = tools ?: return
-        if (current.news?.search != NewsSearchMode.APP) return
+        if (current.news == null) return
         if (!SearchRecency.isNewsQuery(transcript)) return
         scope.launch(Dispatchers.IO) {
             registry.warmNews(current.searchProvider)

@@ -1,7 +1,6 @@
 package com.voicechat.assistant.realtime
 
 import com.voicechat.assistant.core.RealtimeDefaults
-import com.voicechat.assistant.data.model.NewsSearchMode
 import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.realtime.handoff.HandoffConfig
@@ -116,11 +115,10 @@ data class SessionConfig(
 }
 
 /**
- * How a news turn is composed: the large text model writes the digest, and
- * [search] decides where its facts come from (app search, the model's own web
- * search, or no search at all).
+ * How a news turn is composed: the large text model writes the digest, and the
+ * app's dated news items ([com.voicechat.assistant.realtime.tools.ToolRegistry])
+ * are the only source of facts.
  */
 data class NewsConfig(
     val model: HandoffConfig,
-    val search: NewsSearchMode = NewsSearchMode.APP,
 )
