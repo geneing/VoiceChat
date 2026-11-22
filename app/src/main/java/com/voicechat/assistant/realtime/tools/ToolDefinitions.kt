@@ -1,6 +1,8 @@
 package com.voicechat.assistant.realtime.tools
 
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -61,23 +63,84 @@ object ToolDefinitions {
         }
     }
 
-    private val weather = buildJsonObject {
+    private data class Field(
+        val name: String,
+        val description: String,
+        val type: String = "string",
+        val required: Boolean = false,
+    )
+
+    private fun tool(name: String, description: String, vararg fields: Field): JsonObject = buildJsonObject {
         put("type", "function")
         putJsonObject("function") {
-            put("name", "get_weather")
-            put(
-                "description",
-                "Get today's weather for the user's current location: temperature, " +
-                    "feels-like, humidity, wind, rain chance and the daily high/low. " +
-                    "Call this for any weather question instead of searching the web.",
-            )
+            put("name", name)
+            put("description", description)
             putJsonObject("parameters") {
                 put("type", "object")
-                putJsonObject("properties") {}
-                putJsonArray("required") {}
+                putJsonObject("properties") {
+                    fields.forEach { field ->
+                        putJsonObject(field.name) {
+                            put("type", field.type)
+                            put("description", field.description)
+                        }
+                    }
+                }
+                putJsonArray("required") { fields.filter { it.required }.forEach { add(it.name) } }
             }
         }
     }
+
+    private val weather = tool(
+        "get_weather", "Get current conditions or a forecast. Use for all weather questions.",
+        Field("location", "City or destination; omit for the phone's current location."),
+        Field("start", "today, tomorrow, or a local YYYY-MM-DD date. Default today."),
+        Field("days", "Number of forecast days beginning at start, e.g. 7 or 10.", "integer"),
+        Field("hour", "Optional local hour 0–23 for a single-day hourly request.", "integer"),
+    )
+
+    internal val drivingTools = listOf(
+        tool("find_nearby", "Find real places near the device. For 'what is nearby?' choose discovery.",
+            Field("category", "food, gas, park, hike, attraction, or discovery."),
+            Field("query", "Optional cuisine, business name, or other place filter."),
+            Field("open_now", "Require verified current opening status.", "boolean"),
+            Field("destination", "Optional destination to search along a driving route toward it."),
+        ),
+        tool("start_navigation", "Open driving directions in Maps only when the user asks.",
+            Field("destination", "Explicit destination name/address or exact place_id from find_nearby.", required = true),
+        ),
+        tool("get_trip_eta", "Estimate drive time from the device to a destination.",
+            Field("destination", "Explicit destination name/address or exact place_id from find_nearby.", required = true),
+        ),
+        tool("call_phone", "Place a cellular call only on an explicit user request. Ask any confirmation returned by the tool.",
+            Field("target", "Exact contact name, optionally ending in mobile, home or work, or a phone number.", required = true),
+        ),
+        tool("play_pocket_casts", "Open or control Pocket Casts. Find named or recent episodes in the catalog.",
+            Field("action", "open, resume, pause, next, skip_forward, skip_backward, find_episode, latest_episode, open_episode, or play_search.", required = true),
+            Field("query", "Show name for latest_episode; episode/topic for find_episode; name to ask Pocket Casts to play for play_search."),
+            Field("url", "Exact catalog result link for open_episode."),
+            Field("seconds", "Skip duration for skip_forward or skip_backward.", "integer"),
+        ),
+        tool("prepare_whatsapp_message", "Prepare a one-to-one WhatsApp draft for use when parked. WhatsApp requires a tap to send.",
+            Field("target", "Contact name or international phone number.", required = true),
+            Field("message", "The exact message the user wants to send.", required = true),
+        ),
+        tool("confirm_phone_action", "Complete a pending phone call or WhatsApp draft only after the user explicitly confirms on a later turn."),
+        tool("get_reddit_briefing", "Find recent dated Reddit discussions and summarize the themes with thread links.",
+            Field("topic", "Topic or community name; defaults to machine learning."),
+            Field("communities", "Optional comma-separated subreddit names. For ML defaults to MachineLearning, LocalLLaMA and StableDiffusion."),
+            Field("days", "Lookback in days; default 7, use 1 for today or the last day.", "integer"),
+        ),
+        tool("save_for_later", "Save a local note, link, place or recap, or list recent saved items.",
+            Field("action", "save or list.", required = true),
+            Field("title", "Short label for the thing to save."),
+            Field("note", "Note or recap to save, using the current conversation."),
+            Field("url", "Original HTTPS link, if present."),
+        ),
+    )
+
+    internal val drivingNames = drivingTools.map {
+        it.getValue("function").let { fn -> (fn as JsonObject).getValue("name").toString().trim('"') }
+    }.toSet()
 
     private val webSearch = buildJsonObject {
         put("type", "function")
@@ -287,10 +350,26 @@ object ToolDefinitions {
         includeWebSearch: Boolean,
         includeHandoff: Boolean = false,
         includeMemory: Boolean = false,
+        includeTutor: Boolean = false,
     ): String = buildJsonArray {
+        add(tool("switch_conversation_mode", "Switch app modes ONLY on an explicit request, never for quoted practice or translation text.",
+            Field("mode", "assistant or spanish_tutor", required = true)))
+        if (includeTutor) {
+            add(tutorProgress)
+            add(tool("recall_tutor_progress", "Read the Spanish learning record. Use query for a word, grammar point or old discussion; omit for an overview.",
+                Field("query", "Optional word, grammar topic or discussion to retrieve.")))
+            if (includeMemory) {
+                add(recallMemory)
+                add(rememberFact)
+                add(forgetFact)
+            }
+            if (includeHandoff) add(deepReasoning)
+            return@buildJsonArray
+        }
         add(currentDateTime)
         add(location)
         add(weather)
+        drivingTools.forEach { add(it) }
         if (includeWebSearch) add(webSearch)
         add(news)
         if (includeMemory) {
@@ -309,4 +388,43 @@ object ToolDefinitions {
     const val RECALL_NAME = "recall_memory"
     const val REMEMBER_NAME = "remember_fact"
     const val FORGET_NAME = "forget_fact"
+
+    private val tutorProgress = buildJsonObject {
+        put("type", "function")
+        put("function", buildJsonObject {
+            put("name", "record_tutor_progress")
+            put("description", "Silently save observed Spanish practice after each evaluated answer. Updates merge; never count the tutor's examples as learner successes.")
+            put("parameters", buildJsonObject {
+                put("type", "object")
+                put("required", buildJsonArray { })
+                put("properties", buildJsonObject {
+                    listOf(
+                        "level" to "Estimated CEFR level A1/A2/B1/B2/C1/C2; omit unless supported by several turns.",
+                        "level_evidence" to "Concrete independent performance supporting a level change.",
+                        "summary" to "Cumulative progress, strengths, weaknesses, past discussion topics and next steps. Up to 1800 characters.",
+                        "activity" to "Scene, exercise type and example sentence just used, to avoid repetition.",
+                    ).forEach { (name, description) ->
+                        put(name, buildJsonObject { put("type", "string"); put("description", description) })
+                    }
+                    listOf("vocabulary", "grammar").forEach { name ->
+                        put(name, buildJsonObject {
+                            put("type", "array")
+                            put("items", buildJsonObject {
+                                put("type", "object")
+                                put("required", buildJsonArray { add(JsonPrimitive("topic")); add(JsonPrimitive("outcome")) })
+                                put("properties", buildJsonObject {
+                                    put("topic", buildJsonObject { put("type", "string"); put("description", "Canonical word/phrase or grammar point.") })
+                                    put("outcome", buildJsonObject {
+                                        put("type", "string")
+                                        put("enum", buildJsonArray { listOf("introduced", "correct", "needs_work").forEach { add(JsonPrimitive(it)) } })
+                                    })
+                                    put("note", buildJsonObject { put("type", "string"); put("description", "Meaning, observed mistake, correction or pronunciation cue.") })
+                                })
+                            })
+                        })
+                    }
+                })
+            })
+        })
+    }
 }

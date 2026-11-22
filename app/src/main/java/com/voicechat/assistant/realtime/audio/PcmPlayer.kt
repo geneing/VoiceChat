@@ -6,8 +6,6 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import com.voicechat.assistant.core.AppLog
 import com.voicechat.assistant.core.LogCategory
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.TimeUnit
 
 /**
  * Streaming 24 kHz PCM output with instant flush for barge-in. Writing happens
@@ -20,66 +18,72 @@ import java.util.concurrent.TimeUnit
  */
 class PcmPlayer(private val sampleRate: Int = 24_000) {
 
-    private val queue = LinkedBlockingQueue<ByteArray>(96)
+    // The server can generate a long answer faster than Android plays it.
+    // At 24 kHz mono PCM16 this permits up to 5.76 MB of queued audio.
+    private val bytesPerSecond = sampleRate * 2
+    private val queue = PcmPlaybackQueue(bytesPerSecond * MAX_BUFFERED_SECONDS)
+    val queuedDurationMs: Long get() = queue.queuedBytes * 1000L / bytesPerSecond
+
+    enum class EnqueueResult { QUEUED, INACTIVE, FULL }
     private var thread: Thread? = null
-    @Volatile
     private var track: AudioTrack? = null
-
-    @Volatile
-    private var running = false
-
-    @Volatile
-    private var muted = false
+    private var generation = 0L
+    private var muted = true
 
     @Volatile
     private var preferredDevice: AudioDeviceInfo? = null
 
     fun start() {
         synchronized(this) {
-            if (running) return
-            running = true
+            if (track != null) return
             track = buildTrack()
             applyPreferredDevice(track)
-            track?.play()
             thread = Thread({ loop() }, "pcm-player").also { it.start() }
             AppLog.info(LogCategory.AUDIO, "PCM playback started")
         }
     }
 
-    fun enqueue(bytes: ByteArray) {
-        if (muted || !running) return
-        if (!queue.offer(bytes)) {
-            queue.poll()
-            queue.offer(bytes)
+    @Synchronized
+    fun enqueue(bytes: ByteArray): EnqueueResult {
+        if (muted || track == null || bytes.isEmpty()) return EnqueueResult.INACTIVE
+        return if (queue.offer(PcmPlaybackQueue.Chunk(bytes, generation))) {
+            EnqueueResult.QUEUED
+        } else {
+            EnqueueResult.FULL
         }
     }
 
+    @Synchronized
     fun setMuted(value: Boolean) {
+        if (muted == value) return
         muted = value
         if (value) clear()
     }
 
+    @Synchronized
     fun clear() {
+        generation++
         queue.clear()
         runCatching {
             track?.pause()
             track?.flush()
-            track?.play()
         }
     }
 
     fun stop() {
         synchronized(this) {
-            running = false
+            val audioTrack = track ?: return
+            muted = true
+            generation++
             queue.clear()
-            thread?.join(700)
+            thread?.interrupt()
             thread = null
             runCatching {
-                track?.pause()
-                track?.flush()
-                track?.stop()
-                track?.release()
+                audioTrack.pause()
+                audioTrack.flush()
+                audioTrack.stop()
             }
+            audioTrack.release()
             track = null
         }
         AppLog.info(LogCategory.AUDIO, "PCM playback stopped")
@@ -134,20 +138,42 @@ class PcmPlayer(private val sampleRate: Int = 24_000) {
     }
 
     private fun loop() {
-        while (running) {
-            val chunk = queue.poll(200, TimeUnit.MILLISECONDS) ?: continue
-            if (muted || chunk.isEmpty()) continue
-            runCatching {
-                var offset = 0
-                val audioTrack = track ?: return@runCatching
-                while (offset < chunk.size && running) {
-                    val written = audioTrack.write(chunk, offset, chunk.size - offset)
-                    if (written <= 0) break
-                    offset += written
+        try {
+            while (!Thread.currentThread().isInterrupted) {
+                val chunk = queue.take()
+                try {
+                    play(chunk)
+                } catch (error: IllegalStateException) {
+                    AppLog.warn(LogCategory.AUDIO, "PCM playback track unavailable", error.message)
                 }
-            }.onFailure {
-                AppLog.warn(LogCategory.AUDIO, "Playback write failed: ${it.message}")
+            }
+        } catch (_: InterruptedException) {
+            // stop() wakes the worker whether it is waiting for PCM or for space in the track.
+        }
+    }
+
+    private fun play(chunk: PcmPlaybackQueue.Chunk) {
+        var offset = 0
+        while (offset < chunk.bytes.size) {
+            val written = synchronized(this) {
+                val audioTrack = track ?: return
+                if (muted || chunk.generation != generation) return
+                // A flush can run between writes, including while the track is full.
+                if (audioTrack.playState != AudioTrack.PLAYSTATE_PLAYING) audioTrack.play()
+                audioTrack.write(chunk.bytes, offset, chunk.bytes.size - offset, AudioTrack.WRITE_NON_BLOCKING)
+            }
+            when {
+                written < 0 -> {
+                    AppLog.warn(LogCategory.AUDIO, "PCM playback write failed", "code=$written")
+                    return
+                }
+                written == 0 -> Thread.sleep(4)
+                else -> offset += written
             }
         }
+    }
+
+    private companion object {
+        const val MAX_BUFFERED_SECONDS = 120
     }
 }

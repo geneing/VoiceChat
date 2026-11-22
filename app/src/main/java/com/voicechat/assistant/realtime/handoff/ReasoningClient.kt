@@ -105,10 +105,11 @@ class ReasoningClient(
         config: HandoffConfig,
         system: String,
         user: String,
+        images: List<String> = emptyList(),
     ): Result<ReasoningResult> = stream(
         apiKey = apiKey,
         config = config,
-        messages = listOf(HandoffPrompt.Turn("system", system), HandoffPrompt.Turn("user", user)),
+        messages = listOf(HandoffPrompt.Turn("system", system), HandoffPrompt.Turn("user", user, images)),
         sections = false,
         onProgress = {},
     )

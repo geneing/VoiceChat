@@ -1,8 +1,17 @@
 Goal: 
 
+Spanish tutor: provide a top-of-screen switch and voice commands between the
+assistant and a Mexican Spanish tutor, with separate chat history and learning
+memory. Start at A2 and adapt to observed progress. Prioritize engaging
+conversation, alongside vocabulary, grammar and translation in both directions.
+Explain grammar/pronunciation corrections, remember practiced words and weak
+points, and avoid replaying recent exercises or sentences. Choose activities
+proactively. Use Spanish and English. Lesson questions adapt to the learner's
+level; requests for instructions or clarifications use basic Spanish or English.
+
 1. Android AI assistant app with both text and voice interface similar to Gemini Live. 
 2. Voice assistant shall support conversation mode, barge-in, interruption, natural real-time seamless voice conversation mode, etc. It should have the same features as Gemini Live or ChatGPT Live.
-3. Shall support seamless switching between voice input and text input. If user uses voice, output should be audio. If user entered text, output should be text. Context of both modes shall be used as long as it's the same conversation. 
+3. Shall support seamless switching between voice input and text input. Voice answers are audio; typed questions go directly to the reasoning model and return text. Both share conversation context.
 4. App shall use third-party API access. Initial implementation will use Qwen APIs: qwen3.8-omni-flash-realtime, qwen-audio-3.1-realtime-flash. API key is provided in secrets/qwen-apiKey-1341022.csv
 5. This app will be kept private, so it's Ok to build in the key. Don't upload the key to git. Don't release the apk. 
 6. The models have tool calling capability. Provide tools that enable functionality like Gemini Live (e.g. web_search, location, date). 

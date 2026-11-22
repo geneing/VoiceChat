@@ -95,6 +95,7 @@ data class SessionConfig(
     val priceInputPerMillion: Double = 0.0,
     val priceOutputPerMillion: Double = 0.0,
     val languageHint: String = "",
+    val spanishTutor: Boolean = false,
 ) {
     val endpoint: String get() = ApiEndpoints.urlFor(this)    /**
      * How long the on-device gate keeps streaming after the last syllable. The

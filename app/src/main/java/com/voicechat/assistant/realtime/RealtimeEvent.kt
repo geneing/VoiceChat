@@ -24,13 +24,13 @@ sealed interface RealtimeEvent {
         val outputTypes: List<String> = emptyList(),
     ) : RealtimeEvent
 
-    data class ResponseCancelled(val reason: String?) : RealtimeEvent
+    data class ResponseCancelled(val reason: String?, val responseId: String? = null) : RealtimeEvent
 
     data class AssistantTextDelta(val delta: String) : RealtimeEvent
 
     data class AssistantTextDone(val text: String) : RealtimeEvent
 
-    data class AssistantAudioDelta(val audio: ByteArray) : RealtimeEvent {
+    data class AssistantAudioDelta(val audio: ByteArray, val responseId: String? = null) : RealtimeEvent {
         override fun equals(other: Any?): Boolean = this === other
         override fun hashCode(): Int = System.identityHashCode(this)
     }

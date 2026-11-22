@@ -1,11 +1,13 @@
 package com.voicechat.assistant
 
 import android.content.Context
+import com.voicechat.assistant.core.IssueReportStore
 import com.voicechat.assistant.data.attachments.AttachmentManager
 import com.voicechat.assistant.data.db.AppDatabase
 import com.voicechat.assistant.data.prefs.SettingsRepository
 import com.voicechat.assistant.data.repo.ChatRepository
 import com.voicechat.assistant.memory.MemoryStore
+import com.voicechat.assistant.tutor.TutorStore
 import com.voicechat.assistant.realtime.RealtimeTransport
 import com.voicechat.assistant.realtime.aoq.AoqTransport
 import com.voicechat.assistant.realtime.handoff.ReasoningClient
@@ -30,8 +32,28 @@ class AppContainer(context: Context) {
 
     val attachments: AttachmentManager by lazy { AttachmentManager(appContext) }
 
+    internal val issueReports: IssueReportStore by lazy { IssueReportStore(appContext) }
+
     /** Facts the assistant remembers between chats, stored in the same database. */
     val memory: MemoryStore by lazy { MemoryStore(database.memoryDao()) }
+
+    // Separate database instances also isolate every DAO query, deletion and memory tool.
+    val tutorDatabase: AppDatabase by lazy { AppDatabase.build(appContext, "spanish-tutor.db") }
+    val tutorProgress: TutorStore by lazy { TutorStore(appContext) }
+    val tutorMemory: MemoryStore by lazy { MemoryStore(tutorDatabase.memoryDao()) }
+    val tutorChats: ChatRepository by lazy {
+        ChatRepository(tutorDatabase) { message ->
+            try {
+                tutorProgress.record(message)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                com.voicechat.assistant.core.AppLog.warn(
+                    com.voicechat.assistant.core.LogCategory.MEMORY, "Could not retain tutor dialog", error.message,
+                )
+            }
+        }
+    }
 
     private val apiClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -52,10 +74,14 @@ class AppContainer(context: Context) {
             .build()
     }
 
-    val tools: ToolRegistry by lazy { ToolRegistry(appContext, apiClient, memory = memory) }
+    val tools: ToolRegistry by lazy {
+        ToolRegistry(appContext, apiClient, memory = memory, tutorMemory = tutorMemory, tutorProgress = tutorProgress)
+    }
 
     /** Higher-reasoning text model consulted for hard turns. */
     val reasoner: ReasoningClient by lazy { ReasoningClient(apiClient) }
+
+    val tutorLearning by lazy { com.voicechat.assistant.tutor.TutorLearning(reasoner, tutorProgress) }
 
     fun createTransport(kind: TransportKind, scope: CoroutineScope): RealtimeTransport = when (kind) {
         TransportKind.WEBSOCKET -> WebSocketTransport(realtimeClient, appContext)

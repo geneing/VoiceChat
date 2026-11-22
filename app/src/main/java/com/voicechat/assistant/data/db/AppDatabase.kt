@@ -52,8 +52,8 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        fun build(context: Context): AppDatabase =
-            Room.databaseBuilder(context, AppDatabase::class.java, "voicechat.db")
+        fun build(context: Context, name: String = "voicechat.db"): AppDatabase =
+            Room.databaseBuilder(context, AppDatabase::class.java, name)
                 .addMigrations(MIGRATION_1_2)
                 .fallbackToDestructiveMigration(dropAllTables = false)
                 .build()

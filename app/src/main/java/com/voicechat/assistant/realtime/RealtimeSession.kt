@@ -2,6 +2,8 @@ package com.voicechat.assistant.realtime
 
 import android.os.SystemClock
 import com.voicechat.assistant.core.AppLog
+import com.voicechat.assistant.core.IssueReportCommand
+import com.voicechat.assistant.tutor.ConversationMode
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.data.model.CostCalculator
 import com.voicechat.assistant.data.model.SearchProvider
@@ -22,7 +24,12 @@ import com.voicechat.assistant.realtime.handoff.SpeculativeHandoff
 import com.voicechat.assistant.realtime.tools.SearchRecency
 import com.voicechat.assistant.realtime.tools.ToolDefinitions
 import com.voicechat.assistant.realtime.tools.ToolRegistry
+import com.voicechat.assistant.realtime.tools.DeviceActions
+import com.voicechat.assistant.realtime.tools.isPhoneConfirmation
+import com.voicechat.assistant.realtime.tools.string
+import com.voicechat.assistant.realtime.tools.toolError
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,6 +46,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -58,7 +66,6 @@ data class SessionUiState(
     val transport: TransportKind? = null,
     val model: String? = null,
     val voice: String? = null,
-    val userPartial: String = "",
     val assistantPartial: String = "",
     val micLevel: Float = 0f,
     val speaking: Boolean = false,
@@ -68,6 +75,7 @@ data class SessionUiState(
     val turnCount: Int = 0,
     val audioSentBytes: Long = 0,
     val audioReceivedBytes: Long = 0,
+    val realtimeUsage: TokenUsage? = null,
     val sendingAudio: Boolean = false,
     val receivingAudio: Boolean = false,
     val speechActive: Boolean = false,
@@ -83,7 +91,11 @@ data class SessionUiState(
 }
 
 interface SessionListener {
+    /** The current recognition preview. Empty text clears an unfinished preview. */
+    fun onUserTranscriptPartial(text: String)
     fun onUserTranscriptFinal(text: String)
+    fun onIssueReportRequested(description: String)
+    fun onModeSwitchRequested(mode: ConversationMode) {}
     fun onAssistantStart(voice: Boolean)
     fun onAssistantDelta(text: String)
     fun onAssistantFinished(text: String, metrics: TurnMetrics, partial: Boolean)
@@ -124,6 +136,7 @@ class RealtimeSession(
 
     private val mutex = Mutex()
     private var transport: RealtimeTransport? = null
+    private var modeSwitchPending = false
     private var eventsJob: Job? = null
     private var levelJob: Job? = null
     private var trafficJob: Job? = null
@@ -145,6 +158,9 @@ class RealtimeSession(
     /** True once a turn that ended on a promise has already been retried. */
     private var nudgedThisTurn = false
     private val handledCalls = mutableSetOf<String>()
+    private val drivingJobs = mutableMapOf<String, Job>()
+    private var pendingPhoneAction: DeviceActions.Pending? = null
+    private var confirmedPhoneAction = false
 
     /** Non-null while the automatic reconnect loop is running. */
     private var recoveryJob: Job? = null
@@ -481,9 +497,11 @@ class RealtimeSession(
     }
 
     private suspend fun reopenLocked(config: SessionConfig, live: Boolean): Result<Unit> {
+        listener.onUserTranscriptPartial("")
         finishTurn(partial = true)
         cancelSpeculation("connection lost")
         cancelNews("connection lost")
+        cancelDrivingTools(clearConfirmation = true)
         eventsJob?.cancel()
         eventsJob = null
         levelJob?.cancel()
@@ -495,7 +513,15 @@ class RealtimeSession(
         transport = null
         responding = false
         handledCalls.clear()
-        _state.update { it.copy(connected = false, status = LiveStatus.RECONNECTING) }
+        _state.update {
+            it.copy(
+                connected = false,
+                status = LiveStatus.RECONNECTING,
+                audioSentBytes = 0,
+                audioReceivedBytes = 0,
+                realtimeUsage = null,
+            )
+        }
         // attempt = 2 selects the retry-sized connect timeout.
         return openTransport(config, live, attempt = 2)
     }
@@ -555,15 +581,21 @@ class RealtimeSession(
 
 
     /**
-     * Sends a typed turn. With [deepReasoning] the app consults the reasoning
-     * model first and the answer rides along as a reference, so hard typed
-     * questions never depend on the realtime model deciding to escalate.
+     * Answer typed turns directly with the reasoning model and add the finished
+     * exchange to the realtime conversation for future voice turns.
      */
     suspend fun sendText(
         text: String,
         images: List<String> = emptyList(),
-        deepReasoning: Boolean = false,
+        typedReasoning: HandoffConfig? = null,
+        userInput: String = text,
     ): Result<Unit> {
+        if (typedReasoning == null || reasoner == null) return Result.failure(IllegalStateException(
+            "The reasoning model is not configured."
+        ))
+        if (images.isNotEmpty() && !typedReasoning.modelInfo.supportsImages) return Result.failure(IllegalArgumentException(
+            "The configured reasoning model cannot receive image attachments."
+        ))
         val pending: PendingHandoff? = mutex.withLock {
             val activeTransport = transport
             if (activeTransport == null || activeTransport.state.value != TransportState.CONNECTED) {
@@ -580,25 +612,20 @@ class RealtimeSession(
                 applyLiveMode(false)
             }
             beginTurn(voice = false)
+            observePhoneConfirmation(userInput)
             cancelSpeculation("typed turn")
             _state.update {
                 it.copy(
                     status = LiveStatus.THINKING,
                     assistantPartial = "",
-                    userPartial = "",
                     speechActive = false,
                 )
             }
-            val handoff = config?.handoff
-            if (deepReasoning && handoff != null && reasoner != null) {
-                PendingHandoff(handoff, config?.apiKey.orEmpty(), transcript.toList())
-            } else {
-                null
-            }
+            PendingHandoff(typedReasoning, config?.apiKey.orEmpty(), transcript.toList())
         }
-        val handoffConfig = pending ?: return mutex.withLock { dispatchTextTurn(text, images) }
+        val handoffConfig = pending ?: return Result.failure(IllegalStateException("Reasoning is unavailable."))
         val reasonerClient = reasoner
-            ?: return mutex.withLock { dispatchTextTurn(text, images) }
+            ?: return Result.failure(IllegalStateException("Reasoning is unavailable."))
 
         // The reasoning request runs outside the session mutex: barge-in, the
         // stop button and status updates must keep working while it streams.
@@ -613,12 +640,17 @@ class RealtimeSession(
             "model=${handoffConfig.config.model} chars=${text.length}",
         )
         handoffJob = scope.launch {
-            val result = reasonerClient.answer(
+            val context = HandoffPrompt.messages(handoffConfig.context, text, handoffConfig.config.contextTurns).last().text
+            val instructions = config?.instructions.orEmpty() + "\n\n" + readMemory() +
+                "\nAnswer the user's latest typed message directly. Use the conversation for context. " +
+                "Do not pretend to operate device tools. When search is available use it for current facts."
+            val result = reasonerClient.complete(
                 apiKey = handoffConfig.apiKey,
                 config = handoffConfig.config,
-                transcript = handoffConfig.context,
-                task = text,
-            ) { chars -> reportReasoningProgress(chars) }
+                system = instructions,
+                user = context,
+                images = images,
+            )
             billReasoning(handoffConfig.config, result)
             handoffOutcome = result
         }
@@ -631,9 +663,32 @@ class RealtimeSession(
             _state.update { it.copy(handoff = null) }
             return Result.failure(CancellationException("Deep reasoning cancelled."))
         }
-        val trace = buildTrace(handoffConfig.config, text, outcome)
-        reportHandoff(trace)
-        return mutex.withLock { dispatchTextTurn(text, images, trace) }
+        val answer = outcome.getOrElse { error ->
+            mutex.withLock {
+                responding = false
+                _state.update { it.copy(handoff = null, status = LiveStatus.IDLE) }
+            }
+            return Result.failure(error)
+        }
+        return mutex.withLock {
+            val active = transport ?: return@withLock Result.failure(IllegalStateException("Session is not connected."))
+            rememberTurn("user", userInput)
+            rememberTurn("assistant", answer.answer)
+            if (!active.send(SessionPayloads.typedExchangeContext(userInput, answer.answer))) {
+                AppLog.warn(LogCategory.SESSION, "Could not sync typed exchange to voice session")
+                listener.onError("The typed answer was saved, but could not be added to the current voice session.")
+            }
+            responding = false
+            listener.onAssistantStart(false)
+            listener.onAssistantFinished(answer.answer, TurnMetrics(
+                ttftMs = -1,
+                totalMs = answer.elapsedMs,
+                usage = answer.usage,
+                costUsd = CostCalculator.cost(answer.usage, handoffConfig.config.priceInputPerMillion, handoffConfig.config.priceOutputPerMillion),
+            ), false)
+            _state.update { it.copy(handoff = null, status = LiveStatus.IDLE) }
+            Result.success(Unit)
+        }
     }
 
     private fun dispatchTextTurn(
@@ -672,12 +727,14 @@ class RealtimeSession(
 
     suspend fun interrupt() = mutex.withLock {
         val activeTransport = transport ?: return@withLock
+        activeTransport.interruptPlayback()
         cancelSpeculation("interrupted")
         if (preReasoning) {
             // Nothing has been sent to the server for this turn yet, so there is
             // no response to cancel: just stop paying for the reasoning call.
             cancelHandoff("interrupted")
             cancelNews("interrupted")
+            cancelDrivingTools(clearConfirmation = true)
             finishTurn(partial = true)
             _state.update {
                 it.copy(status = if (liveEnabled) LiveStatus.LISTENING else LiveStatus.IDLE, speaking = false)
@@ -685,7 +742,6 @@ class RealtimeSession(
             return@withLock
         }
         if (responding) {
-            activeTransport.setSpeakerMuted(true)
             activeTransport.send(SessionPayloads.cancelResponse())
             finishTurn(partial = true)
         }
@@ -699,11 +755,22 @@ class RealtimeSession(
 
     suspend fun stop() = mutex.withLock { stopLocked() }
 
+    /** A new live lesson opens proactively, without adding an artificial user turn. */
+    suspend fun startTutorLesson() = mutex.withLock {
+        if (config?.spanishTutor != true || !liveEnabled || !_state.value.connected || responding) return@withLock
+        beginTurn(voice = true)
+        transport?.send(SessionPayloads.responseNudge(listOf("text", "audio"),
+            "Begin or resume the Spanish lesson from the learning record. Choose a fresh tiny scene " +
+                "and ask one lesson question at the learner's current level. Use basic Spanish or " +
+                "English for procedural clarifications. Do not ask the learner to choose a topic or exercise."))
+    }
+
     /** Non-suspending cleanup for ViewModel/process teardown. */
     fun shutdown() {
         cancelRecovery("shutdown")
         cancelHandoff("shutdown")
         cancelNews("shutdown")
+        cancelDrivingTools(clearConfirmation = true)
         cancelSpeculation("shutdown")
         reasoner?.cancelAll()
         eventsJob?.cancel()
@@ -737,10 +804,23 @@ class RealtimeSession(
     }
 
     private fun applyLiveMode(enabled: Boolean) {
+        val wasLive = liveEnabled
         liveEnabled = enabled
         if (!enabled) {
+            listener.onUserTranscriptPartial("")
             cancelSpeculation("live mode off")
             cancelNews("live mode off")
+            cancelDrivingTools(clearConfirmation = true)
+            if (wasLive) {
+                // Stop PCM before stopping capture releases Android's communication route.
+                transport?.interruptPlayback()
+                cancelHandoff("live mode off")
+                if (currentTurnVoice && responding) {
+                    transport?.send(SessionPayloads.cancelResponse())
+                    finishTurn(partial = true)
+                }
+                currentTurnVoice = false
+            }
         }
         // Never change turn_detection on an established session: the server
         // rejects it ("cannot change turn detection") and the conversation
@@ -769,12 +849,15 @@ class RealtimeSession(
         // a later start must not hand old turns back.
         transcript.clear()
         _state.value = SessionUiState()
+        modeSwitchPending = false
     }
 
     /** Tears the transport down but keeps the transcript so recovery can restore it. */
     private fun closeTransportLocked() {
+        listener.onUserTranscriptPartial("")
         cancelHandoff("session stopped")
         cancelNews("session stopped")
+        cancelDrivingTools(clearConfirmation = true)
         cancelSpeculation("session stopped")
         finishTurn(partial = true)
         eventsJob?.cancel()
@@ -793,6 +876,8 @@ class RealtimeSession(
     }
 
     private fun beginTurn(voice: Boolean) {
+        cancelDrivingTools()
+        confirmedPhoneAction = false
         currentTurnVoice = voice
         responding = true
         assistantStarted = false
@@ -825,6 +910,7 @@ class RealtimeSession(
     }
 
     private suspend fun handleEvent(event: RealtimeEvent) = mutex.withLock {
+        if (modeSwitchPending) return@withLock
         when (event) {
             is RealtimeEvent.SessionUpdated -> {
                 val latency = SystemClock.elapsedRealtime() - connectStartedAt
@@ -835,11 +921,15 @@ class RealtimeSession(
             }
 
             is RealtimeEvent.SpeechStarted -> {
+                if (!liveEnabled) return@withLock
                 AppLog.debug(LogCategory.SESSION, "Speech started (barge-in)")
                 cancelHandoff("barge-in")
                 cancelNews("barge-in")
+                cancelDrivingTools()
+                confirmedPhoneAction = false
                 cancelSpeculation("barge-in")
                 transport?.setSpeakerMuted(true)
+                listener.onUserTranscriptPartial("")
                 if (responding) {
                     // The server has interrupt_response=true and cancels the
                     // response itself; sending response.cancel here races it.
@@ -848,7 +938,6 @@ class RealtimeSession(
                 _state.update {
                     it.copy(
                         status = LiveStatus.LISTENING,
-                        userPartial = "",
                         assistantPartial = "",
                         speaking = false,
                         speechActive = true,
@@ -857,6 +946,7 @@ class RealtimeSession(
             }
 
             is RealtimeEvent.SpeechStopped -> {
+                if (!liveEnabled) return@withLock
                 AppLog.debug(LogCategory.SESSION, "Speech stopped")
                 beginTurn(voice = true)
                 _state.update {
@@ -866,9 +956,9 @@ class RealtimeSession(
 
             is RealtimeEvent.UserTranscriptDelta -> {
                 val partial = (event.text + event.stash).trim()
+                if (liveEnabled) listener.onUserTranscriptPartial(partial)
                 _state.update {
                     it.copy(
-                        userPartial = partial,
                         status = if (responding) it.status else LiveStatus.LISTENING,
                     )
                 }
@@ -876,18 +966,38 @@ class RealtimeSession(
 
             is RealtimeEvent.UserTranscriptCompleted -> {
                 val transcript = event.transcript.trim()
-                _state.update { it.copy(userPartial = transcript) }
                 if (transcript.isNotBlank()) {
-                    rememberTurn("user", transcript)
-                    startSpeculation(transcript)
-                    prefetchNews(transcript)
-                    listener.onUserTranscriptFinal(transcript)
+                    if (liveEnabled) observePhoneConfirmation(transcript)
+                    val issue = IssueReportCommand.description(transcript)
+                    val mode = ConversationMode.command(transcript)
+                    if (mode != null) {
+                        val alreadyActive = (mode == ConversationMode.SPANISH_TUTOR) == (config?.spanishTutor == true)
+                        if (alreadyActive) {
+                            listener.onUserTranscriptFinal(transcript)
+                            return@withLock
+                        }
+                        modeSwitchPending = true
+                        transport?.setSpeakerMuted(true)
+                        transport?.send(SessionPayloads.cancelResponse())
+                        listener.onUserTranscriptPartial("")
+                        listener.onModeSwitchRequested(mode)
+                    } else if (issue != null) {
+                        listener.onUserTranscriptPartial("")
+                        listener.onIssueReportRequested(issue)
+                    } else {
+                        rememberTurn("user", transcript)
+                        startSpeculation(transcript)
+                        prefetchNews(transcript)
+                        listener.onUserTranscriptFinal(transcript)
+                    }
+                } else {
+                    listener.onUserTranscriptPartial("")
                 }
             }
 
             is RealtimeEvent.ResponseCreated -> {
                 responding = true
-                transport?.setSpeakerMuted(!currentTurnVoice)
+                transport?.setSpeakerMuted(!currentTurnVoice || !liveEnabled)
                 _state.update {
                     it.copy(status = LiveStatus.THINKING, speaking = false, speechActive = false, error = null)
                 }
@@ -947,8 +1057,10 @@ class RealtimeSession(
                 // A turn that ended without a handoff leaves the warm call
                 // unused; stop paying for it.
                 if (handoffJob?.isActive != true) cancelSpeculation("turn finished")
-                val needsFollowUp = toolOutputsSent && completed
-                toolOutputsSent = false
+                if (!completed && drivingJobs.isNotEmpty()) cancelDrivingTools(clearConfirmation = true)
+                val awaitingTools = drivingJobs.isNotEmpty()
+                val needsFollowUp = toolOutputsSent && completed && !awaitingTools
+                if (!awaitingTools) toolOutputsSent = false
                 if (needsFollowUp) {
                     transport?.send(SessionPayloads.responseCreate(modalities()))
                     _state.update {
@@ -960,6 +1072,8 @@ class RealtimeSession(
                             turnCount = it.turnCount + 1,
                         )
                     }
+                } else if (awaitingTools) {
+                    _state.update { it.copy(status = LiveStatus.THINKING, speaking = false) }
                 } else if (completed &&
                     !turnUsedTool &&
                     spoken.isNotEmpty() &&
@@ -980,7 +1094,19 @@ class RealtimeSession(
                         )
                     }
                 }
-                usage?.let { listener.onUsage(it, metrics.costUsd) }
+                if (usage != null) {
+                    _state.update {
+                        val previous = it.realtimeUsage ?: TokenUsage()
+                        it.copy(
+                            realtimeUsage = TokenUsage(
+                                inputTokens = previous.inputTokens + usage.inputTokens,
+                                outputTokens = previous.outputTokens + usage.outputTokens,
+                                totalTokens = previous.totalTokens + usage.totalTokens,
+                            ),
+                        )
+                    }
+                    listener.onUsage(usage, metrics.costUsd)
+                }
                 AppLog.info(
                     LogCategory.SESSION,
                     "Response done",
@@ -992,6 +1118,7 @@ class RealtimeSession(
 
             is RealtimeEvent.ResponseCancelled -> {
                 AppLog.debug(LogCategory.SESSION, "Response cancelled", event.reason)
+                if (drivingJobs.isNotEmpty()) cancelDrivingTools(clearConfirmation = true)
                 finishTurn(partial = true)
                 _state.update {
                     it.copy(status = if (liveEnabled) LiveStatus.LISTENING else LiveStatus.IDLE, speechActive = false)
@@ -1005,6 +1132,8 @@ class RealtimeSession(
             }
 
             is RealtimeEvent.Failure -> {
+                cancelDrivingTools(clearConfirmation = true)
+                listener.onUserTranscriptPartial("")
                 finishTurn(partial = true)
                 // No response.done will arrive for this turn, so stop the warm
                 // reasoning call here instead of leaving it streaming.
@@ -1031,6 +1160,8 @@ class RealtimeSession(
             }
 
             is RealtimeEvent.Closed -> {
+                cancelDrivingTools(clearConfirmation = true)
+                listener.onUserTranscriptPartial("")
                 if (_state.value.active) {
                     finishTurn(partial = true)
                     cancelSpeculation("connection closed")
@@ -1108,7 +1239,36 @@ class RealtimeSession(
         if (!handledCalls.add(event.callId)) return
         if (!_state.value.connected) return
         turnUsedTool = true
-        AppLog.info(LogCategory.TOOLS, "Model requested ${event.name}", event.arguments)
+        val driving = event.name in ToolDefinitions.drivingNames || event.name == "get_weather"
+        AppLog.info(LogCategory.TOOLS, "Model requested ${event.name}", if (driving) "" else event.arguments)
+        if (config?.toolsJson?.contains("\"name\":\"${event.name}\"") != true) return
+        if (event.name == "switch_conversation_mode") {
+            val mode = when (handoffArgument(event.arguments, "mode")) {
+                "assistant" -> ConversationMode.ASSISTANT
+                "spanish_tutor" -> ConversationMode.SPANISH_TUTOR
+                else -> null
+            }
+            val alreadyActive = (mode == ConversationMode.SPANISH_TUTOR) == (config?.spanishTutor == true)
+            if (mode != null && !alreadyActive) {
+                modeSwitchPending = true
+                transport?.setSpeakerMuted(true)
+                listener.onModeSwitchRequested(mode)
+                return
+            }
+            val output = if (mode == null) "{\"ok\":false,\"error\":\"Use assistant or spanish_tutor.\"}"
+                else "{\"ok\":true,\"already_active\":true}"
+            transport?.send(SessionPayloads.functionOutputItem(event.callId, output))
+            toolOutputsSent = true
+            if (!responding) {
+                transport?.send(SessionPayloads.responseCreate(modalities()))
+                toolOutputsSent = false
+            }
+            return
+        }
+        if (driving) {
+            runDrivingTool(event)
+            return
+        }
         if (event.name == ToolDefinitions.HANDOFF_NAME) {
             // A handoff runs for tens of seconds; it must never hold the mutex
             // that barge-in, interrupt() and event handling need.
@@ -1127,6 +1287,7 @@ class RealtimeSession(
             event.name,
             event.arguments,
             config?.searchProvider ?: SearchProvider.EXA,
+            spanishTutor = config?.spanishTutor == true,
         )
         listener.onToolCall(event.name, event.arguments, result)
         val responseAlreadyFinished = !responding
@@ -1136,6 +1297,81 @@ class RealtimeSession(
             toolOutputsSent = false
         } else {
             toolOutputsSent = true
+        }
+    }
+
+    private fun runDrivingTool(event: RealtimeEvent.FunctionCall) {
+        val activeTransport = transport ?: return
+        val provider = config?.searchProvider ?: SearchProvider.EXA
+        listener.onToolCall(event.name, "", null)
+        _state.update { it.copy(status = LiveStatus.THINKING) }
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            val output = when (event.name) {
+                "call_phone", "prepare_whatsapp_message", "confirm_phone_action" -> mutex.withLock {
+                    if (transport !== activeTransport) return@launch
+                    phoneTool(event)
+                }
+                else -> tools.execute(event.name, event.arguments.ifBlank { "{}" }, provider)
+            }
+            mutex.withLock {
+                if (drivingJobs.remove(event.callId) == null || transport !== activeTransport) return@withLock
+                listener.onToolCall(event.name, "", output)
+                activeTransport.send(SessionPayloads.functionOutputItem(event.callId, output))
+                if (event.name == "confirm_phone_action" && "\"status\":\"call_requested\"" in output && liveEnabled) {
+                    // Give the call the microphone and communication route.
+                    applyLiveMode(false)
+                    return@withLock
+                }
+                toolOutputsSent = true
+                if (!responding && drivingJobs.isEmpty()) {
+                    activeTransport.send(SessionPayloads.responseCreate(modalities()))
+                    toolOutputsSent = false
+                    _state.update { it.copy(status = LiveStatus.THINKING) }
+                }
+            }
+        }
+        drivingJobs[event.callId] = job
+        job.start()
+    }
+
+    private suspend fun phoneTool(event: RealtimeEvent.FunctionCall): String {
+        if (event.name == "confirm_phone_action") {
+            val action = pendingPhoneAction
+            if (!confirmedPhoneAction || action == null) {
+                return toolError("No pending action has been explicitly confirmed by the user on a later turn.")
+            }
+            pendingPhoneAction = null
+            confirmedPhoneAction = false
+            return tools.completePhone(action)
+        }
+        val args = runCatching { Json.parseToJsonElement(event.arguments) as JsonObject }.getOrNull()
+            ?: return toolError("No recipient was provided.")
+        val message = if (event.name == "prepare_whatsapp_message") args.string("message") else null
+        val result = try {
+            tools.resolvePhone(args.string("target").take(120), message)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return toolError("Android couldn't look up that contact.")
+        }
+        val action = result.pending ?: return toolError(result.error)
+        pendingPhoneAction = action
+        confirmedPhoneAction = false
+        return action.prompt()
+    }
+
+    private fun observePhoneConfirmation(input: String) {
+        val action = pendingPhoneAction ?: return
+        confirmedPhoneAction = isPhoneConfirmation(input, whatsapp = action.message != null)
+        if (!confirmedPhoneAction) pendingPhoneAction = null
+    }
+
+    private fun cancelDrivingTools(clearConfirmation: Boolean = false) {
+        drivingJobs.values.forEach { it.cancel() }
+        drivingJobs.clear()
+        if (clearConfirmation) {
+            pendingPhoneAction = null
+            confirmedPhoneAction = false
         }
     }
 

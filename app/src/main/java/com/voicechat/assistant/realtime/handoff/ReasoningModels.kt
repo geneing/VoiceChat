@@ -25,6 +25,8 @@ data class ReasoningModelInfo(
     val thinkingMode: ThinkingMode = ThinkingMode.NONE,
 ) {
     val supportsThinking: Boolean get() = thinkingMode != ThinkingMode.NONE
+    val supportsNativeSearch: Boolean get() = id in setOf("qwen3.8-flash", "qwen3.8-max")
+    val supportsImages: Boolean get() = id in setOf("qwen3.8-flash", "qwen3.8-max")
 }
 
 object ReasoningModels {

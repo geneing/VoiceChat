@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -29,11 +30,11 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Waves
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -50,13 +51,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.voicechat.assistant.core.Formatters
@@ -65,7 +75,6 @@ import com.voicechat.assistant.data.model.AttachmentKind
 import com.voicechat.assistant.data.model.Message
 import com.voicechat.assistant.data.model.MessageKind
 import com.voicechat.assistant.data.model.MessageRole
-import com.voicechat.assistant.realtime.LiveStatus
 import com.voicechat.assistant.realtime.SessionUiState
 import com.voicechat.assistant.realtime.handoff.HandoffUiState
 import com.voicechat.assistant.ui.StreamingMessage
@@ -74,6 +83,7 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun MessageBubble(message: Message, showMetrics: Boolean) {
+    val clipboard = LocalClipboardManager.current
     if (message.kind == MessageKind.HANDOFF) {
         HandoffBubble(message.text)
         return
@@ -108,7 +118,7 @@ fun MessageBubble(message: Message, showMetrics: Boolean) {
                         AttachmentStrip(message.attachments)
                         Spacer(Modifier.height(8.dp))
                     }
-                    Text(
+                    SelectionContainer { Text(
                         text = message.text,
                         style = MaterialTheme.typography.bodyLarge,
                         color = if (fromUser) {
@@ -116,7 +126,15 @@ fun MessageBubble(message: Message, showMetrics: Boolean) {
                         } else {
                             MaterialTheme.colorScheme.onSurface
                         },
-                    )
+                    ) }
+                    if (message.text.isNotBlank() && !message.streaming) {
+                        IconButton(
+                            onClick = { clipboard.setText(AnnotatedString(message.text)) },
+                            modifier = Modifier.align(Alignment.End).size(40.dp),
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy message", modifier = Modifier.size(18.dp))
+                        }
+                    }
                     if (!fromUser) {
                         val voice = message.kind == MessageKind.VOICE
                         if (voice) {
@@ -171,10 +189,10 @@ fun StreamingBubble(streaming: StreamingMessage) {
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
-            Text(
+            SelectionContainer { Text(
                 text = streaming.text.ifBlank { "…" },
                 style = MaterialTheme.typography.bodyLarge,
-            )
+            ) }
             if (streaming.voice) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -199,6 +217,21 @@ fun StreamingBubble(streaming: StreamingMessage) {
 @Composable
 private fun ToolBubble(text: String) {
     var expanded by remember { mutableStateOf(false) }
+    val linkColor = MaterialTheme.colorScheme.primary
+    val linkedText = remember(text, linkColor) {
+        buildAnnotatedString {
+            text.lineSequence().forEachIndexed { index, line ->
+                if (index > 0) append('\n')
+                if (line.startsWith("https://") && line.none(Char::isWhitespace)) {
+                    withLink(LinkAnnotation.Url(line, TextLinkStyles(style = SpanStyle(color = linkColor)))) {
+                        append(line)
+                    }
+                } else {
+                    append(line)
+                }
+            }
+        }
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Center,
@@ -228,7 +261,7 @@ private fun ToolBubble(text: String) {
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                text = text,
+                text = linkedText,
                 style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = if (expanded) Int.MAX_VALUE else 3,
@@ -418,91 +451,28 @@ private fun ImageAttachment(attachment: Attachment) {
 }
 
 @Composable
-fun LiveCard(
-    state: SessionUiState,
-    onInterrupt: () -> Unit,
-    onStopLive: () -> Unit,
-) {
-    val active = state.status == LiveStatus.LISTENING ||
-        state.status == LiveStatus.RESPONDING ||
-        state.status == LiveStatus.CONNECTING ||
-        state.status == LiveStatus.RECONNECTING
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(22.dp),
-        tonalElevation = 2.dp,
+fun LiveInputWaveform(state: SessionUiState, onInterrupt: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
     ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Waveform(
-                    level = state.micLevel,
-                    active = active,
-                    modifier = Modifier
-                        .width(88.dp)
-                        .height(36.dp),
-                    colorStart = MaterialTheme.colorScheme.primary,
-                    colorEnd = MaterialTheme.colorScheme.secondary,
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = when {
-                            state.handoff != null -> "Deep reasoning…"
-                            state.status == LiveStatus.CONNECTING -> "Connecting…"
-                            state.status == LiveStatus.RECONNECTING ->
-                                "Reconnecting… (${state.reconnectAttempt})"
-                            state.status == LiveStatus.LISTENING -> "Listening…"
-                            state.status == LiveStatus.THINKING -> "Thinking…"
-                            state.status == LiveStatus.RESPONDING -> "Responding…"
-                            state.status == LiveStatus.ERROR -> "Connection problem"
-                            else -> "Voice mode paused"
-                        },
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    val subtitle = when {
-                        state.status == LiveStatus.RECONNECTING ->
-                            "Restoring the voice connection automatically."
-                        state.error != null -> state.error
-                        state.handoff != null ->
-                            "${state.handoff.model} is working through this turn."
-                        state.status == LiveStatus.LISTENING -> "Speak naturally — talk over the answer to interrupt."
-                        state.status == LiveStatus.RESPONDING -> "Reply in progress. Start talking to barge in."
-                        state.status == LiveStatus.THINKING -> "Waiting for the first token."
-                        else -> state.model.orEmpty()
-                    }
-                    if (!subtitle.isNullOrBlank()) {
-                        Text(
-                            subtitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-                if (state.isBusy) {
-                    IconButton(onClick = onInterrupt) {
-                        Icon(Icons.Default.Stop, contentDescription = "Interrupt")
-                    }
-                }
-                IconButton(onClick = onStopLive) {
-                    Icon(Icons.Default.Close, contentDescription = "Stop voice mode")
-                }
-            }
-            if (state.userPartial.isNotBlank()) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "“${state.userPartial}”",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+        val interrupt = if (state.isBusy) {
+            Modifier.clickable(onClickLabel = "Interrupt response", onClick = onInterrupt)
+        } else {
+            Modifier
         }
+        Waveform(
+            level = state.micLevel,
+            active = state.connected,
+            modifier = Modifier
+                .then(interrupt)
+                .semantics { contentDescription = "Microphone waveform" }
+                .padding(vertical = 6.dp)
+                .width(152.dp)
+                .height(28.dp),
+            colorStart = MaterialTheme.colorScheme.primary,
+            colorEnd = MaterialTheme.colorScheme.secondary,
+        )
     }
 }
 
@@ -707,7 +677,7 @@ fun ConnectionDot(
     )
 }
 
-/** Live audio byte counters for the current chat/session. */
+/** Audio traffic and reported token usage for the current realtime connection. */
 @Composable
 fun AudioTrafficStrip(state: SessionUiState) {
     Row(
@@ -751,27 +721,24 @@ fun AudioTrafficStrip(state: SessionUiState) {
             color = if (state.receivingAudio) Color(0xFF45C486)
             else MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.weight(1f))
-        val label = when {
-            state.receivingAudio -> "receiving"
-            state.speechActive -> "speaking"
-            state.liveEnabled -> "VAD idle"
-            else -> "text mode"
+    }
+    state.realtimeUsage?.let { usage ->
+        val tokens = if (usage.inputTokens == 0 && usage.outputTokens == 0) {
+            "Tokens ${Formatters.tokens(usage.totalTokens)}"
+        } else {
+            "Tokens  ↑ ${Formatters.tokens(usage.inputTokens)}   ↓ ${Formatters.tokens(usage.outputTokens)}"
         }
         Text(
-            label,
+            text = tokens,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
             style = MaterialTheme.typography.labelSmall,
-            color = when {
-                state.receivingAudio -> Color(0xFF45C486)
-                state.speechActive -> Color(0xFF5B8DEF)
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
 
 @Composable
-fun EmptyState(onSuggestion: (String) -> Unit, onLive: () -> Unit) {
+fun EmptyState(onSuggestion: (String) -> Unit, onLive: () -> Unit, tutor: Boolean = false) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -800,19 +767,20 @@ fun EmptyState(onSuggestion: (String) -> Unit, onLive: () -> Unit) {
             )
         }
         Spacer(Modifier.height(18.dp))
-        Text("Hi, I'm VoiceChat", style = MaterialTheme.typography.headlineMedium)
+        Text(if (tutor) "¡Vamos a practicar!" else "Hi, I'm VoiceChat", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(6.dp))
         Text(
-            "Talk hands-free or type. Both share one conversation.",
+            if (tutor) "Mexican Spanish, starting at A2. Short conversations, useful words and gentle corrections. I’ll choose the exercises."
+            else "Talk hands-free or type. Both share one conversation.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(22.dp))
-        listOf(
+        (if (tutor) listOf("Start my lesson") else listOf(
             "What's happening in the world today?",
             "What time is it, and what's the weather?",
             "Explain quantum entanglement like I'm five.",
-        ).forEach { suggestion ->
+        )).forEach { suggestion ->
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(18.dp),

@@ -82,6 +82,7 @@ android {
         buildConfigField("String", "QWEN_DASHSCOPE_BASE", quoted(secret("dashScope")))
         buildConfigField("String", "EXA_API_KEY", quoted(keyFile("exa.key")))
         buildConfigField("String", "BRAVE_SEARCH_API_KEY", quoted(keyFile("brave.key")))
+        buildConfigField("String", "GOOGLE_MAPS_API_KEY", quoted(keyFile("google-maps.key")))
     }
 
     buildTypes {

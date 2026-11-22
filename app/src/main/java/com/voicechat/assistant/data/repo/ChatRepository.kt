@@ -17,7 +17,10 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import java.util.UUID
 
-class ChatRepository(private val db: AppDatabase) {
+class ChatRepository(
+    private val db: AppDatabase,
+    private val onMessageSaved: suspend (Message) -> Unit = {},
+) {
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -74,6 +77,7 @@ class ChatRepository(private val db: AppDatabase) {
             preview = message.text.take(120),
         )
         maybeTitle(message)
+        onMessageSaved(message)
     }
 
     suspend fun updateMessage(

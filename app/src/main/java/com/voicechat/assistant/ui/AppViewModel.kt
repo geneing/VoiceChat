@@ -1,13 +1,19 @@
 package com.voicechat.assistant.ui
 
+import com.voicechat.assistant.realtime.tools.toolResultText
+import com.voicechat.assistant.VoiceForegroundService
+
 import android.app.Application
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.voicechat.assistant.VoiceChatApp
 import com.voicechat.assistant.core.AppLog
+import com.voicechat.assistant.core.IssueReportSnapshot
+import com.voicechat.assistant.core.IssueReportStore
 import com.voicechat.assistant.core.LogCategory
 import com.voicechat.assistant.core.PromptCatalog
 import com.voicechat.assistant.core.PromptPreset
@@ -26,6 +32,8 @@ import com.voicechat.assistant.data.model.UsageTotals
 import com.voicechat.assistant.data.prefs.AppSettings
 import com.voicechat.assistant.memory.MemoryFact
 import com.voicechat.assistant.memory.MemoryPrompt
+import com.voicechat.assistant.tutor.ConversationMode
+import com.voicechat.assistant.tutor.TutorProgress
 import com.voicechat.assistant.realtime.NewsConfig
 import com.voicechat.assistant.realtime.RealtimeSession
 import com.voicechat.assistant.realtime.SessionConfig
@@ -33,11 +41,11 @@ import com.voicechat.assistant.realtime.SessionListener
 import com.voicechat.assistant.realtime.SessionUiState
 import com.voicechat.assistant.realtime.handoff.HandoffConfig
 import com.voicechat.assistant.realtime.handoff.HandoffPrompt
-import com.voicechat.assistant.realtime.handoff.HandoffRouter
 import com.voicechat.assistant.realtime.handoff.HandoffTrace
 import com.voicechat.assistant.realtime.handoff.ReasoningModels
-import com.voicechat.assistant.realtime.tools.SearchRecency
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -48,12 +56,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
 /**
@@ -78,6 +90,53 @@ class AppViewModel(application: Application) :
 
     private val container = (application as VoiceChatApp).container
     private val scope = viewModelScope
+    private val _mode = MutableStateFlow(ConversationMode.ASSISTANT)
+    val mode = _mode.asStateFlow()
+    private val _modeSwitching = MutableStateFlow(false)
+    val modeSwitching = _modeSwitching.asStateFlow()
+    private val navigation = Mutex()
+    private val inputJobs = mutableSetOf<Job>()
+    private fun launchInput(block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit) {
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) { block() }
+        inputJobs.add(job)
+        job.invokeOnCompletion { inputJobs.remove(job) }
+        job.start()
+    }
+    private suspend fun cancelInput() {
+        val pending = inputJobs.toList()
+        pending.forEach { it.cancel() }
+        pending.joinAll()
+    }
+    private val persistenceJobs = mutableSetOf<Job>()
+    private val tutorLearningJobs = mutableSetOf<Job>()
+    private fun persist(block: suspend () -> Unit) {
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            try {
+                block()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                AppLog.warn(LogCategory.DB, "Could not save conversation", error.message)
+                _uiEvents.tryEmit("Could not save part of this conversation.")
+            }
+        }
+        persistenceJobs.add(job)
+        job.invokeOnCompletion { persistenceJobs.remove(job) }
+        job.start()
+    }
+    private val lastChats = mutableMapOf<ConversationMode, String?>()
+    private fun repository(mode: ConversationMode = _mode.value) =
+        if (mode == ConversationMode.SPANISH_TUTOR) container.tutorChats else container.chats
+    private fun memoryStore(mode: ConversationMode = _mode.value) =
+        if (mode == ConversationMode.SPANISH_TUTOR) container.tutorMemory else container.memory
+
+    val tutorProgress = container.tutorProgress.progress
+        .catch { error ->
+            AppLog.warn(LogCategory.MEMORY, "Could not read Spanish progress", error.message)
+            _uiEvents.tryEmit("Could not read Spanish learning progress.")
+            emit(TutorProgress())
+        }
+        .stateIn(scope, SharingStarted.WhileSubscribed(5_000), TutorProgress())
 
     val settings: StateFlow<AppSettings> = container.settings.settings
         .stateIn(scope, SharingStarted.Eagerly, AppSettings())
@@ -85,26 +144,37 @@ class AppViewModel(application: Application) :
     val usageTotals: StateFlow<UsageTotals> = container.settings.usageTotals
         .stateIn(scope, SharingStarted.Eagerly, UsageTotals())
 
-    val chats: StateFlow<List<Chat>> = container.chats.chats
+    val chats: StateFlow<List<Chat>> = mode.flatMapLatest { repository(it).chats }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     /** Facts remembered across chats, newest first for the memory screen. */
-    val memoryFacts: StateFlow<List<MemoryFact>> = container.memory.facts
+    val memoryFacts: StateFlow<List<MemoryFact>> = mode.flatMapLatest { memoryStore(it).facts }
         .map { facts -> facts.sortedByDescending { it.updatedAt } }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val _currentChatId = MutableStateFlow<String?>(null)
     val currentChatId: StateFlow<String?> = _currentChatId.asStateFlow()
+    private val chatCreation = Mutex()
 
     val currentChat: StateFlow<Chat?> = combine(chats, _currentChatId) { list, id ->
         list.firstOrNull { it.id == id }
     }.stateIn(scope, SharingStarted.Eagerly, null)
 
-    val messages: StateFlow<List<Message>> = _currentChatId
-        .flatMapLatest { id ->
-            if (id == null) flowOf(emptyList()) else container.chats.messages(id)
+    val messages: StateFlow<List<Message>> = combine(mode, _currentChatId) { mode, id -> mode to id }
+        .flatMapLatest { (mode, id) ->
+            if (id == null) flowOf(emptyList()) else repository(mode).messages(id)
         }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    // Keep a finalized bubble visible until Room publishes the same message ID.
+    private val voiceMessages = MutableStateFlow<List<Message>>(emptyList())
+    val chatMessages: StateFlow<List<Message>> = combine(messages, voiceMessages, _currentChatId) { saved, voice, chatId ->
+        val current = saved.filter { it.chatId == chatId }
+        val pending = voice.filter { candidate ->
+            candidate.chatId == chatId.orEmpty() && current.none { it.id == candidate.id }
+        }
+        if (pending.isEmpty()) current else (current + pending).sortedBy { it.createdAt }
+    }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     val conversationStats: StateFlow<ConversationStats> = messages
         .map { list ->
@@ -129,6 +199,9 @@ class AppViewModel(application: Application) :
 
     private val _uiEvents = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val uiEvents = _uiEvents.asSharedFlow()
+
+    private val _issueReportIds = MutableStateFlow<List<String>>(emptyList())
+    val issueReportIds = _issueReportIds.asStateFlow()
 
     private var handoffUnavailableNoted = false
     /** Remembered live-mode intent so a manual retry restores voice mode. */
@@ -174,6 +247,14 @@ class AppViewModel(application: Application) :
             // Keep lastNetwork: the next onAvailable compares against it to tell
             // a switch (Wi-Fi -> mobile) from a plain retry on the same network.
         }
+
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            AppLog.debug(
+                LogCategory.TRANSPORT,
+                "Network capabilities changed",
+                "$network ${IssueReportStore.describeNetwork(capabilities)}",
+            )
+        }
     }
 
     val session: RealtimeSession = RealtimeSession(
@@ -185,13 +266,29 @@ class AppViewModel(application: Application) :
         memory = {
             // Read at open time, so a fact learned during this conversation
             // reaches the next session instead of restarting this one.
-            if (settings.value.memoryEnabled) container.memory.sessionBlock() else ""
+            if (_mode.value == ConversationMode.SPANISH_TUTOR) {
+                container.tutorProgress.snapshot().context() +
+                    if (settings.value.memoryEnabled) "\n" + container.tutorMemory.sessionBlock() else ""
+            } else if (settings.value.memoryEnabled) container.memory.sessionBlock() else ""
         },
     )
 
     val sessionState: StateFlow<SessionUiState> = session.state
 
     init {
+        scope.launch { VoiceForegroundService.stopRequests.collect { stopLive() } }
+        scope.launch {
+            var wasLive = false
+            sessionState.collect { state ->
+                val liveOrRecovering = state.liveEnabled || state.reconnecting
+                if (wasLive && !liveOrRecovering) VoiceForegroundService.stop(application)
+                wasLive = liveOrRecovering
+            }
+        }
+        scope.launch {
+            val saved = container.issueReports.list()
+            _issueReportIds.update { (it + saved).distinct().sortedDescending() }
+        }
         // Surface a bad search key instead of silently degrading to the fallback.
         container.tools.onSearchIssue = { message -> _uiEvents.tryEmit(message) }
         runCatching { connectivity?.registerDefaultNetworkCallback(networkCallback) }
@@ -246,53 +343,114 @@ class AppViewModel(application: Application) :
 
     // ---- Chats -------------------------------------------------------------
 
+    override fun onModeSwitchRequested(mode: ConversationMode) = switchMode(mode)
+
+    fun switchMode(target: ConversationMode) {
+        scope.launch {
+            navigation.withLock {
+                if (target == _mode.value) return@withLock
+                _modeSwitching.value = true
+                try {
+                    val resumeVoice = liveWanted
+                    cancelInput()
+                    session.stop()
+                    persistenceJobs.toList().joinAll()
+                    VoiceForegroundService.stop(getApplication<Application>())
+                    chatCreation.withLock {
+                        lastChats[_mode.value] = _currentChatId.value
+                        _currentChatId.value = null
+                        _streaming.value = null
+                        voiceMessages.value = emptyList()
+                        _pendingAttachments.value = emptyList()
+                        _mode.value = target
+                        val remembered = lastChats[target]
+                        _currentChatId.value = remembered?.takeIf { repository(target).chat(it) != null }
+                            ?: repository(target).chats.first().firstOrNull()?.id
+                    }
+                    liveWanted = false
+                    _uiEvents.tryEmit("${target.label} mode")
+                    if (resumeVoice) startLive()
+                } finally {
+                    _modeSwitching.value = false
+                }
+            }
+        }
+    }
+
     fun newChat() {
         liveWanted = false
-        scope.launch {
+        scope.launch { navigation.withLock {
+            cancelInput()
             session.stop()
+            persistenceJobs.toList().joinAll()
             _streaming.value = null
             _currentChatId.value = null
+            lastChats[_mode.value] = null
             _pendingAttachments.value = emptyList()
-        }
+        } }
     }
 
     fun selectChat(chatId: String) {
         if (_currentChatId.value == chatId) return
         liveWanted = false
-        scope.launch {
+        scope.launch { navigation.withLock {
+            cancelInput()
+            if (repository().chat(chatId) == null) return@withLock
             session.stop()
+            persistenceJobs.toList().joinAll()
             _streaming.value = null
             _currentChatId.value = chatId
             _pendingAttachments.value = emptyList()
-        }
+        } }
     }
 
     fun deleteChat(chatId: String) {
+        val repo = repository()
         scope.launch {
             if (_currentChatId.value == chatId) {
                 session.stop()
                 _currentChatId.value = null
                 _streaming.value = null
             }
-            container.chats.deleteChat(chatId)
+            repo.deleteChat(chatId)
             _uiEvents.tryEmit("Chat deleted")
         }
     }
 
     fun renameChat(chatId: String, title: String) {
-        scope.launch { container.chats.renameChat(chatId, title) }
+        val repo = repository()
+        scope.launch { repo.renameChat(chatId, title) }
     }
 
     // ---- Conversation ------------------------------------------------------
 
     fun sendText(raw: String) {
         val typed = raw.trim()
+        liveWanted = false
+        // A typed control command follows the same cold-microphone policy as a text turn.
+        val command = ConversationMode.command(typed)
+        if (command != null) {
+            stopLive()
+            switchMode(command)
+            return
+        }
+        if (_modeSwitching.value) return
         val attachments = _pendingAttachments.value
         if (typed.isEmpty() && attachments.isEmpty()) return
-        scope.launch {
+        if (attachments.any { it.kind == AttachmentKind.IMAGE } && !ReasoningModels.info(settings.value.handoffModel).supportsImages) {
+            _uiEvents.tryEmit("The reasoning model cannot receive image attachments. Remove the image to send this message.")
+            return
+        }
+        launchInput {
+            session.setLiveMode(false)
+            VoiceForegroundService.stop(getApplication<Application>())
             val chatId = ensureChatId()
             val prepared = prepareOutgoing(typed, attachments)
-            container.chats.addMessage(
+            if (prepared.images.size != attachments.count { it.kind == AttachmentKind.IMAGE }) {
+                _uiEvents.tryEmit("An image could not be prepared. Please try again.")
+                return@launchInput
+            }
+            repository().addMessage(
                 Message(
                     id = UUID.randomUUID().toString(),
                     chatId = chatId,
@@ -309,33 +467,25 @@ class AppViewModel(application: Application) :
             val config = buildConfig()
             if (config.apiKey.isBlank()) {
                 _uiEvents.tryEmit("Add your Qwen API key in Settings first.")
-                return@launch
-            }
-            // Warm the news sections while the realtime model reads the turn and
-            // decides to call get_news; the searches then cost nothing at tool
-            // time. Same idea as the voice-side prefetch in RealtimeSession.
-            if (config.news != null && SearchRecency.isNewsQuery(prepared.sentText)) {
-                launch(Dispatchers.IO) { container.tools.warmNews(config.searchProvider) }
+                return@launchInput
             }
             val result = ensureSession(config)
             if (result.isFailure) {
                 _uiEvents.tryEmit(
                     result.exceptionOrNull()?.message ?: "Could not open the realtime session.",
                 )
-                return@launch
+                return@launchInput
             }
-            val deepReasoning = HandoffRouter.shouldEscalate(
-                text = prepared.sentText,
-                config = config.handoff,
-                documentAttached = attachments.any { it.kind == AttachmentKind.DOCUMENT },
-            )
+            liveWanted = false
+            val typedReasoning = buildTypedReasoning(settings.value)
             session.sendText(
                 text = MemoryPrompt.withTurnContext(
                     prepared.sentText,
                     relevantMemory(prepared.sentText),
                 ),
                 images = prepared.images,
-                deepReasoning = deepReasoning,
+                typedReasoning = typedReasoning,
+                userInput = typed,
             )
                 .onFailure { error ->
                     if (error !is CancellationException) {
@@ -347,11 +497,16 @@ class AppViewModel(application: Application) :
 
     fun startLive() {
         liveWanted = true
-        scope.launch {
+        launchInput {
             val config = buildConfig()
             if (config.apiKey.isBlank()) {
                 _uiEvents.tryEmit("Add your Qwen API key in Settings first.")
-                return@launch
+                return@launchInput
+            }
+            val app = getApplication<Application>()
+            ensureChatId()
+            if (!VoiceForegroundService.start(app)) {
+                _uiEvents.tryEmit("Voice can continue while VoiceChat is visible. Android blocked background listening.")
             }
             val state = session.state.value
             val result = if (state.connected) {
@@ -361,16 +516,23 @@ class AppViewModel(application: Application) :
                 session.start(config, live = true)
             }
             if (result.isFailure) {
+                VoiceForegroundService.stop(app)
                 _uiEvents.tryEmit(
                     result.exceptionOrNull()?.message ?: "Could not start voice mode.",
                 )
+            } else if (config.spanishTutor && !state.connected) {
+                session.startTutorLesson()
             }
         }
     }
 
     fun stopLive() {
         liveWanted = false
-        scope.launch { session.setLiveMode(false) }
+        scope.launch {
+            cancelInput()
+            session.setLiveMode(false)
+            VoiceForegroundService.stop(getApplication<Application>())
+        }
     }
 
     fun interrupt() {
@@ -387,15 +549,17 @@ class AppViewModel(application: Application) :
 
     /** Manual retry from the error banner, keeping the previous mode. */
     fun reconnect() {
-        scope.launch {
+        launchInput {
             val config = buildConfig()
             if (config.apiKey.isBlank()) {
                 _uiEvents.tryEmit("Add your Qwen API key in Settings first.")
-                return@launch
+                return@launchInput
             }
             val live = liveWanted
+            if (live) VoiceForegroundService.start(getApplication<Application>())
             val result = session.start(config, live = live)
             if (result.isFailure) {
+                VoiceForegroundService.stop(getApplication<Application>())
                 _uiEvents.tryEmit(
                     result.exceptionOrNull()?.message ?: "Could not reconnect.",
                 )
@@ -521,23 +685,46 @@ class AppViewModel(application: Application) :
 
     // ---- Memory ------------------------------------------------------------
 
-    fun deleteMemory(fact: MemoryFact) {
+    fun resetTutorProgress() {
         scope.launch {
-            container.memory.delete(fact.id)
+            navigation.withLock {
+                if (_mode.value == ConversationMode.SPANISH_TUTOR) {
+                    cancelInput()
+                    liveWanted = false
+                    session.stop()
+                    persistenceJobs.toList().joinAll()
+                    _streaming.value = null
+                    VoiceForegroundService.stop(getApplication<Application>())
+                }
+                val learning = tutorLearningJobs.toList()
+                learning.forEach { it.cancel() }
+                learning.joinAll()
+                container.tutorProgress.clear()
+                _uiEvents.tryEmit("Spanish learning progress reset to A2.")
+            }
+        }
+    }
+
+    fun deleteMemory(fact: MemoryFact) {
+        val store = memoryStore()
+        scope.launch {
+            store.delete(fact.id)
             _uiEvents.tryEmit("Fact forgotten.")
         }
     }
 
     fun updateMemory(fact: MemoryFact, text: String) {
+        val store = memoryStore()
         scope.launch {
-            container.memory.update(fact.id, text)
+            store.update(fact.id, text)
             _uiEvents.tryEmit("Fact updated.")
         }
     }
 
     fun clearMemory() {
+        val store = memoryStore()
         scope.launch {
-            container.memory.clear()
+            store.clear()
             _uiEvents.tryEmit("Memory erased.")
         }
     }
@@ -546,31 +733,113 @@ class AppViewModel(application: Application) :
 
     fun exportLogs(): String = AppLog.export()
 
+    fun saveButtonIssueReport() = saveIssueReport("Report button", "")
+
+    override fun onIssueReportRequested(description: String) = saveIssueReport("Voice command", description)
+
+    private fun saveIssueReport(source: String, description: String) {
+        // Capture the active state before any disk or platform diagnostics run.
+        val capturedAt = System.currentTimeMillis()
+        val current = settings.value
+        val state = sessionState.value
+        val chatId = _currentChatId.value
+        val snapshot = IssueReportSnapshot(
+            capturedAt = capturedAt,
+            source = source,
+            description = description,
+            session = "Configured model ${current.model} over ${current.transport}\n\n" +
+                "Status ${state.status}, connected=${state.connected}, live=${state.liveEnabled}, " +
+                "reconnecting=${state.reconnecting}, reasoningModel=${state.handoff?.model ?: "none"}",
+            messages = messages.value.asReversed().asSequence()
+                .filter { it.chatId == chatId && it.createdAt <= capturedAt }
+                .take(24).toList().asReversed(),
+            assistantPartial = state.assistantPartial,
+            appLogs = AppLog.entries.value,
+            apiKeyOverride = current.apiKeyOverride,
+            protocolDump = AppLog.protocolDump,
+        )
+        scope.launch {
+            try {
+                val id = container.issueReports.save(snapshot)
+                _issueReportIds.update { (it + id).sortedDescending() }
+                showMessage("Issue report saved. Open Debug logs → Issue reports to export it.")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                showMessage("Could not save the issue report.")
+            }
+        }
+    }
+
+    fun exportIssueReport(id: String, uri: Uri) {
+        scope.launch {
+            try {
+                container.issueReports.export(id, uri)
+                showMessage("Issue report ZIP exported.")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                showMessage("Could not export the issue report.")
+            }
+        }
+    }
+
     fun showMessage(message: String) {
         _uiEvents.tryEmit(message)
     }
 
     // ---- SessionListener ---------------------------------------------------
 
-    override fun onUserTranscriptFinal(text: String) {
-        if (text.isBlank()) return
-        scope.launch {
-            val chatId = ensureChatId()
-            container.chats.addMessage(
-                Message(
-                    id = UUID.randomUUID().toString(),
-                    chatId = chatId,
-                    role = MessageRole.USER,
-                    kind = MessageKind.VOICE,
-                    text = text,
-                    attachments = emptyList(),
-                    createdAt = System.currentTimeMillis(),
-                    streaming = false,
-                ),
-            )
-            learnFromUserTurn(text, chatId)
+    override fun onUserTranscriptPartial(text: String) {
+        val current = voiceMessages.value
+        val pending = current.filterNot { it.streaming }
+        voiceMessages.value = if (text.isBlank()) {
+            pending
+        } else {
+            val draft = current.lastOrNull { it.streaming } ?: newVoiceMessage(text)
+            pending + draft.copy(text = text, streaming = true)
         }
     }
+
+    override fun onUserTranscriptFinal(text: String) {
+        if (text.isBlank()) return
+        val turnMode = _mode.value
+        val repo = repository(turnMode)
+        val current = voiceMessages.value
+        val draft = current.lastOrNull { it.streaming } ?: newVoiceMessage(text)
+        val message = draft.copy(text = text, streaming = false)
+        voiceMessages.value = current.filterNot { it.streaming } + message
+        persist {
+            try {
+                val chatId = message.chatId.ifEmpty { ensureChatId(turnMode) }
+                voiceMessages.update { rows ->
+                    rows.map { if (it.id == message.id) message.copy(chatId = chatId) else it }
+                }
+                repo.addMessage(message.copy(chatId = chatId))
+                learnFromUserTurn(text, chatId, turnMode)
+                combine(messages, _currentChatId) { saved, selected ->
+                    selected != chatId || saved.any { it.id == message.id }
+                }.first { it }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                AppLog.warn(LogCategory.DB, "Could not save voice transcript", error.message)
+                showMessage("Could not save the voice transcript.")
+            } finally {
+                voiceMessages.update { rows -> rows.filterNot { it.id == message.id } }
+            }
+        }
+    }
+
+    private fun newVoiceMessage(text: String) = Message(
+        id = UUID.randomUUID().toString(),
+        chatId = _currentChatId.value.orEmpty(),
+        role = MessageRole.USER,
+        kind = MessageKind.VOICE,
+        text = text,
+        attachments = emptyList(),
+        createdAt = System.currentTimeMillis(),
+    )
 
     override fun onAssistantStart(voice: Boolean) {
         if (_streaming.value == null) {
@@ -594,15 +863,20 @@ class AppViewModel(application: Application) :
     }
 
     override fun onAssistantFinished(text: String, metrics: TurnMetrics, partial: Boolean) {
+        val turnMode = _mode.value
+        val selectedId = _currentChatId.value
+        val repo = repository(turnMode)
         val stream = _streaming.value
         _streaming.value = null
         val content = text.trim()
         if (content.isEmpty()) return
-        scope.launch {
-            val chatId = ensureChatId()
-            container.chats.addMessage(
+        val messageId = stream?.id ?: "assistant-${UUID.randomUUID()}"
+        val learningSettings = settings.value
+        persist {
+            val chatId = selectedId ?: ensureChatId(turnMode)
+            repo.addMessage(
                 Message(
-                    id = stream?.id ?: "assistant-${UUID.randomUUID()}",
+                    id = messageId,
                     chatId = chatId,
                     role = MessageRole.ASSISTANT,
                     kind = if (stream?.voice == true) MessageKind.VOICE else MessageKind.TEXT,
@@ -616,24 +890,56 @@ class AppViewModel(application: Application) :
                     costUsd = metrics.costUsd,
                 ),
             )
+            if (turnMode == ConversationMode.SPANISH_TUTOR && !partial && container.reasoner.configured) {
+                val config = buildNews(learningSettings)?.model
+                if (config != null) {
+                    val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                        try {
+                            container.tutorLearning.observe(messageId, learningSettings.apiKey, config) { usage, cost ->
+                                onUsage(usage, cost)
+                                repo.message(messageId)?.let { saved ->
+                                    repo.updateMessage(messageId,
+                                        inputTokens = saved.inputTokens + usage.inputTokens,
+                                        outputTokens = saved.outputTokens + usage.outputTokens,
+                                        costUsd = saved.costUsd + cost,
+                                    )
+                                }
+                            }
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            AppLog.warn(LogCategory.MEMORY, "Spanish learning recap failed", error.message)
+                            _uiEvents.tryEmit("Could not update the Spanish learning summary. Your dialog is saved.")
+                        }
+                    }
+                    tutorLearningJobs.add(job)
+                    job.invokeOnCompletion { tutorLearningJobs.remove(job) }
+                    job.start()
+                }
+            }
         }
     }
 
     override fun onToolCall(name: String, arguments: String, result: String?) {
+        // Learning bookkeeping is displayed in the progress panel, not as noisy chat bubbles.
+        if (name == "record_tutor_progress" || name == "recall_tutor_progress") return
+        val turnMode = _mode.value
+        val selectedId = _currentChatId.value
+        val repo = repository(turnMode)
         if (result == null) {
             _uiEvents.tryEmit("Using tool: $name")
             return
         }
-        scope.launch {
-            val chatId = ensureChatId()
-            val body = buildString {
+        persist {
+            val chatId = selectedId ?: ensureChatId(turnMode)
+            val body = toolResultText(name, result) ?: buildString {
                 append(name)
                 append("(")
                 append(arguments.take(160))
                 append(")\n")
                 append(result.take(600))
             }
-            container.chats.addMessage(
+            repo.addMessage(
                 Message(
                     id = UUID.randomUUID().toString(),
                     chatId = chatId,
@@ -653,9 +959,12 @@ class AppViewModel(application: Application) :
     }
 
     override fun onHandoff(trace: HandoffTrace) {
-        scope.launch {
-            val chatId = ensureChatId()
-            container.chats.addMessage(
+        val turnMode = _mode.value
+        val selectedId = _currentChatId.value
+        val repo = repository(turnMode)
+        persist {
+            val chatId = selectedId ?: ensureChatId(turnMode)
+            repo.addMessage(
                 Message(
                     id = UUID.randomUUID().toString(),
                     chatId = chatId,
@@ -695,12 +1004,14 @@ class AppViewModel(application: Application) :
     fun defaultVoiceForModel(model: String): String =
         RealtimeDefaults.models.firstOrNull { it.id == model }?.defaultVoice ?: "Tina"
 
-    private suspend fun ensureChatId(): String {
-        val existing = _currentChatId.value
-        if (existing != null && container.chats.chat(existing) != null) return existing
-        val id = container.chats.createChat()
-        _currentChatId.value = id
-        return id
+    private suspend fun ensureChatId(mode: ConversationMode = _mode.value): String = chatCreation.withLock {
+        val repo = repository(mode)
+        val existing = if (mode == _mode.value) _currentChatId.value else lastChats[mode]
+        if (existing != null && repo.chat(existing) != null) return@withLock existing
+        val id = repo.createChat()
+        lastChats[mode] = id
+        if (mode == _mode.value) _currentChatId.value = id
+        id
     }
 
     /**
@@ -715,7 +1026,7 @@ class AppViewModel(application: Application) :
         val current = settings.value
         if (!current.memoryEnabled || !current.memoryPerTurn || text.isBlank()) return ""
         return try {
-            container.memory.turnBlock(text)
+            memoryStore().turnBlock(text)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -729,11 +1040,13 @@ class AppViewModel(application: Application) :
      * regex work on one sentence, but it still runs off the turn so it can never
      * delay a reply.
      */
-    private fun learnFromUserTurn(text: String, chatId: String?) {
+    private fun learnFromUserTurn(text: String, chatId: String?, mode: ConversationMode = _mode.value) {
+        // Tutor exercises contain fictional first-person sentences. Explicit facts use remember_fact.
+        if (mode == ConversationMode.SPANISH_TUTOR) return
         if (text.isBlank() || !settings.value.memoryEnabled) return
         scope.launch(Dispatchers.IO) {
             try {
-                container.memory.learn(text, chatId)
+                memoryStore(mode).learn(text, chatId)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -755,9 +1068,10 @@ class AppViewModel(application: Application) :
 
     private fun buildConfig(): SessionConfig {
         val current = settings.value
+        val tutor = _mode.value == ConversationMode.SPANISH_TUTOR
         val modelInfo = current.modelInfo
-        val toolsEnabled = current.toolsEnabled && modelInfo.supportsTools
-        val nativeSearch = modelInfo.resolveNativeSearch(current.nativeSearch, toolsEnabled)
+        val toolsEnabled = (current.toolsEnabled || tutor) && modelInfo.supportsTools
+        val nativeSearch = !tutor && modelInfo.resolveNativeSearch(current.nativeSearch, toolsEnabled)
         val handoff = buildHandoff(current, toolsEnabled)
         if (current.handoffEnabled && handoff == null && !handoffUnavailableNoted) {
             handoffUnavailableNoted = true
@@ -772,7 +1086,7 @@ class AppViewModel(application: Application) :
         return SessionConfig(
             model = current.model,
             voice = modelInfo.resolveVoice(current.voice),
-            instructions = current.instructions,
+            instructions = if (tutor) PromptCatalog.spanishTutor else current.instructions,
             transport = if (current.transport in modelInfo.supportedTransports) {
                 current.transport
             } else {
@@ -791,13 +1105,14 @@ class AppViewModel(application: Application) :
             silenceMs = current.silenceMs,
             onDeviceVad = current.onDeviceVad,
             vadSensitivityDb = current.vadSensitivityDb,
-            inputTranscription = current.inputTranscription,
+            inputTranscription = current.inputTranscription || tutor,
             transcriptionModel = modelInfo.transcriptionModel,
             toolsJson = if (toolsEnabled) {
                 container.tools.definitions(
                     includeWebSearch = !nativeSearch,
                     includeHandoff = handoff != null,
                     includeMemory = current.memoryEnabled,
+                    includeTutor = tutor,
                 )
             } else {
                 null
@@ -809,7 +1124,8 @@ class AppViewModel(application: Application) :
             searchProvider = current.searchProvider,
             priceInputPerMillion = current.priceInputPerMillion,
             priceOutputPerMillion = current.priceOutputPerMillion,
-            languageHint = current.languageHint,
+            languageHint = if (tutor) "Mexican Spanish for practice; English for explanations and questions when helpful." else current.languageHint,
+            spanishTutor = tutor,
         )
     }
 
@@ -833,6 +1149,20 @@ class AppViewModel(application: Application) :
             speculativeVoice = current.handoffSpeculativeVoice,
             priceInputPerMillion = current.handoffPriceInputPerMillion,
             priceOutputPerMillion = current.handoffPriceOutputPerMillion,
+            nativeWebSearch = true,
+        )
+    }
+
+    private fun buildTypedReasoning(current: AppSettings): HandoffConfig? {
+        if (!container.reasoner.configured) return null
+        return HandoffConfig(
+            model = ReasoningModels.resolve(current.handoffModel),
+            thinkingBudget = current.handoffThinkingBudget.coerceIn(ReasoningModels.MIN_THINKING_BUDGET, ReasoningModels.MAX_THINKING_BUDGET),
+            timeoutMs = current.handoffTimeoutMs.coerceIn(ReasoningModels.MIN_TIMEOUT_MS, ReasoningModels.MAX_TIMEOUT_MS),
+            contextTurns = current.handoffContextTurns.coerceIn(0, 16),
+            priceInputPerMillion = current.handoffPriceInputPerMillion,
+            priceOutputPerMillion = current.handoffPriceOutputPerMillion,
+            nativeWebSearch = true,
         )
     }
 
@@ -864,21 +1194,11 @@ class AppViewModel(application: Application) :
         typed: String,
         attachments: List<Attachment>,
     ): PreparedOutgoing {
-        val transport = settings.value.transport
         val imageAttachments = attachments.filter { it.kind == AttachmentKind.IMAGE }
         val images = mutableListOf<String>()
         if (imageAttachments.isNotEmpty()) {
-            if (transport != TransportKind.WEBSOCKET) {
-                _uiEvents.tryEmit(
-                    "Image attachments need the WebSocket transport. The text was sent without them.",
-                )
-            } else {
-                imageAttachments.forEach { attachment ->
-                    container.attachments.imageBase64(attachment)?.let { images += it }
-                }
-                if (images.isEmpty()) {
-                    _uiEvents.tryEmit("Images could not be prepared; sending text only.")
-                }
+            imageAttachments.forEach { attachment ->
+                container.attachments.imageBase64(attachment)?.let { images += it }
             }
         }
         val documents = attachments.filter { it.kind == AttachmentKind.DOCUMENT }
@@ -905,6 +1225,7 @@ class AppViewModel(application: Application) :
     }
 
     override fun onCleared() {
+        VoiceForegroundService.stop(getApplication<Application>())
         runCatching { connectivity?.unregisterNetworkCallback(networkCallback) }
         session.shutdown()
         super.onCleared()

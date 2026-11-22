@@ -16,6 +16,7 @@ import com.voicechat.assistant.memory.MemoryKind
 import com.voicechat.assistant.memory.MemoryPrompt
 import com.voicechat.assistant.memory.MemoryStore
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -23,6 +24,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -34,6 +36,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -57,9 +60,21 @@ class ToolRegistry(
     private val httpClient: OkHttpClient,
     private val exaApiKey: String = BuildConfig.EXA_API_KEY,
     private val memory: MemoryStore? = null,
+    private val tutorMemory: MemoryStore? = null,
+    private val tutorProgress: com.voicechat.assistant.tutor.TutorStore? = null,
 ) {
 
     private val json = Json { prettyPrint = false }
+    private val drivingHttp = httpClient.newBuilder().callTimeout(14, TimeUnit.SECONDS).build()
+    private val trips = TripTools(drivingHttp)
+    private val device = DeviceActions(context)
+    private val briefings = BriefingTools(context, drivingHttp, exaApiKey)
+    private val podcastCatalog = PocketCastsCatalog(drivingHttp)
+
+    internal suspend fun resolvePhone(target: String, body: String?) =
+        withContext(Dispatchers.IO) { device.resolve(target, body) }
+
+    internal suspend fun completePhone(action: DeviceActions.Pending) = device.complete(action)
 
     /** Reports a provider that rejected its key, so the UI can tell the user. */
     @Volatile
@@ -103,7 +118,8 @@ class ToolRegistry(
         includeWebSearch: Boolean,
         includeHandoff: Boolean = false,
         includeMemory: Boolean = false,
-    ): String = ToolDefinitions.json(includeWebSearch, includeHandoff, includeMemory)
+        includeTutor: Boolean = false,
+    ): String = ToolDefinitions.json(includeWebSearch, includeHandoff, includeMemory, includeTutor)
 
     val definitionsJson: String get() = ToolDefinitions.all
 
@@ -111,23 +127,73 @@ class ToolRegistry(
         name: String,
         argumentsJson: String,
         searchProvider: SearchProvider = SearchProvider.EXA,
+        spanishTutor: Boolean = false,
     ): String = withContext(Dispatchers.IO) {
-        AppLog.info(LogCategory.TOOLS, "Executing $name", argumentsJson.take(400))
+        val driving = name in ToolDefinitions.drivingNames || name == "get_weather"
+        AppLog.info(LogCategory.TOOLS, "Executing $name", if (driving) "" else argumentsJson.take(400))
         val result = runCatching {
             when (name) {
                 "get_current_datetime" -> currentDateTime(argumentsJson)
                 "get_location" -> location()
-                "get_weather" -> weather()
+                "get_weather" -> weather(json.parseToJsonElement(argumentsJson).jsonObject)
+                "find_nearby" -> when (val fix = locate()) {
+                    is Located.Failure -> errorResult(fix.message)
+                    is Located.Ok -> trips.nearby(fix.location, json.parseToJsonElement(argumentsJson).jsonObject)
+                }
+                "get_trip_eta" -> when (val fix = locate()) {
+                    is Located.Failure -> errorResult(fix.message)
+                    is Located.Ok -> trips.eta(fix.location, argument(argumentsJson, "destination").take(200)) {
+                        geocode(it)?.let { address -> address.latitude to address.longitude }
+                    }
+                }
+                "start_navigation" -> device.navigate(argument(argumentsJson, "destination").take(200))
+                "play_pocket_casts" -> {
+                    val args = json.parseToJsonElement(argumentsJson).jsonObject
+                    val action = args.string("action")
+                    if (action == "find_episode" || action == "latest_episode") {
+                        podcastCatalog.lookup(args.string("query").take(200), latest = action == "latest_episode")
+                    } else {
+                        device.pocketCasts(args)
+                    }
+                }
+                "get_reddit_briefing" -> briefings.reddit(json.parseToJsonElement(argumentsJson).jsonObject)
+                "save_for_later" -> briefings.save(json.parseToJsonElement(argumentsJson).jsonObject)
                 "web_search" -> webSearch(argumentsJson, searchProvider)
-                ToolDefinitions.RECALL_NAME -> recallMemory(argumentsJson)
-                ToolDefinitions.REMEMBER_NAME -> rememberFact(argumentsJson)
-                ToolDefinitions.FORGET_NAME -> forgetFact(argumentsJson)
+                ToolDefinitions.RECALL_NAME -> recallMemory(argumentsJson, if (spanishTutor) tutorMemory else memory)
+                ToolDefinitions.REMEMBER_NAME -> rememberFact(argumentsJson, if (spanishTutor) tutorMemory else memory)
+                ToolDefinitions.FORGET_NAME -> forgetFact(argumentsJson, if (spanishTutor) tutorMemory else memory)
+                "record_tutor_progress" -> {
+                    if (!spanishTutor || tutorProgress == null) errorResult("Spanish tutor is not active.")
+                    else {
+                        tutorProgress.update(json.parseToJsonElement(argumentsJson).jsonObject)
+                        "{\"ok\":true,\"saved\":true}"
+                    }
+                }
+                "recall_tutor_progress" -> {
+                    if (!spanishTutor || tutorProgress == null) errorResult("Spanish tutor is not active.")
+                    else {
+                        val progress = tutorProgress.snapshot()
+                        val query = argument(argumentsJson, "query")
+                        if (query.isBlank()) json.encodeToString(com.voicechat.assistant.tutor.TutorProgress.serializer(), progress.copy(
+                            vocabulary = progress.vocabulary.sortedBy { !it.needsWork }.take(60),
+                            grammar = progress.grammar.sortedBy { !it.needsWork }.take(40),
+                        ))
+                        else json.encodeToString(com.voicechat.assistant.tutor.TutorProgress.serializer(), progress.copy(
+                            vocabulary = progress.vocabulary.filter { "${it.topic} ${it.note}".contains(query, true) }.take(60),
+                            grammar = progress.grammar.filter { "${it.topic} ${it.note}".contains(query, true) }.take(40),
+                            activities = progress.activities.filter { it.contains(query, true) },
+                            recentDialog = progress.recentDialog.filter { it.text.contains(query, true) },
+                        ))
+                    }
+                }
                 else -> errorResult("Unknown tool: $name")
             }
         }.getOrElse { error ->
-            errorResult(error.message ?: error::class.java.simpleName)
+            if (error is CancellationException) throw error
+            if (driving) errorResult("The $name lookup or action couldn't be completed.")
+            else errorResult(error.message ?: error::class.java.simpleName)
         }
-        AppLog.info(LogCategory.TOOLS, "Tool result: $name", result.take(600))
+        AppLog.info(LogCategory.TOOLS, "Tool result: $name", if (driving) "" else result.take(600))
         result
     }
 
@@ -135,15 +201,15 @@ class ToolRegistry(
      * Device memory tools. They run against the local database only: the model
      * asks in words, the app ranks the stored facts and answers with JSON.
      */
-    private suspend fun recallMemory(argumentsJson: String): String {
-        val store = memory ?: return MemoryPrompt.error(NO_MEMORY)
+    private suspend fun recallMemory(argumentsJson: String, selectedMemory: MemoryStore?): String {
+        val store = selectedMemory ?: return MemoryPrompt.error(NO_MEMORY)
         val query = argument(argumentsJson, "query")
         if (query.isBlank()) return MemoryPrompt.error("A query is required.")
         return MemoryPrompt.recallResult(store.recall(query, RECALL_TOOL_LIMIT), query)
     }
 
-    private suspend fun rememberFact(argumentsJson: String): String {
-        val store = memory ?: return MemoryPrompt.error(NO_MEMORY)
+    private suspend fun rememberFact(argumentsJson: String, selectedMemory: MemoryStore?): String {
+        val store = selectedMemory ?: return MemoryPrompt.error(NO_MEMORY)
         val fact = argument(argumentsJson, "fact")
         if (fact.isBlank()) return MemoryPrompt.error("The fact is required.")
         val kind = argument(argumentsJson, "kind").takeIf { it.isNotBlank() }?.let { requested ->
@@ -157,8 +223,8 @@ class ToolRegistry(
         return MemoryPrompt.rememberResult(stored)
     }
 
-    private suspend fun forgetFact(argumentsJson: String): String {
-        val store = memory ?: return MemoryPrompt.error(NO_MEMORY)
+    private suspend fun forgetFact(argumentsJson: String, selectedMemory: MemoryStore?): String {
+        val store = selectedMemory ?: return MemoryPrompt.error(NO_MEMORY)
         val query = argument(argumentsJson, "query")
         if (query.isBlank()) return MemoryPrompt.error("A query is required.")
         val forgotten = store.forget(query)
@@ -207,64 +273,93 @@ class ToolRegistry(
         }
     }
 
-    /**
-     * Current weather for the device location. Open-Meteo needs no API key, so
-     * weather answers do not depend on a configured search provider.
-     */
-    private fun weather(): String {
-        val located = locate()
-        if (located is Located.Failure) return errorResult(located.message)
-        located as Located.Ok
-        val latitude = located.location.latitude
-        val longitude = located.location.longitude
-        val url = buildString {
-            append("https://api.open-meteo.com/v1/forecast")
-            append("?latitude=").append(String.format(Locale.US, "%.4f", latitude))
-            append("&longitude=").append(String.format(Locale.US, "%.4f", longitude))
-            append("&current=temperature_2m,apparent_temperature,relative_humidity_2m,")
-            append("precipitation,weather_code,wind_speed_10m")
-            append("&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max")
-            append("&timezone=auto&forecast_days=1")
+    private suspend fun weather(args: JsonObject): String {
+        val place = args.string("location")
+        val coordinates = if (place.isBlank()) {
+            when (val fix = locate()) {
+                is Located.Failure -> return errorResult(fix.message)
+                is Located.Ok -> Triple(fix.location.latitude, fix.location.longitude, fix.place)
+            }
+        } else {
+            val match = geocode(place)
+                ?: return errorResult("Could not find that forecast location. Ask for a city and region.")
+            Triple(match.latitude, match.longitude, match.locality ?: place)
         }
-        val body = runCatching {
-            val request = Request.Builder().url(url).build()
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    AppLog.warn(LogCategory.TOOLS, "Weather lookup failed", "status=${response.code}")
-                    null
-                } else {
-                    response.body?.string()
+        val start = args.string("start").lowercase(Locale.ROOT).ifBlank { "today" }
+        val days = args.string("days").ifBlank { "1" }.toIntOrNull()
+            ?.takeIf { it in 1..16 } ?: return errorResult("Use 1 to 16 forecast days.")
+        val hour = args.string("hour").takeIf { it.isNotBlank() }?.let {
+            it.toIntOrNull()?.takeIf { value -> value in 0..23 }
+                ?: return errorResult("Use a local hour between 0 and 23.")
+        }
+        if (hour != null && days != 1) return errorResult("An hourly lookup needs a single day.")
+        val url = "https://api.open-meteo.com/v1/forecast".toHttpUrl().newBuilder()
+            .addQueryParameter("latitude", "%.4f".format(Locale.US, coordinates.first))
+            .addQueryParameter("longitude", "%.4f".format(Locale.US, coordinates.second))
+            .addQueryParameter("timezone", "auto")
+            .addQueryParameter("forecast_days", "16")
+            .addQueryParameter("current", "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m")
+            .addQueryParameter("daily", "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code")
+            .apply {
+                if (hour != null) addQueryParameter("hourly", "temperature_2m,precipitation_probability,weather_code")
+            }.build()
+        val root = drivingHttp.toolJson(Request.Builder().url(url).build())
+        val daily = root.obj("daily") ?: return errorResult("No daily forecast was returned.")
+        val dates = (daily["time"] as? JsonArray).orEmpty().map { it.jsonPrimitive.content }
+        val from = when (start) {
+            "today", "now" -> 0
+            "tomorrow" -> 1
+            else -> dates.indexOf(start)
+        }
+        if (from < 0 || from + days > dates.size) {
+            return errorResult("That date range is outside the available forecast.")
+        }
+        return buildJsonObject {
+            put("ok", true)
+            coordinates.third?.let { put("place", it) }
+            put("timezone", root.string("timezone"))
+            if (from == 0 && hour == null && days == 1) root.obj("current")?.let { current ->
+                putJsonObject("current") {
+                    put("observed_at", current.string("time"))
+                    numberField(current, "temperature_2m")?.let { put("temperature_c", it) }
+                    numberField(current, "apparent_temperature")?.let { put("feels_like_c", it) }
+                    numberField(current, "relative_humidity_2m")?.let { put("humidity_pct", it) }
+                    numberField(current, "precipitation")?.let { put("precipitation_mm", it) }
+                    numberField(current, "wind_speed_10m")?.let { put("wind_kmh", it) }
+                    numberField(current, "weather_code")?.let { put("condition", weatherCondition(it.toInt())) }
                 }
             }
-        }.getOrNull() ?: return errorResult("The weather service did not answer.")
-        return runCatching {
-            val root = json.parseToJsonElement(body).jsonObject
-            val current = root["current"]?.jsonObject
-            val daily = root["daily"]?.jsonObject
-            requireNotNull(current) { "missing current weather" }
-            buildJsonObject {
-                located.place?.let { put("place", it) }
-                numberField(current, "temperature_2m")?.let { put("temperature_c", it) }
-                numberField(current, "apparent_temperature")?.let { put("feels_like_c", it) }
-                numberField(current, "relative_humidity_2m")?.let { put("humidity_pct", it) }
-                numberField(current, "precipitation")?.let { put("precipitation_mm", it) }
-                numberField(current, "wind_speed_10m")?.let { put("wind_kmh", it) }
-                numberField(current, "weather_code")?.let { code ->
-                    put("condition", weatherCondition(code.toInt()))
+            putJsonArray("daily") {
+                for (index in from until from + days) add(buildJsonObject {
+                    put("date", dates[index])
+                    numberField(daily, "temperature_2m_max", index)?.let { put("high_c", it) }
+                    numberField(daily, "temperature_2m_min", index)?.let { put("low_c", it) }
+                    numberField(daily, "weather_code", index)?.let { put("condition", weatherCondition(it.toInt())) }
+                    numberField(daily, "precipitation_probability_max", index)?.let {
+                        put("rain_chance_pct", it)
+                    }
+                })
+            }
+            if (hour != null) root.obj("hourly")?.let { hourly ->
+                val time = dates[from] + "T%02d:00".format(Locale.ROOT, hour)
+                val index = (hourly["time"] as? JsonArray).orEmpty()
+                    .indexOfFirst { it.jsonPrimitive.content == time }
+                if (index >= 0) putJsonObject("hourly") {
+                    put("time", time)
+                    numberField(hourly, "temperature_2m", index)?.let { put("temperature_c", it) }
+                    numberField(hourly, "weather_code", index)?.let { put("condition", weatherCondition(it.toInt())) }
+                    numberField(hourly, "precipitation_probability", index)?.let { put("rain_chance_pct", it) }
                 }
-                numberField(daily, "temperature_2m_max", 0)?.let { put("today_high_c", it) }
-                numberField(daily, "temperature_2m_min", 0)?.let { put("today_low_c", it) }
-                numberField(daily, "precipitation_probability_max", 0)?.let {
-                    put("rain_chance_pct", it)
-                }
-                put("observed_at", current["time"]?.jsonPrimitive?.content.orEmpty())
-                put("units", "celsius, km/h")
-            }.toString()
-        }.getOrElse { error ->
-            AppLog.warn(LogCategory.TOOLS, "Weather response unreadable", error.message)
-            errorResult("The weather response could not be read.")
-        }
+            }
+        }.toString()
     }
+
+    @Suppress("DEPRECATION")
+    private fun geocode(name: String): android.location.Address? = runCatching {
+        if (!android.location.Geocoder.isPresent()) return null
+        android.location.Geocoder(context, Locale.getDefault())
+            .getFromLocationName(name, 1)?.firstOrNull()
+    }.getOrNull()
 
     private fun numberField(
         source: kotlinx.serialization.json.JsonObject?,

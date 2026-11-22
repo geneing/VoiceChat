@@ -24,7 +24,7 @@ object HandoffPrompt {
     private const val MAX_REFERENCE_CHARS = 6_000
 
     /** One conversation turn. `role` is `user` or `assistant`. */
-    data class Turn(val role: String, val text: String)
+    data class Turn(val role: String, val text: String, val images: List<String> = emptyList())
 
     data class Sections(val answer: String, val summary: String)
 
@@ -93,11 +93,20 @@ object HandoffPrompt {
             messages.forEach { message ->
                 addJsonObject {
                     put("role", message.role)
-                    put("content", message.text)
+                    if (message.images.isEmpty()) put("content", message.text) else putJsonArray("content") {
+                        addJsonObject { put("type", "text"); put("text", message.text) }
+                        message.images.forEach { image ->
+                            addJsonObject {
+                                put("type", "image_url")
+                                putJsonObject("image_url") { put("url", "data:image/jpeg;base64,$image") }
+                            }
+                        }
+                    }
                 }
             }
         }
         put("stream", true)
+        if (config.nativeWebSearch && config.modelInfo.supportsNativeSearch) put("enable_search", true)
         putJsonObject("stream_options") { put("include_usage", true) }
         when (config.modelInfo.thinkingMode) {
             // Only hybrid models take a budget; the others reject or ignore it.
@@ -128,8 +137,8 @@ object HandoffPrompt {
             put("error", trace.error ?: "Deep reasoning failed")
             put(
                 "hint",
-                "Answer from your own knowledge, say briefly that deep reasoning was " +
-                    "unavailable, and do not ask the user to retry.",
+                "If the question needs current information, try an available search tool. " +
+                    "Otherwise answer from your own knowledge and briefly say deep reasoning was unavailable.",
             )
         } else {
             put("spoken_summary", trace.summary)

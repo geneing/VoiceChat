@@ -21,6 +21,8 @@ private data class PromptFile(
     val default: String = "",
     val presets: List<PromptPresetSpec> = emptyList(),
     val knownDefaults: List<String> = emptyList(),
+    val spanishTutor: String = "",
+    val spanishTutorMemory: String = "",
 )
 
 /**
@@ -50,6 +52,8 @@ object PromptCatalog {
         val defaultPrompt: String,
         val presets: List<PromptPreset>,
         val knownDefaults: List<String>,
+        val spanishTutor: String = "You are a bilingual Mexican Spanish tutor starting at A2; adapt lesson difficulty and use English for clarifications.",
+        val spanishTutorMemory: String = "Summarize observed Spanish practice as JSON with summary, activity, vocabulary and grammar arrays of topic, outcome, note.",
     )
 
     @Volatile
@@ -65,6 +69,8 @@ object PromptCatalog {
     val defaultPrompt: String get() = catalog.defaultPrompt
     val presets: List<PromptPreset> get() = catalog.presets
     val knownDefaults: List<String> get() = catalog.knownDefaults
+    val spanishTutor: String get() = catalog.spanishTutor
+    val spanishTutorMemory: String get() = catalog.spanishTutorMemory
 
     fun attach(context: Context) {
         val text = try {
@@ -108,6 +114,8 @@ object PromptCatalog {
             defaultPrompt = default,
             presets = presets,
             knownDefaults = file.knownDefaults.map { it.trim() }.filter { it.isNotEmpty() },
+            spanishTutor = file.spanishTutor.trim().ifBlank { catalog.spanishTutor },
+            spanishTutorMemory = file.spanishTutorMemory.trim().ifBlank { catalog.spanishTutorMemory },
         )
     }
 }

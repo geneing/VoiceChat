@@ -18,6 +18,7 @@ data class HandoffConfig(
     val speculativeVoice: Boolean = true,
     val priceInputPerMillion: Double = 0.0,
     val priceOutputPerMillion: Double = 0.0,
+    val nativeWebSearch: Boolean = false,
 ) {
     val modelInfo: ReasoningModelInfo get() = ReasoningModels.info(model)
 

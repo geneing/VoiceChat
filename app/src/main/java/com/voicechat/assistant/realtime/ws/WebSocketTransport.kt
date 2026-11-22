@@ -65,6 +65,11 @@ class WebSocketTransport(
     override val audioTraffic: StateFlow<AudioTraffic> = traffic.state
 
     private val player = PcmPlayer(SAMPLE_RATE_OUT)
+    private val playbackLock = Any()
+    private val audioGate = ResponseAudioGate()
+    private var ignoredAudioLogged = false
+    private var responseAudioBytes = 0L
+    private var playbackTruncated = false
     private val focus = AudioFocus(context.applicationContext)
 
     /** Serialises blocking AudioRecord/AudioTrack lifecycle work off the main thread. */
@@ -163,6 +168,7 @@ class WebSocketTransport(
 
     override fun setMicEnabled(enabled: Boolean) {
         micEnabled = enabled
+        if (!enabled) synchronized(playbackLock) { audioGate.speechStopped() }
         onAudioThread {
             if (enabled) {
                 if (_state.value == TransportState.CONNECTED) {
@@ -183,10 +189,18 @@ class WebSocketTransport(
         AppLog.debug(LogCategory.AUDIO, if (muted) "Playback muted" else "Playback unmuted")
     }
 
+    override fun interruptPlayback() {
+        synchronized(playbackLock) {
+            audioGate.interrupt()
+            player.setMuted(true)
+        }
+    }
+
     override fun close() {
         val current = socket
         socket = null
         _state.value = TransportState.DISCONNECTED
+        interruptPlayback()
         runCatching { current?.close(1000, "client closed") }
         onAudioThread {
             cleanupAudio()
@@ -209,17 +223,10 @@ class WebSocketTransport(
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            logIncoming(text)
             val event = RealtimeEventParser.parse(text) ?: return
-            when (event) {
-                is RealtimeEvent.AssistantAudioDelta -> {
-                    traffic.addReceived(event.audio.size)
-                    player.enqueue(event.audio)
-                }
-
-                is RealtimeEvent.ResponseCreated -> player.setMuted(false)
-                else -> Unit
-            }
+            val accepted = handlePlayback(event)
+            logIncoming(text)
+            if (!accepted) return
             emit(event)
         }
 
@@ -253,9 +260,72 @@ class WebSocketTransport(
         }
     }
 
+    // Handle these on the ordered socket callback instead of waiting behind session tools.
+    private fun handlePlayback(event: RealtimeEvent): Boolean = synchronized(playbackLock) {
+        when (event) {
+            is RealtimeEvent.SpeechStarted -> {
+                if (micEnabled) {
+                    audioGate.speechStarted()
+                    player.clear()
+                }
+            }
+            is RealtimeEvent.SpeechStopped -> audioGate.speechStopped()
+            is RealtimeEvent.ResponseCreated -> {
+                ignoredAudioLogged = false
+                responseAudioBytes = 0
+                playbackTruncated = false
+                if (audioGate.begin(event.responseId)) {
+                    player.clear()
+                    AppLog.warn(LogCategory.AUDIO, "Discarded queued PCM for a superseded response", event.responseId)
+                }
+            }
+            is RealtimeEvent.ResponseDone -> {
+                val ended = audioGate.end(event.responseId)
+                if (ended && responseAudioBytes > 0) {
+                    val audioMs = responseAudioBytes * 1000 / (SAMPLE_RATE_OUT * 2)
+                    AppLog.debug(
+                        LogCategory.AUDIO,
+                        "PCM response summary",
+                        "id=${event.responseId} received=${audioMs}ms buffered=${player.queuedDurationMs}ms " +
+                            "truncated=$playbackTruncated",
+                    )
+                }
+                if (ended && event.status != null && event.status != "completed") player.clear()
+            }
+            is RealtimeEvent.ResponseCancelled -> {
+                if (audioGate.end(event.responseId)) player.clear()
+            }
+            is RealtimeEvent.AssistantAudioDelta -> {
+                traffic.addReceived(event.audio.size)
+                if (!audioGate.accepts(event.responseId)) {
+                    if (!ignoredAudioLogged) {
+                        ignoredAudioLogged = true
+                        AppLog.debug(LogCategory.AUDIO, "Ignored PCM outside the active response", event.responseId)
+                    }
+                    return@synchronized false
+                }
+                responseAudioBytes += event.audio.size
+                if (!playbackTruncated && player.enqueue(event.audio) == PcmPlayer.EnqueueResult.FULL) {
+                    // Keep the queued prefix intact. Resuming later in the same stream
+                    // would splice speech across a gap and sound like crossed voices.
+                    playbackTruncated = true
+                    AppLog.warn(
+                        LogCategory.AUDIO,
+                        "PCM backlog limit reached; truncating the rest of the response",
+                        "id=${event.responseId} buffered=${player.queuedDurationMs}ms",
+                    )
+                }
+            }
+            else -> Unit
+        }
+        true
+    }
+
     private fun emit(event: RealtimeEvent) {
         _events.tryEmit(event)
-    }    private fun logOutgoing(payload: String) {
+    }
+
+    private fun logOutgoing(payload: String) {
         if (!AppLog.protocolDump) return
         val type = Regex("\"type\"\\s*:\\s*\"([^\"]+)\"").find(payload)?.groupValues?.get(1)
         AppLog.debug(LogCategory.PROTOCOL, "→ ${type ?: "client.event"}", payload.take(1_500))

@@ -5,7 +5,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,7 +19,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,17 +32,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.voicechat.assistant.realtime.LiveStatus
 import com.voicechat.assistant.ui.AppViewModel
-import kotlinx.coroutines.launch
 
 @Composable
 fun ChatScreen(
@@ -44,16 +46,19 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
     onRequestLive: () -> Unit,
 ) {
-    val context = LocalContext.current
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    val messages by viewModel.messages.collectAsStateWithLifecycle()
+    val messages by viewModel.chatMessages.collectAsStateWithLifecycle()
     val streaming by viewModel.streaming.collectAsStateWithLifecycle()
     val session by viewModel.sessionState.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val pending by viewModel.pendingAttachments.collectAsStateWithLifecycle()
     val chatId by viewModel.currentChatId.collectAsStateWithLifecycle()
+    val mode by viewModel.mode.collectAsStateWithLifecycle()
+    val switching by viewModel.modeSwitching.collectAsStateWithLifecycle()
+    val tutorProgress by viewModel.tutorProgress.collectAsStateWithLifecycle()
+    val tutor = mode == com.voicechat.assistant.tutor.ConversationMode.SPANISH_TUTOR
 
-    var input by rememberSaveable(chatId) { mutableStateOf("") }
+    var input by rememberSaveable(chatId, mode) { mutableStateOf("") }
     var cameraFile by remember { mutableStateOf<java.io.File?>(null) }
     val listState = rememberLazyListState()
 
@@ -73,7 +78,8 @@ fun ChatScreen(
     }
 
     val itemCount = messages.size + if (streaming != null) 1 else 0
-    LaunchedEffect(itemCount, streaming?.text?.length) {
+    val voiceDraft = messages.lastOrNull { it.streaming }
+    LaunchedEffect(itemCount, streaming?.text, voiceDraft?.text) {
         if (itemCount > 0) {
             runCatching { listState.scrollToItem(itemCount - 1) }
             // A second pass catches items inserted while the first scroll was
@@ -153,42 +159,46 @@ fun ChatScreen(
             }
         }
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                horizontal = 12.dp,
-                vertical = 10.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (messages.isEmpty() && streaming == null) {
-                item(key = "empty") {
-                    EmptyState(
-                        onSuggestion = { suggestion -> viewModel.sendText(suggestion) },
-                        onLive = onRequestLive,
-                    )
+        if (tutor) {
+            TutorProgressPanel(tutorProgress, onReset = viewModel::resetTutorProgress)
+        }
+
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 64.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (messages.isEmpty() && streaming == null) {
+                    item(key = "empty") {
+                        EmptyState(
+                            onSuggestion = { suggestion -> viewModel.sendText(suggestion) },
+                            onLive = onRequestLive,
+                            tutor = tutor,
+                        )
+                    }
+                }
+                items(messages, key = { it.id }) { message ->
+                    MessageBubble(message = message, showMetrics = settings.showMetricsInChat)
+                }
+                if (streaming != null) {
+                    item(key = "streaming") {
+                        StreamingBubble(streaming!!)
+                    }
                 }
             }
-            items(messages, key = { it.id }) { message ->
-                MessageBubble(message = message, showMetrics = settings.showMetricsInChat)
-            }
-            if (streaming != null) {
-                item(key = "streaming") {
-                    StreamingBubble(streaming!!)
-                }
+            SmallFloatingActionButton(
+                onClick = viewModel::saveButtonIssueReport,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+            ) {
+                Icon(Icons.Default.BugReport, contentDescription = "Save issue report")
             }
         }
 
-        val showLive = session.active && session.liveEnabled
+        val showLive = session.liveEnabled
         if (showLive) {
-            LiveCard(
-                state = session,
-                onInterrupt = viewModel::interrupt,
-                onStopLive = viewModel::stopLive,
-            )
+            LiveInputWaveform(state = session, onInterrupt = viewModel::interrupt)
         }
 
         if (session.active) {
@@ -236,7 +246,7 @@ fun ChatScreen(
                     onRequestLive()
                 }
             },
-            enabled = true,
+            enabled = !switching,
         )
         Spacer(Modifier.height(2.dp))
     }

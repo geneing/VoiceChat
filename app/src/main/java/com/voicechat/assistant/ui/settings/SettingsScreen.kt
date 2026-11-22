@@ -88,12 +88,38 @@ fun SettingsScreen(
         locationGranted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
     }
+    var contactsGranted by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) ==
+            PackageManager.PERMISSION_GRANTED)
+    }
+    var callsGranted by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) ==
+            PackageManager.PERMISSION_GRANTED)
+    }
+    val contactsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { contactsGranted = it }
+    val callLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { callsGranted = it }
 
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        item {
+            SettingsSection("Phone tools", "Enable these while parked to call or prepare WhatsApp drafts by name.") {
+                TextButton(
+                    onClick = { contactsLauncher.launch(Manifest.permission.READ_CONTACTS) },
+                    enabled = !contactsGranted,
+                ) { Text(if (contactsGranted) "Contacts access enabled" else "Allow contacts access") }
+                TextButton(
+                    onClick = { callLauncher.launch(Manifest.permission.CALL_PHONE) },
+                    enabled = !callsGranted,
+                ) { Text(if (callsGranted) "Hands-free calls enabled" else "Allow hands-free calls") }
+            }
+        }
         item {
             SettingsSection("Connection", "How the app reaches Qwen") {
                 Text(

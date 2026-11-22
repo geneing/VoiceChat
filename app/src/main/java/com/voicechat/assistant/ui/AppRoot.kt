@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -23,6 +25,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -55,13 +58,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.voicechat.assistant.ui.chat.ChatScreen
 import com.voicechat.assistant.ui.chat.ConnectionDot
 import com.voicechat.assistant.ui.drawer.ChatDrawer
+import com.voicechat.assistant.ui.logs.IssueReportsScreen
 import com.voicechat.assistant.ui.logs.LogsScreen
 import com.voicechat.assistant.ui.memory.MemoryScreen
 import com.voicechat.assistant.ui.metrics.UsageDialog
 import com.voicechat.assistant.ui.settings.SettingsScreen
+import com.voicechat.assistant.tutor.ConversationMode
 import kotlinx.coroutines.launch
 
-private enum class Route { CHAT, SETTINGS, LOGS, MEMORY }
+private enum class Route { CHAT, SETTINGS, LOGS, MEMORY, ISSUE_REPORTS }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,6 +82,8 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
     val currentChat by viewModel.currentChat.collectAsStateWithLifecycle()
     val currentChatId by viewModel.currentChatId.collectAsStateWithLifecycle()
     val session by viewModel.sessionState.collectAsStateWithLifecycle()
+    val mode by viewModel.mode.collectAsStateWithLifecycle()
+    val switching by viewModel.modeSwitching.collectAsStateWithLifecycle()
     val usage by viewModel.usageTotals.collectAsStateWithLifecycle()
     val stats by viewModel.conversationStats.collectAsStateWithLifecycle()
 
@@ -96,7 +103,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
     val locationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
-        // Location only powers the get_location tool; voice mode works without it.
+        // Weather and trip tools use the device location. Voice mode works without it.
         viewModel.startLive()
     }
 
@@ -173,7 +180,8 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
         if (granted) continueLiveAfterPermissions() else micPermission.launch(Manifest.permission.RECORD_AUDIO)
     }
 
-    BackHandler(enabled = route != Route.CHAT) { routeName = Route.CHAT.name }
+    val backRoute = if (route == Route.ISSUE_REPORTS) Route.LOGS else Route.CHAT
+    BackHandler(enabled = route != Route.CHAT) { routeName = backRoute.name }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -216,59 +224,76 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
             snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 when (route) {
-                    Route.CHAT -> CenterAlignedTopAppBar(
-                        title = {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = currentChat?.title ?: "VoiceChat",
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                                if (session.active) {
+                    Route.CHAT -> Column {
+                        CenterAlignedTopAppBar(
+                            title = {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
-                                        text = statusLine(session.status.name, session.transport?.label, session.connectMs),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        text = currentChat?.title ?: mode.label,
                                         maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.titleMedium,
                                     )
+                                    if (session.active) {
+                                        Text(
+                                            text = statusLine(session.status.name, session.transport?.label, session.connectMs),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                        )
+                                    }
                                 }
+                            },
+                            navigationIcon = {
+                                IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                    Icon(Icons.Default.Menu, contentDescription = "Open chats")
+                                }
+                            },
+                            actions = {
+                                ConnectionDot(
+                                    connected = session.connected,
+                                    active = session.active,
+                                    sendingVoice = session.liveEnabled && session.speechActive,
+                                    receivingAudio = session.receivingAudio,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                IconButton(onClick = { routeName = Route.SETTINGS.name }) {
+                                    Icon(Icons.Default.Settings, contentDescription = "Settings")
+                                }
+                            },
+                            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                                containerColor = MaterialTheme.colorScheme.background,
+                            ),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            ConversationMode.entries.forEach { option ->
+                                FilterChip(
+                                    selected = mode == option,
+                                    onClick = { viewModel.switchMode(option) },
+                                    enabled = !switching,
+                                    label = { Text(option.label) },
+                                    modifier = Modifier.weight(1f),
+                                )
                             }
-                        },
-                        navigationIcon = {
-                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                Icon(Icons.Default.Menu, contentDescription = "Open chats")
-                            }
-                        },
-                        actions = {
-                            ConnectionDot(
-                                connected = session.connected,
-                                active = session.active,
-                                sendingVoice = session.liveEnabled && session.speechActive,
-                                receivingAudio = session.receivingAudio,
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            IconButton(onClick = { routeName = Route.SETTINGS.name }) {
-                                Icon(Icons.Default.Settings, contentDescription = "Settings")
-                            }
-                        },
-                        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.background,
-                        ),
-                    )
+                        }
+                    }
 
-                    Route.SETTINGS, Route.LOGS, Route.MEMORY -> CenterAlignedTopAppBar(
+                    Route.SETTINGS, Route.LOGS, Route.MEMORY, Route.ISSUE_REPORTS -> CenterAlignedTopAppBar(
                         title = {
                             Text(
                                 when (route) {
                                     Route.SETTINGS -> "Settings"
                                     Route.MEMORY -> "Memory"
+                                    Route.ISSUE_REPORTS -> "Issue reports"
                                     else -> "Debug logs"
                                 },
                             )
                         },
                         navigationIcon = {
-                            IconButton(onClick = { routeName = Route.CHAT.name }) {
+                            IconButton(onClick = { routeName = backRoute.name }) {
                                 Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                             }
                         },
@@ -300,7 +325,9 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
 
                     Route.MEMORY -> MemoryScreen(viewModel = viewModel)
 
-                    Route.LOGS -> LogsScreen()
+                    Route.LOGS -> LogsScreen(onOpenIssueReports = { routeName = Route.ISSUE_REPORTS.name })
+
+                    Route.ISSUE_REPORTS -> IssueReportsScreen(viewModel)
                 }
             }
         }

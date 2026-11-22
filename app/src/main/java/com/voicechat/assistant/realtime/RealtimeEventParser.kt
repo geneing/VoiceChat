@@ -61,15 +61,20 @@ object RealtimeEventParser {
                 val response = obj["response"] as? JsonObject
                 val usage = parseUsage((response ?: obj)["usage"] as? JsonObject)
                 RealtimeEvent.ResponseDone(
-                    responseId = response?.string("id"),
+                    responseId = response?.string("id") ?: obj.string("response_id"),
                     status = response?.string("status"),
                     usage = usage,
                     outputTypes = outputTypes(response?.get("output")),
                 )
             }
 
-            "response.cancelled", "response.canceled" ->
-                RealtimeEvent.ResponseCancelled((obj["response"] as? JsonObject)?.string("status"))
+            "response.cancelled", "response.canceled" -> {
+                val response = obj["response"] as? JsonObject
+                RealtimeEvent.ResponseCancelled(
+                    reason = response?.string("status"),
+                    responseId = response?.string("id") ?: obj.string("response_id"),
+                )
+            }
 
             "response.text.delta" -> RealtimeEvent.AssistantTextDelta(obj.string("delta").orEmpty())
 
@@ -82,7 +87,7 @@ object RealtimeEventParser {
                 val bytes = data?.let {
                     runCatching { Base64.getDecoder().decode(it) }.getOrNull()
                 }
-                if (bytes == null) null else RealtimeEvent.AssistantAudioDelta(bytes)
+                if (bytes == null) null else RealtimeEvent.AssistantAudioDelta(bytes, obj.string("response_id"))
             }
 
             "response.audio_transcript.delta" ->

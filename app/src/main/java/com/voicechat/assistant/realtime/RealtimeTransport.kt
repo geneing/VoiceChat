@@ -29,5 +29,8 @@ interface RealtimeTransport {
 
     fun setSpeakerMuted(muted: Boolean)
 
+    /** Silence current playback and discard any buffered audio for it. */
+    fun interruptPlayback() = setSpeakerMuted(true)
+
     fun close()
 }

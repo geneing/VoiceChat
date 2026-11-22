@@ -24,15 +24,24 @@ The goal specification lives in `GOAL.md`. Treat it as the product contract.
    the app's.
 2. **This is a private build.** Debug builds may embed the key. Do not add
    release signing, publishing, Play Store metadata or CI that uploads APKs.
-3. **One conversation, two modalities.** Text and voice share a single realtime
-   session/context. Do not create a second "chat" model connection per
-   modality, and do not route text through a different model.
-4. **Voice output only for voice input.** A text turn asks the server for
-   `modalities: ["text"]`; a live/voice turn uses `["text", "audio"]`. The
+3. **One conversation, two modalities.** Typed turns go directly to the configured
+   reasoning model. Their completed question and answer are added to the realtime
+   context without starting a second response, so subsequent voice turns can refer
+   to them. The local transcript also supplies prior voice turns to the reasoning model.
+4. **Voice output only for voice input.** A typed turn returns text from the reasoning
+   model; a live/voice turn uses `["text", "audio"]`. The
    transcript of an audio answer is still shown as a normal assistant message.
 5. **Barge-in must stay instant.** On `input_audio_buffer.speech_started` stop
    local playback immediately (clear the PCM queue / mute the remote track) and
    cancel the in-flight response. Never wait for the server round trip to mute.
+   WebSocket clears playback directly in the socket callback and gates PCM by
+   response ID. Normal completion lets queued audio drain. Interrupting or
+   leaving voice mode discards queued PCM and invalidates the writer's current
+   chunk before the communication audio route is released.
+   The WebSocket PCM queue budgets up to 120 seconds of audio by byte count.
+   If the limit is reached, it plays the contiguous queued prefix and drops
+   the rest of that response. Audio logs record received and queued durations
+   at response completion and flag truncation.
 6. **Voice mode starts only from the sound-wave button.** Sending a typed
    message while live stops the microphone first (`applyLiveMode(false)`), so
    text turns never leave a hot mic. Do not start capture from the composer's
@@ -116,7 +125,7 @@ app/src/main/java/com/voicechat/assistant/
   ui/
     theme/                   Material 3 theme
     AppRoot.kt               drawer + routes
-    chat/                    ChatViewModel, chat screen, composer, live card
+    chat/                    Chat screen, message bubbles, composer, voice waveform
     drawer/ChatDrawer.kt     history list, long-press menu
     settings/                settings screen + prompt editor
     logs/                    in-app debug log viewer
@@ -221,7 +230,9 @@ Two vendor quirks this code compensates for:
   a newline. `WebRtcTransport.normalizeSdp` does that; without it
   `setRemoteDescription` fails with "SessionDescription is NULL".
 
-Text turns in an open live session:
+The following is the legacy realtime text-turn wire format, still used by the
+protocol helpers. Normal typed questions now go directly to the reasoning model;
+`typedExchangeContext` carries the completed exchange into the voice session.
 
 ```json
 {"type":"conversation.item.create","item":{"type":"message","role":"user",
@@ -229,13 +240,9 @@ Text turns in an open live session:
 {"type":"response.create","response":{"modalities":["text"]}}
 ```
 
-Image turns (WebSocket only) append a JPEG (base64, < 256 KB) via
-`input_image_buffer.append` after at least one audio append, then send silence +
-image + `input_audio_buffer.commit` + the text item + `response.create`. Images
-are tied to the audio buffer; without the commit the model never sees them.
-Sessions are always VAD now, so `sendText` stops the microphone for an image
-turn without changing `turn_detection`. The commit may auto-trigger a response
-on some server builds; if you touch this path, verify it against the live API.
+Typed image turns are sent as JPEG data URLs to a supported multimodal reasoning
+model, independently of the voice transport. Legacy WebSocket image payload
+helpers remain for protocol compatibility.
 
 Function calling: tool results go back as
 `{"type":"conversation.item.create","item":{"type":"function_call_output",
@@ -284,14 +291,12 @@ Function calling: tool results go back as
   model writes one speak-ready digest (`NewsPrompt`: most impactful world news
   in 5-6 sentences, US/world markets with bonds and technology trends in 5-6
   sentences, then 2-3 AI paragraphs) that the realtime model only reads out.
-  There is no news-search setting: the app's dated items are always the facts,
-  and the vendor's own `enable_search` is not used (DashScope rejects the
-  OpenRouter `plugins` shape and only some models honour the flag).
+  This is the fallback when the configured reasoning model lacks native search.
+  For supported reasoning models, built-in search is preferred instead.
   Every call is billed through `billReasoning`; a digest failure falls back to
   handing the raw dated items to the realtime model, so news still answers.
   Sections are cached for 10 minutes, fetched at most once at a time (prefetch
-  and tool call share the query) and warmed from a news-like transcript (and
-  from a typed news turn in `AppViewModel`). Do not stage this into one call per
+  and tool call share the query) and warmed from a news-like transcript. Do not stage this into one call per
   section: three tool calls in a turn produced garbled audio and no earlier
   speech.
 - `web_search` still covers everything that is not news (prices, products,
@@ -307,9 +312,25 @@ Function calling: tool results go back as
   missing. Location permission is requested when voice mode starts (optional: a
   denial only disables these tools). The session instructions require the model
   to call the tool for location questions instead of claiming it has no access.
-- `get_weather` returns current conditions and today's high/low from Open-Meteo,
-  which needs no API key and no search provider. Weather questions use it rather
-  than `web_search`: searching raw coordinates returned unrelated results.
+- `get_weather` uses Open-Meteo for current conditions, a date or relative day,
+  a multi-day forecast, or a local hour at the requested location. The default
+  is today at the device location. Open-Meteo needs no API key.
+- `find_nearby`, `start_navigation` and `get_trip_eta` support local discovery,
+  handoff to the installed Maps app and driving estimates. Maps handoff needs
+  no key. OpenStreetMap provides local search and routing without live traffic
+  when the optional `secrets/google-maps.key` is absent. A restricted key with
+  Places API (New) and Routes API enables Google results, search along a
+  planned route and traffic-aware estimates. Android does not expose the
+  live navigation session through the Maps handoff.
+- Phone actions resolve contacts on-device. Settings grants Contacts and
+  Phone permissions separately. A pending action requires the corresponding
+  later user confirmation. A WhatsApp handoff creates a personal draft and
+  WhatsApp handles the send. Pocket Casts receives its documented Android
+  playback intents. Android can continue an explicitly started live session
+  after a handoff through the microphone foreground service.
+- `get_reddit_briefing` searches dated, indexed threads via Exa, with no
+  Reddit login. Treat snippets as search evidence and keep the links in chat.
+  `save_for_later` retains up to 100 notes and links on the device.
 
 ## Model handoff (deep reasoning)
 
@@ -349,10 +370,12 @@ Escalation has three triggers and one engine:
    typed turn still receives `answer`. The delivery instructions tell the model to
    acknowledge in one short spoken sentence while it runs, lead with
    `spoken_summary`, and never read `answer` verbatim.
-2. **Typed, model-driven (default).** Same tool; the answer is phrased as a text
-   reply. `handoffHeuristic` additionally pre-reasons hard typed prompts in the
-   app before the turn is sent and appends a delimited reference block to the
-   same user item — opt-in, because it adds the full reasoning latency up front.
+2. **Typed, direct.** Every typed turn is answered by the configured reasoning
+   model, regardless of the handoff heuristic. The answer is displayed directly
+   and the completed exchange is added to the realtime voice context. Native web
+   search is enabled for documented supported models; Qwen 3.8 Flash/Max also
+   receive image attachments. Other reasoning models reject image attachments
+   with a visible error. Requests for on-device actions need voice tools.
 3. **Voice, speculative (default on).** On `input_audio_buffer` transcription
    completion, a transcript that clears the same bar as escalation warms a
    reasoning call while the realtime model composes its acknowledgement. If the
@@ -391,6 +414,47 @@ The handoff is a client tool, so it needs client tools enabled. The
 array; `ModelInfo.resolveNativeSearch` already falls back to the client
 `web_search` in that case, so enabling the handoff keeps working instead of
 silently never firing.
+
+## Spanish tutor
+
+- The top-of-chat Assistant / Spanish tutor buttons select separate conversations.
+  Explicit spoken commands such as "switch to Spanish tutor" and "back to voice
+  chat" work locally from final transcripts, including with client tools disabled.
+  `switch_conversation_mode` handles other explicit requests when tools are enabled.
+- `ConversationMode` is independent of input modality: each mode still shares a
+  realtime session between its own text and voice turns. Switching closes the old
+  session and drains pending database saves before selecting the other mode. A
+  previously enabled microphone resumes; a button never starts an idle microphone.
+- `spanish-tutor.db` is a separate `AppDatabase` instance with the same migrations
+  as `voicechat.db`. It owns tutor chats and a separate `MemoryStore`. Never route
+  tutor memory tools, chat deletion, or history queries to the assistant database.
+- `spanish_tutor_progress` DataStore holds a cumulative summary, estimated CEFR
+  level (initial A2), vocabulary/grammar attempts, corrections, 60 recent exercises
+  and 24 recent dialog turns. `TutorProgress` merges partial updates by canonical
+  topic. Its opening context prioritizes weak/old material; `recall_tutor_progress`
+  retrieves older items. `record_tutor_progress` records model-evaluated outcomes;
+  saved user/assistant turns automatically retain a bounded redacted dialog too.
+  `TutorLearning` backstops skipped realtime tool calls with a serialized background
+  text-model recap after a completed exchange. It uses the configured reasoning
+  model without thinking, bills lifetime and message usage, and deduplicates updates
+  by learner turn ID against the tool path. Its prompt is `spanishTutorMemory` in
+  the same asset. Failure preserves raw dialogue and shows a notification.
+  Level changes require several evaluated turns, evidence and at most one CEFR step.
+- Tutor mode enables supported client tools and transcription for learning records,
+  and disables native search agent mode. Its Progress panel can inspect/reset the
+  learning record. Generic memory management applies to the selected mode's facts.
+  Progress reset preserves chats and personal facts. Learning context is sent to
+  the vendor as prompt text, just like regular device memory.
+- `assets/prompts.json` field `spanishTutor` is the tutor prompt source, loaded by
+  `PromptCatalog`. Keep it separate from the customizable assistant prompt. It
+  explicitly uses both Spanish and English in voice/text lessons, teaches Mexican
+  Spanish, prioritizes conversation, chooses varied exercises,
+  includes translation in both directions and explains corrections in English.
+  Lesson questions adapt to ability, one at a time; requests for learner instructions
+  or clarifications use basic Spanish or English. Tutor delivery overrides
+  the assistant's brisk pace with a learner-friendly pace. Pronunciation feedback
+  requires actual voice evidence; never infer it from text/ASR alone. Automatic
+  personal-fact extraction is skipped for fictional tutor practice sentences.
 
 ## Device memory
 
@@ -527,9 +591,8 @@ rate"), which is what the models actually follow.
   comes from the prompt (see "Speech speed").
 - **WebRTC** — lowest latency media path; `org.webrtc` owns mic, AEC, noise
   suppression and playback, so `PcmRecorder`/`PcmPlayer` are not used. VAD
-  turns only. Attachments are not supported (protocol carries images on the
-  video track, which this app does not publish). Surface that limitation in
-  the UI instead of failing silently.
+  turns only. Typed image attachments use the multimodal reasoning API rather
+  than the WebRTC video track.
 - **AOQ** — implemented in `realtime/aoq/` with Alibaba's
   `AoqClientSdk-release.aar` (v1.4.0) and `libPluginOpus.so` (in
   `app/libs` / `app/src/main/jniLibs`). The SDK owns capture, Opus, AEC and the
@@ -556,10 +619,9 @@ rate"), which is what the models actually follow.
     SDK runs in media mode so audio follows that route; with no external
     output it uses VoIP mode + loudspeaker + hardware AEC. Barge-in interrupts
     and stops the player immediately; text turns stop and purge playback.
-  - **Images** are WebSocket-only for now (AOQ images would need a video track).
-- **Text-only fallback** — none. All turns use the realtime session so context
-  is shared. If the session cannot be opened, show the error and retry; do not
-  silently fall back to another model.
+  - Typed image attachments use the multimodal reasoning API, not AOQ video.
+- Typed questions need both the reasoning endpoint and the realtime session for
+  shared conversation context. Show failures instead of silently falling back.
 
 ## Connection resilience
 
@@ -638,11 +700,47 @@ recovers on its own instead of ending the chat:
 - Cost is an estimate: `input_tokens/1e6*priceIn + output_tokens/1e6*priceOut`
   with prices entered in Settings (defaults 0 → show tokens only). DashScope
   does not expose per-key billing through this API.
-- `AppLog` keeps a bounded in-memory ring buffer, mirrors to Logcat in debug,
-  optionally writes a rotating file (`filesDir/logs/app.log`, 1 MB x 2), and is
-  filtered by category (`TRANSPORT`, `PROTOCOL`, `AUDIO`, `TOOLS`, `HANDOFF`,
-  `SESSION`, `COST`, `UI`, `DB`). Protocol dumps redact audio/image payloads to
-  `"<audio N bytes>"` / `"<image N bytes>"` and never print the API key.
+
+### Debug logs and storage
+
+- **In-app log viewer.** Open **Debug logs** from the chat drawer to inspect
+  the last 1,500 enabled entries retained in process memory. **Copy all** copies
+  that buffer, and **Clear** clears the buffer only. A process restart starts a
+  new buffer. The logger also writes to Android Logcat under the `VoiceChat`
+  tag.
+- **Persistent app logs.** Enable **Settings → Debug → Write log file** to
+  write new entries to `filesDir/logs/app.log`. It defaults to off. The previous
+  file is `app.log.1`, and rotation occurs at about 1 MiB. On the primary Android
+  user, the debug build's directory is
+  `/data/user/0/com.voicechat.assistant.debug/files/logs/`. The package name for
+  an install without the debug suffix is `com.voicechat.assistant`. These
+  directories are app-private.
+- **Filters and redaction.** **Settings → Debug** controls categories and
+  **Log event payloads**. Protocol dumps redact binary audio and image
+  payloads and credentials.
+- **Issue reports** are captured on demand. Tap the bug button in chat or say
+  “Save an issue report” followed by the description in one transcribed voice
+  turn. The local transcript command works without client tools, skips
+  speculative reasoning, and uses the same capture path as the button. Save
+  confirmation comes from the app. The button works while disconnected.
+  `IssueReportStore` saves one folder per report under
+  `noBackupFilesDir/issue-reports/`. For the debug build on the primary Android
+  user, this is `/data/user/0/com.voicechat.assistant.debug/no_backup/issue-reports/`.
+  Each folder contains `issue.md`, `app.log`, `android-logcat.log`,
+  `llm-interaction.log`, and `network.log`. The report's `app.log` snapshots
+  the retained in-memory entries from the preceding five minutes, so capture
+  works with **Write log file** off. **Debug logs → Issue reports** exports the
+  selected folder as a ZIP to the destination chosen in the Android file picker.
+  Device-wide Android, Wi-Fi and radio buffers require ADB or privileged access.
+
+On the Windows host, use ADB to read logs from a connected debug build:
+
+```powershell
+$adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
+& $adb shell run-as com.voicechat.assistant.debug ls -l files/logs
+& $adb exec-out run-as com.voicechat.assistant.debug cat files/logs/app.log
+& $adb logcat -d -s VoiceChat
+```
 
 ## UI conventions
 
@@ -650,16 +748,20 @@ recovers on its own instead of ending the chat:
 - Drawer: new chat, history (grouped by day), long-press → rename/delete,
   footer → Settings, Debug logs, Usage.
 - Top bar: menu, chat title, connection dot, gear.
-- Chat: reverse `LazyColumn`, user right / assistant left, streaming text
-  updates in place, audio answers show a small waveform badge.
+- Chat: `LazyColumn`, user right / assistant left. Interim voice recognition
+  updates a user bubble in place. Its final transcript keeps the same bubble
+  ID when written to Room. Audio answers show a small waveform badge.
 - Composer: `+` (photo / camera / document), expanding text field, send,
   sound-wave button for live mode. Send and sound-wave are separate 42 dp
   targets with a gap; never let IconButton's 48 dp touch target overlap them.
   Typing and sending stops live mode; capture only starts from the sound wave.
-- Audio traffic strip above the composer shows media sent/received (B/KB/MB)
-  and "speaking"/"receiving"/"VAD idle"/"text mode". The top-bar dot is green
-  when audio is received, blue while VAD detects the user speaking, amber when
-  connected but silent, gray when disconnected.
+- A standalone microphone waveform appears while voice mode is on. Tap it
+  during a response to interrupt, or use the composer sound-wave button to
+  exit voice mode. Below the waveform, the traffic strip shows media
+  sent/received (B/KB/MB) and totals for realtime input/output tokens when the
+  server has reported usage. The top-bar dot is green when audio is received,
+  blue while VAD detects the user speaking, amber when connected but silent,
+  and gray when disconnected.
 - Settings: connection (transport, model, voice, workspace host, API key),
   conversation (system prompt + presets, preferred language, VAD, on-device
   voice gate + trigger, transcription, client tools + native search),
@@ -700,9 +802,7 @@ on the emulator with `adb` screenshots.
 - AOQ requires an arm64/armv7 device; the emulator is x86_64.
 - Speech pace is prompt-only: the vendor ignores server-side speed hints and
   the device rejects AudioTrack rate changes, so there is no speed slider.
-- WebRTC sessions cannot send image attachments yet.
-- Image turns pause live mode: they need manual commits on WebSocket. Camera
-  shots are sent as still images; no video track is published.
+- Image turns pause live mode. Camera shots are still images; no video track is published.
 - Cost rates must be entered manually; there is no billing API integration.
 - Deep reasoning needs client tools; with server-side search in agent mode on
   `qwen3.8-omni-flash-realtime` the app falls back to the client `web_search` to

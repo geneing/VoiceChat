@@ -45,7 +45,7 @@ import java.util.Locale
 private val TIME_FORMAT = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
 @Composable
-fun LogsScreen() {
+fun LogsScreen(onOpenIssueReports: () -> Unit) {
     val entries by AppLog.entries.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var selected by remember { mutableStateOf<Set<LogCategory>>(emptySet()) }
@@ -61,6 +61,7 @@ fun LogsScreen() {
             .fillMaxWidth()
             .padding(horizontal = 12.dp),
     ) {
+        OutlinedButton(onClick = onOpenIssueReports) { Text("Issue reports") }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
