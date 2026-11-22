@@ -3,6 +3,9 @@ package com.voicechat.assistant.core
 import com.voicechat.assistant.BuildConfig
 import com.voicechat.assistant.data.model.TransportKind
 
+/** A voice enrolled with `qwen-voice-enrollment`, plus the name it shows in Settings. */
+data class ClonedVoice(val id: String, val label: String)
+
 data class ModelInfo(
     val id: String,
     val label: String,
@@ -20,17 +23,45 @@ data class ModelInfo(
      * can search server-side while client tools are attached.
      */
     val supportsToolsWithSearch: Boolean = true,
+    /**
+     * Voices enrolled with `qwen-voice-enrollment` for this account. The vendor
+     * names them `qwen-omni-vc-<name>-voice-…`, with no model id in front, so
+     * they cannot be recognised by [supportsVoice]'s prefix rule and are listed
+     * explicitly. A clone belongs to the model passed as `target_model`.
+     */
+    val clonedVoices: List<ClonedVoice> = emptyList(),
 ) {
     /**
-     * System voices come from the vendor's per-model voice list. Cloned voices
-     * are returned as `<target-model>-myvoice-…`, so allow that prefix too.
-     * Anything else must not reach `session.update` or the server answers
-     * "voice not supported".
+     * The voices this model may use. An account with its own cloned voices uses
+     * only those — the vendor's system voices are not offered at all; the
+     * system list is the fallback for an account with no clone yet.
+     */
+    val allowedVoices: List<String>
+        get() = if (clonedVoices.isNotEmpty()) clonedVoices.map { it.id } else voices
+
+    /** Picker entries: a clone shows its label, a fallback system voice its own name. */
+    val voiceOptions: List<Pair<String, String>>
+        get() = if (clonedVoices.isNotEmpty()) {
+            clonedVoices.map { it.label to it.id }
+        } else {
+            voices.map { it to it }
+        }
+
+    /**
+     * Anything outside [allowedVoices] must not reach `session.update` or the
+     * server answers "voice not supported". The vendor also names clones
+     * `<target-model>-myvoice-…`, so that form is accepted by a model that has
+     * no clone listed.
      */
     fun supportsVoice(voice: String): Boolean {
         if (voice.isBlank()) return false
-        return voice in voices || voice.startsWith("$id-")
+        if (voice in allowedVoices) return true
+        return clonedVoices.isEmpty() && voice.startsWith("$id-")
     }
+
+    /** The name a voice shows in Settings: the clone's label, or the voice id. */
+    fun labelFor(voice: String): String =
+        clonedVoices.firstOrNull { it.id == voice }?.label ?: voice
 
     fun resolveVoice(voice: String): String = if (supportsVoice(voice)) voice else defaultVoice
 
@@ -47,6 +78,21 @@ object RealtimeDefaults {
 
     const val OMNI_MODEL = "qwen3.8-omni-flash-realtime"
     const val AUDIO_MODEL = "qwen-audio-3.1-realtime-flash"
+
+    /**
+     * Voice cloned from `Herm.wav` with `qwen-voice-enrollment`, enrolled for
+     * [OMNI_MODEL] and verified against the live realtime API. Cloned voices
+     * are account-scoped: any other workspace must create its own voice and
+     * replace this entry (see the voice-cloning notes in AGENTS.md).
+     */
+    const val CLONED_OMNI_VOICE = "qwen-omni-vc-herm-voice-20261122161820603-725d"
+    const val CLONED_OMNI_VOICE_LABEL = "Herm"
+    /** Voice cloned from `Zach.wav`, same account and model, second to Herm. */
+    const val CLONED_OMNI_VOICE_ZACH = "qwen-omni-vc-zach-voice-20261122162925632-ba24"
+    const val CLONED_OMNI_VOICE_ZACH_LABEL = "Zach"
+    /** Voice cloned from `Janice.wav`, same account and model. */
+    const val CLONED_OMNI_VOICE_JANICE = "qwen-omni-vc-janice-voice-20261122163256610-f953"
+    const val CLONED_OMNI_VOICE_JANICE_LABEL = "Janice"
 
     /** Qwen3.8-Omni-Flash-Realtime system voices (Model Studio voice list). */
     private val OMNI_VOICES = listOf(
@@ -211,7 +257,12 @@ object RealtimeDefaults {
             label = "Qwen3.8 Omni Flash Realtime",
             description = "Full-duplex audio + vision, tool calling, semantic turn detection.",
             voices = OMNI_VOICES,
-            defaultVoice = "Tina",
+            defaultVoice = CLONED_OMNI_VOICE,
+            clonedVoices = listOf(
+                ClonedVoice(CLONED_OMNI_VOICE, CLONED_OMNI_VOICE_LABEL),
+                ClonedVoice(CLONED_OMNI_VOICE_ZACH, CLONED_OMNI_VOICE_ZACH_LABEL),
+                ClonedVoice(CLONED_OMNI_VOICE_JANICE, CLONED_OMNI_VOICE_JANICE_LABEL),
+            ),
             turnDetectionOptions = listOf("semantic_vad", "semantic_vad_ec", "server_vad"),
             defaultTurnDetection = "semantic_vad",
             supportsTools = true,

@@ -42,7 +42,57 @@ class ModelCapabilitiesTest {
         assertTrue(omni.voices.contains("longanlingxin"))
         assertTrue(omni.voices.contains("Liora Mira"))
         assertFalse(omni.voices.contains("Cherry"))
-        assertEquals("Tina", omni.resolveVoice("Cherry"))
+        assertEquals(RealtimeDefaults.CLONED_OMNI_VOICE, omni.resolveVoice("Cherry"))
+    }
+
+    @Test
+    fun `the enrolled clones are the only offered voices`() {
+        assertEquals(RealtimeDefaults.CLONED_OMNI_VOICE, omni.defaultVoice)
+        assertEquals(
+            listOf(
+                ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE, "Herm"),
+                ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE_ZACH, "Zach"),
+                ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE_JANICE, "Janice"),
+            ),
+            omni.clonedVoices,
+        )
+        assertEquals(
+            listOf(
+                "Herm" to RealtimeDefaults.CLONED_OMNI_VOICE,
+                "Zach" to RealtimeDefaults.CLONED_OMNI_VOICE_ZACH,
+                "Janice" to RealtimeDefaults.CLONED_OMNI_VOICE_JANICE,
+            ),
+            omni.voiceOptions,
+        )
+        assertEquals(
+            listOf(
+                RealtimeDefaults.CLONED_OMNI_VOICE,
+                RealtimeDefaults.CLONED_OMNI_VOICE_ZACH,
+                RealtimeDefaults.CLONED_OMNI_VOICE_JANICE,
+            ),
+            omni.allowedVoices,
+        )
+        assertEquals("Herm", omni.labelFor(RealtimeDefaults.CLONED_OMNI_VOICE))
+        assertEquals("Zach", omni.labelFor(RealtimeDefaults.CLONED_OMNI_VOICE_ZACH))
+        assertEquals("Janice", omni.labelFor(RealtimeDefaults.CLONED_OMNI_VOICE_JANICE))
+        assertEquals(
+            RealtimeDefaults.CLONED_OMNI_VOICE_JANICE,
+            omni.resolveVoice(RealtimeDefaults.CLONED_OMNI_VOICE_JANICE),
+        )
+        // A system voice is not offered while the account has clones of its own.
+        assertFalse(omni.supportsVoice("Tina"))
+        assertEquals(RealtimeDefaults.CLONED_OMNI_VOICE, omni.resolveVoice("Tina"))
+    }
+
+    @Test
+    fun `an omni clone never reaches the audio model`() {
+        assertEquals(emptyList<ClonedVoice>(), audio.clonedVoices)
+        assertFalse(audio.supportsVoice(RealtimeDefaults.CLONED_OMNI_VOICE))
+        assertFalse(audio.supportsVoice(RealtimeDefaults.CLONED_OMNI_VOICE_ZACH))
+        assertFalse(audio.supportsVoice(RealtimeDefaults.CLONED_OMNI_VOICE_JANICE))
+        assertEquals("longanqian_v3.1", audio.resolveVoice(RealtimeDefaults.CLONED_OMNI_VOICE))
+        assertEquals(89, audio.voiceOptions.size)
+        assertTrue(audio.voiceOptions.all { (label, id) -> label == id })
     }
 
     @Test

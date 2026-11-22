@@ -29,7 +29,7 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore("v
 data class AppSettings(
     val transport: TransportKind = TransportKind.WEBSOCKET,
     val model: String = RealtimeDefaults.OMNI_MODEL,
-    val voice: String = "Tina",
+    val voice: String = RealtimeDefaults.CLONED_OMNI_VOICE,
     val instructions: String = PromptCatalog.defaultPrompt,
     val workspaceId: String = RealtimeDefaults.defaultWorkspaceId,
     val host: String = RealtimeDefaults.defaultHost,

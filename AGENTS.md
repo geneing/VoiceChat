@@ -155,7 +155,35 @@ for Qwen3.8 Omni, 89 for Qwen Audio 3.1 = `longanqian_v3.1` + the union of the
 3.1 TTS plus/flash lists). Never send a voice from another model — the server
 answers "voice not supported". `ModelInfo.resolveVoice` validates on every
 settings load and before `session.update`, falling back to the model default.
-Cloned voices are accepted when their ID starts with the target model ID.
+
+Cloned voices (`qwen-voice-enrollment`, the "Voice Cloning" guide) belong to the
+model passed as `target_model` and are named
+`qwen-omni-vc-<name>-voice-<timestamp>-<suffix>` — no model id in front, so the
+prefix rule cannot recognise them. `ModelInfo.clonedVoices` lists the ones this
+workspace enrolled for that model, each with the label it shows in Settings, and
+`allowedVoices` is exactly that list: once an account has clones of its own it
+offers and accepts **only** those, so the vendor's system voices are neither
+listed nor used, and the `<model>-myvoice-…` form is accepted only by a model
+with no clone listed. Keeping the system list behind that switch matters: the
+dropdown clips its last entry, and 56 system voices buried their own ones. This
+workspace has three: `CLONED_OMNI_VOICE` ("Herm", from `Herm.wav`), the Qwen3.8
+Omni default, `CLONED_OMNI_VOICE_ZACH` ("Zach", from `Zach.wav`) and
+`CLONED_OMNI_VOICE_JANICE` ("Janice", from `Janice.wav`). A stored
+system voice from an older build (an old "Tina" or "Evan") resolves to the
+default, so no migration is needed.
+
+Enrolling another recording: it must be mono, ≥24 kHz, 16-bit WAV/MP3/M4A,
+10–20 s of clean speech (both source files are 20 s stereo 44.1 kHz 24-bit, so
+they are converted first with
+`ffmpeg -i <file>.wav -ac 1 -ar 24000 -sample_fmt s16`), then
+`POST https://{host}/api/v1/services/audio/tts/customization` with
+`{"model":"qwen-voice-enrollment","parameters":{"voice_clone_mode":"normal"},
+"input":{"action":"create","target_model":"qwen3.8-omni-flash-realtime",
+"preferred_name":"…","audio":{"data":"data:audio/wav;base64,…"}}}` and the
+workspace API key. The response's `output.voice` becomes a `ClonedVoice` entry
+(and `defaultVoice` if it should be the default). Action `list` shows the
+account's clones. Cloning is billed per voice and a clone expires after a year
+unused.
 
 Client events used: `session.update`, `input_audio_buffer.append` /
 `commit` / `clear`, `input_image_buffer.append`, `conversation.item.create`

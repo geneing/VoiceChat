@@ -193,14 +193,30 @@ fun SettingsScreen(
 
                 DropdownSetting(
                     label = "Voice",
-                    value = settings.modelInfo.resolveVoice(settings.voice),
-                    options = settings.modelInfo.voices.map { it to it },
+                    value = settings.modelInfo.labelFor(
+                        settings.modelInfo.resolveVoice(settings.voice),
+                    ),
+                    options = settings.modelInfo.voiceOptions,
                     onSelect = { voice -> viewModel.updateSettings { it.copy(voice = voice) } },
                 )
                 Text(
-                    "Default: ${settings.modelInfo.defaultVoice} · " +
-                        "${settings.modelInfo.voices.size} system voices for this model. " +
-                        "An unsupported voice falls back to the default.",
+                    buildString {
+                        append(
+                            "Default: ${
+                                settings.modelInfo.labelFor(settings.modelInfo.defaultVoice)
+                            } · ",
+                        )
+                        if (settings.modelInfo.clonedVoices.isNotEmpty()) {
+                            append("only your own cloned voices ")
+                            append("(${settings.modelInfo.clonedVoices.size})")
+                        } else {
+                            append("${settings.modelInfo.voices.size} system voices")
+                        }
+                        append(
+                            " for this model. An unsupported voice falls back " +
+                                "to the default.",
+                        )
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
