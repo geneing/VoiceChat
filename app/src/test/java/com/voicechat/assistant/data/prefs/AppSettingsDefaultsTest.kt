@@ -1,6 +1,8 @@
 package com.voicechat.assistant.data.prefs
 
 import com.voicechat.assistant.core.PromptCatalog
+import com.voicechat.assistant.core.RealtimeDefaults
+import com.voicechat.assistant.tutor.ConversationMode
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -73,6 +75,28 @@ class AppSettingsDefaultsTest {
         assertTrue(file.presets.all { it.prompt.isNotBlank() })
         val general = file.presets.single { it.label == "General assistant" }
         assertEquals(file.defaultPrompt, general.prompt)
+    }
+
+    @Test
+    fun `each mode keeps its own voice and the tutor defaults to Nacho`() {
+        val settings = AppSettings()
+        assertEquals(RealtimeDefaults.CLONED_OMNI_VOICE, settings.voiceFor(ConversationMode.ASSISTANT))
+        assertEquals(
+            RealtimeDefaults.CLONED_TUTOR_VOICE,
+            settings.voiceFor(ConversationMode.SPANISH_TUTOR),
+        )
+        val changed = settings.copy(
+            voice = RealtimeDefaults.CLONED_OMNI_VOICE_JANICE,
+            tutorVoice = RealtimeDefaults.CLONED_TUTOR_VOICE_ALT,
+        )
+        assertEquals(
+            RealtimeDefaults.CLONED_OMNI_VOICE_JANICE,
+            changed.voiceFor(ConversationMode.ASSISTANT),
+        )
+        assertEquals(
+            RealtimeDefaults.CLONED_TUTOR_VOICE_ALT,
+            changed.voiceFor(ConversationMode.SPANISH_TUTOR),
+        )
     }
 
     @Test

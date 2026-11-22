@@ -20,6 +20,7 @@ import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.model.UsageTotals
 import com.voicechat.assistant.realtime.handoff.HandoffConfig
 import com.voicechat.assistant.realtime.handoff.ReasoningModels
+import com.voicechat.assistant.tutor.ConversationMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -30,6 +31,8 @@ data class AppSettings(
     val transport: TransportKind = TransportKind.WEBSOCKET,
     val model: String = RealtimeDefaults.OMNI_MODEL,
     val voice: String = RealtimeDefaults.CLONED_OMNI_VOICE,
+    /** Spanish-tutor voice, kept apart so switching modes never overwrites the other. */
+    val tutorVoice: String = RealtimeDefaults.CLONED_TUTOR_VOICE,
     val instructions: String = PromptCatalog.defaultPrompt,
     val workspaceId: String = RealtimeDefaults.defaultWorkspaceId,
     val host: String = RealtimeDefaults.defaultHost,
@@ -81,6 +84,10 @@ data class AppSettings(
     val hasApiKey: Boolean get() = apiKey.isNotBlank()
     val modelInfo get() = RealtimeDefaults.models.firstOrNull { it.id == model }
         ?: RealtimeDefaults.models.first()
+
+    /** The voice the selected conversation uses: each mode keeps its own selection. */
+    fun voiceFor(mode: ConversationMode): String =
+        if (mode == ConversationMode.SPANISH_TUTOR) tutorVoice else voice
 }
 
 class SettingsRepository(private val context: Context) {
@@ -100,6 +107,7 @@ class SettingsRepository(private val context: Context) {
             } ?: defaults.transport,
             model = prefs[Keys.model] ?: defaults.model,
             voice = prefs[Keys.voice] ?: defaults.voice,
+            tutorVoice = prefs[Keys.tutorVoice] ?: defaults.tutorVoice,
             instructions = prefs[Keys.instructions] ?: defaults.instructions,
             workspaceId = prefs[Keys.workspaceId] ?: defaults.workspaceId,
             host = prefs[Keys.host] ?: defaults.host,
@@ -280,6 +288,7 @@ class SettingsRepository(private val context: Context) {
         prefs[Keys.transport] = s.transport.name
         prefs[Keys.model] = s.model
         prefs[Keys.voice] = s.voice
+        prefs[Keys.tutorVoice] = s.tutorVoice
         prefs[Keys.instructions] = s.instructions
         prefs[Keys.workspaceId] = s.workspaceId
         prefs[Keys.host] = s.host
@@ -319,6 +328,7 @@ class SettingsRepository(private val context: Context) {
         val transport = stringPreferencesKey("transport")
         val model = stringPreferencesKey("model")
         val voice = stringPreferencesKey("voice")
+        val tutorVoice = stringPreferencesKey("tutor_voice")
         val instructions = stringPreferencesKey("instructions")
         val workspaceId = stringPreferencesKey("workspace_id")
         val host = stringPreferencesKey("host")

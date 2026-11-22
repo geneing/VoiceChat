@@ -63,6 +63,7 @@ import com.voicechat.assistant.data.model.SearchProvider
 import com.voicechat.assistant.data.model.TransportKind
 import com.voicechat.assistant.data.prefs.AppSettings
 import com.voicechat.assistant.realtime.handoff.ReasoningModels
+import com.voicechat.assistant.tutor.ConversationMode
 import com.voicechat.assistant.ui.AppViewModel
 import kotlinx.coroutines.delay
 
@@ -75,6 +76,7 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val usage by viewModel.usageTotals.collectAsStateWithLifecycle()
+    val mode by viewModel.mode.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var locationGranted by remember {
         mutableStateOf(
@@ -176,7 +178,10 @@ fun SettingsScreen(
                         viewModel.updateSettings { current ->
                             current.copy(
                                 model = id,
-                                voice = info?.defaultVoice ?: current.voice,
+                                voice = info?.defaultVoiceFor(ConversationMode.ASSISTANT)
+                                    ?: current.voice,
+                                tutorVoice = info?.defaultVoiceFor(ConversationMode.SPANISH_TUTOR)
+                                    ?: current.tutorVoice,
                                 turnDetection = info?.defaultTurnDetection
                                     ?: current.turnDetection,
                                 toolsEnabled = current.toolsEnabled && supportsTools,
@@ -192,29 +197,39 @@ fun SettingsScreen(
                 )
 
                 DropdownSetting(
-                    label = "Voice",
+                    label = "Voice · ${mode.label}",
                     value = settings.modelInfo.labelFor(
-                        settings.modelInfo.resolveVoice(settings.voice),
+                        settings.modelInfo.resolveVoice(settings.voiceFor(mode), mode),
                     ),
-                    options = settings.modelInfo.voiceOptions,
-                    onSelect = { voice -> viewModel.updateSettings { it.copy(voice = voice) } },
+                    options = settings.modelInfo.voiceOptions(mode),
+                    onSelect = { voice ->
+                        viewModel.updateSettings { current ->
+                            if (mode == ConversationMode.SPANISH_TUTOR) {
+                                current.copy(tutorVoice = voice)
+                            } else {
+                                current.copy(voice = voice)
+                            }
+                        }
+                    },
                 )
                 Text(
                     buildString {
                         append(
                             "Default: ${
-                                settings.modelInfo.labelFor(settings.modelInfo.defaultVoice)
+                                settings.modelInfo.labelFor(
+                                    settings.modelInfo.defaultVoiceFor(mode),
+                                )
                             } · ",
                         )
-                        if (settings.modelInfo.clonedVoices.isNotEmpty()) {
-                            append("only your own cloned voices ")
-                            append("(${settings.modelInfo.clonedVoices.size})")
+                        if (settings.modelInfo.clonesFor(mode).isNotEmpty()) {
+                            append("only the ${mode.label.lowercase()} voices ")
+                            append("(${settings.modelInfo.clonesFor(mode).size})")
                         } else {
                             append("${settings.modelInfo.voices.size} system voices")
                         }
                         append(
-                            " for this model. An unsupported voice falls back " +
-                                "to the default.",
+                            " for this model. Each mode keeps its own voice, and an " +
+                                "unsupported voice falls back to the default.",
                         )
                     },
                     style = MaterialTheme.typography.labelSmall,

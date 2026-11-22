@@ -160,30 +160,39 @@ Cloned voices (`qwen-voice-enrollment`, the "Voice Cloning" guide) belong to the
 model passed as `target_model` and are named
 `qwen-omni-vc-<name>-voice-<timestamp>-<suffix>` — no model id in front, so the
 prefix rule cannot recognise them. `ModelInfo.clonedVoices` lists the ones this
-workspace enrolled for that model, each with the label it shows in Settings, and
-`allowedVoices` is exactly that list: once an account has clones of its own it
-offers and accepts **only** those, so the vendor's system voices are neither
-listed nor used, and the `<model>-myvoice-…` form is accepted only by a model
-with no clone listed. Keeping the system list behind that switch matters: the
-dropdown clips its last entry, and 56 system voices buried their own ones. This
-workspace has three: `CLONED_OMNI_VOICE` ("Herm", from `Herm.wav`), the Qwen3.8
-Omni default, `CLONED_OMNI_VOICE_ZACH` ("Zach", from `Zach.wav`) and
-`CLONED_OMNI_VOICE_JANICE` ("Janice", from `Janice.wav`). A stored
+workspace enrolled for that model, each with the label Settings shows and the
+`ConversationMode` it belongs to, and `allowedVoices(mode)` is exactly that
+mode's list: once a mode has clones of its own it offers and accepts **only**
+those, so the vendor's system voices are neither listed nor used, and a voice
+recorded for the other conversation never reaches it. The `<model>-myvoice-…`
+form is accepted only by a mode with no clone listed. Keeping the system list
+behind that switch matters: the dropdown clips its last entry, and 56 system
+voices buried their own ones.
+
+This workspace has five clones on `qwen3.8-omni-flash-realtime`. Assistant mode:
+`CLONED_OMNI_VOICE` ("Herm", from `Herm.wav`), its default,
+`CLONED_OMNI_VOICE_ZACH` ("Zach", from `Zach.wav`) and
+`CLONED_OMNI_VOICE_JANICE` ("Janice", from `Janice.wav`). Spanish tutor mode:
+`CLONED_TUTOR_VOICE` ("Nacho", from `Nacho.wav`), its default, and
+`CLONED_TUTOR_VOICE_ALT` ("Alejandro", from `Alejandro.wav`). Each mode keeps its
+own choice (`AppSettings.voice` and `AppSettings.tutorVoice`, read through
+`voiceFor(mode)`), so switching modes never overwrites the other, and the Voice
+dropdown lists the voices of the mode currently selected in the app. A stored
 system voice from an older build (an old "Tina" or "Evan") resolves to the
-default, so no migration is needed.
+mode's default, so no migration is needed.
 
 Enrolling another recording: it must be mono, ≥24 kHz, 16-bit WAV/MP3/M4A,
-10–20 s of clean speech (both source files are 20 s stereo 44.1 kHz 24-bit, so
-they are converted first with
+10–20 s of clean speech (the source recordings are 44.1 kHz 24-bit, some stereo,
+so they are converted first with
 `ffmpeg -i <file>.wav -ac 1 -ar 24000 -sample_fmt s16`), then
 `POST https://{host}/api/v1/services/audio/tts/customization` with
 `{"model":"qwen-voice-enrollment","parameters":{"voice_clone_mode":"normal"},
 "input":{"action":"create","target_model":"qwen3.8-omni-flash-realtime",
 "preferred_name":"…","audio":{"data":"data:audio/wav;base64,…"}}}` and the
 workspace API key. The response's `output.voice` becomes a `ClonedVoice` entry
-(and `defaultVoice` if it should be the default). Action `list` shows the
-account's clones. Cloning is billed per voice and a clone expires after a year
-unused.
+with the mode it serves (and `defaultVoice` if it should be the default). Action
+`list` shows the account's clones. Cloning is billed per voice and a clone
+expires after a year unused.
 
 Client events used: `session.update`, `input_audio_buffer.append` /
 `commit` / `clear`, `input_image_buffer.append`, `conversation.item.create`
@@ -473,6 +482,9 @@ silently never firing.
   learning record. Generic memory management applies to the selected mode's facts.
   Progress reset preserves chats and personal facts. Learning context is sent to
   the vendor as prompt text, just like regular device memory.
+- The tutor's voice is its own setting (`AppSettings.tutorVoice`, Nacho by
+  default) and its dropdown lists only the clones recorded for the tutor, never
+  the assistant's English voices — see "Cloned voices".
 - `assets/prompts.json` field `spanishTutor` is the tutor prompt source, loaded by
   `PromptCatalog`. Keep it separate from the customizable assistant prompt. It
   explicitly uses both Spanish and English in voice/text lessons, teaches Mexican

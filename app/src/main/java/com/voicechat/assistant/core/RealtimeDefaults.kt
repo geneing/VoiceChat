@@ -2,9 +2,19 @@ package com.voicechat.assistant.core
 
 import com.voicechat.assistant.BuildConfig
 import com.voicechat.assistant.data.model.TransportKind
+import com.voicechat.assistant.tutor.ConversationMode
 
-/** A voice enrolled with `qwen-voice-enrollment`, plus the name it shows in Settings. */
-data class ClonedVoice(val id: String, val label: String)
+/**
+ * A voice enrolled with `qwen-voice-enrollment`, plus the name it shows in
+ * Settings. [mode] keeps the two conversations apart: the assistant speaks with
+ * its own voices, the Spanish tutor with the Spanish ones, so neither mode
+ * offers a voice recorded for the other.
+ */
+data class ClonedVoice(
+    val id: String,
+    val label: String,
+    val mode: ConversationMode = ConversationMode.ASSISTANT,
+)
 
 data class ModelInfo(
     val id: String,
@@ -31,39 +41,57 @@ data class ModelInfo(
      */
     val clonedVoices: List<ClonedVoice> = emptyList(),
 ) {
-    /**
-     * The voices this model may use. An account with its own cloned voices uses
-     * only those — the vendor's system voices are not offered at all; the
-     * system list is the fallback for an account with no clone yet.
-     */
-    val allowedVoices: List<String>
-        get() = if (clonedVoices.isNotEmpty()) clonedVoices.map { it.id } else voices
+    /** The clones enrolled for [mode], in the order Settings lists them. */
+    fun clonesFor(mode: ConversationMode = ConversationMode.ASSISTANT): List<ClonedVoice> =
+        clonedVoices.filter { it.mode == mode }
 
-    /** Picker entries: a clone shows its label, a fallback system voice its own name. */
-    val voiceOptions: List<Pair<String, String>>
-        get() = if (clonedVoices.isNotEmpty()) {
-            clonedVoices.map { it.label to it.id }
+    /**
+     * The voices [mode] may use. A mode with clones of its own uses only those —
+     * the vendor's system voices are not offered at all, and a voice recorded for
+     * the other conversation never reaches this one. The system list is the
+     * fallback for an account that has no clone yet.
+     */
+    fun allowedVoices(mode: ConversationMode = ConversationMode.ASSISTANT): List<String> {
+        val clones = clonesFor(mode)
+        return if (clones.isNotEmpty()) clones.map { it.id } else voices
+    }
+
+    /** Picker entries for [mode]: a clone shows its label, a system voice its own name. */
+    fun voiceOptions(
+        mode: ConversationMode = ConversationMode.ASSISTANT,
+    ): List<Pair<String, String>> {
+        val clones = clonesFor(mode)
+        return if (clones.isNotEmpty()) {
+            clones.map { it.label to it.id }
         } else {
             voices.map { it to it }
         }
+    }
+
+    /** The mode's first clone, or the model default when that mode has none. */
+    fun defaultVoiceFor(mode: ConversationMode = ConversationMode.ASSISTANT): String =
+        clonesFor(mode).firstOrNull()?.id ?: defaultVoice
 
     /**
-     * Anything outside [allowedVoices] must not reach `session.update` or the
-     * server answers "voice not supported". The vendor also names clones
-     * `<target-model>-myvoice-…`, so that form is accepted by a model that has
-     * no clone listed.
+     * Anything outside the mode's [allowedVoices] must not reach `session.update`
+     * or the server answers "voice not supported". The vendor also names clones
+     * `<target-model>-myvoice-…`, so that form is accepted by a mode that has no
+     * clone listed.
      */
-    fun supportsVoice(voice: String): Boolean {
+    fun supportsVoice(voice: String, mode: ConversationMode = ConversationMode.ASSISTANT): Boolean {
         if (voice.isBlank()) return false
-        if (voice in allowedVoices) return true
-        return clonedVoices.isEmpty() && voice.startsWith("$id-")
+        if (voice in allowedVoices(mode)) return true
+        return clonesFor(mode).isEmpty() && voice.startsWith("$id-")
     }
 
     /** The name a voice shows in Settings: the clone's label, or the voice id. */
     fun labelFor(voice: String): String =
         clonedVoices.firstOrNull { it.id == voice }?.label ?: voice
 
-    fun resolveVoice(voice: String): String = if (supportsVoice(voice)) voice else defaultVoice
+    fun resolveVoice(
+        voice: String,
+        mode: ConversationMode = ConversationMode.ASSISTANT,
+    ): String = if (supportsVoice(voice, mode)) voice else defaultVoiceFor(mode)
 
     /**
      * Client tools win when the model cannot combine them with agent mode: the
@@ -93,6 +121,15 @@ object RealtimeDefaults {
     /** Voice cloned from `Janice.wav`, same account and model. */
     const val CLONED_OMNI_VOICE_JANICE = "qwen-omni-vc-janice-voice-20261122163256610-f953"
     const val CLONED_OMNI_VOICE_JANICE_LABEL = "Janice"
+
+    /**
+     * Spanish-tutor voices, cloned from `Nacho.wav` and `Alejandro.wav` for the
+     * same model. They belong to tutor mode only, and Nacho is its default.
+     */
+    const val CLONED_TUTOR_VOICE = "qwen-omni-vc-nacho-voice-20261123033113976-f906"
+    const val CLONED_TUTOR_VOICE_LABEL = "Nacho"
+    const val CLONED_TUTOR_VOICE_ALT = "qwen-omni-vc-alejandro-voice-20261123033137181-2dfd"
+    const val CLONED_TUTOR_VOICE_ALT_LABEL = "Alejandro"
 
     /** Qwen3.8-Omni-Flash-Realtime system voices (Model Studio voice list). */
     private val OMNI_VOICES = listOf(
@@ -262,6 +299,16 @@ object RealtimeDefaults {
                 ClonedVoice(CLONED_OMNI_VOICE, CLONED_OMNI_VOICE_LABEL),
                 ClonedVoice(CLONED_OMNI_VOICE_ZACH, CLONED_OMNI_VOICE_ZACH_LABEL),
                 ClonedVoice(CLONED_OMNI_VOICE_JANICE, CLONED_OMNI_VOICE_JANICE_LABEL),
+                ClonedVoice(
+                    CLONED_TUTOR_VOICE,
+                    CLONED_TUTOR_VOICE_LABEL,
+                    ConversationMode.SPANISH_TUTOR,
+                ),
+                ClonedVoice(
+                    CLONED_TUTOR_VOICE_ALT,
+                    CLONED_TUTOR_VOICE_ALT_LABEL,
+                    ConversationMode.SPANISH_TUTOR,
+                ),
             ),
             turnDetectionOptions = listOf("semantic_vad", "semantic_vad_ec", "server_vad"),
             defaultTurnDetection = "semantic_vad",

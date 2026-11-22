@@ -1,6 +1,7 @@
 package com.voicechat.assistant.core
 
 import com.voicechat.assistant.data.model.TransportKind
+import com.voicechat.assistant.tutor.ConversationMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -46,13 +47,22 @@ class ModelCapabilitiesTest {
     }
 
     @Test
-    fun `the enrolled clones are the only offered voices`() {
-        assertEquals(RealtimeDefaults.CLONED_OMNI_VOICE, omni.defaultVoice)
+    fun `each mode offers only the clones recorded for it`() {
         assertEquals(
             listOf(
                 ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE, "Herm"),
                 ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE_ZACH, "Zach"),
                 ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE_JANICE, "Janice"),
+                ClonedVoice(
+                    RealtimeDefaults.CLONED_TUTOR_VOICE,
+                    "Nacho",
+                    ConversationMode.SPANISH_TUTOR,
+                ),
+                ClonedVoice(
+                    RealtimeDefaults.CLONED_TUTOR_VOICE_ALT,
+                    "Alejandro",
+                    ConversationMode.SPANISH_TUTOR,
+                ),
             ),
             omni.clonedVoices,
         )
@@ -62,7 +72,14 @@ class ModelCapabilitiesTest {
                 "Zach" to RealtimeDefaults.CLONED_OMNI_VOICE_ZACH,
                 "Janice" to RealtimeDefaults.CLONED_OMNI_VOICE_JANICE,
             ),
-            omni.voiceOptions,
+            omni.voiceOptions(ConversationMode.ASSISTANT),
+        )
+        assertEquals(
+            listOf(
+                "Nacho" to RealtimeDefaults.CLONED_TUTOR_VOICE,
+                "Alejandro" to RealtimeDefaults.CLONED_TUTOR_VOICE_ALT,
+            ),
+            omni.voiceOptions(ConversationMode.SPANISH_TUTOR),
         )
         assertEquals(
             listOf(
@@ -70,18 +87,61 @@ class ModelCapabilitiesTest {
                 RealtimeDefaults.CLONED_OMNI_VOICE_ZACH,
                 RealtimeDefaults.CLONED_OMNI_VOICE_JANICE,
             ),
-            omni.allowedVoices,
+            omni.allowedVoices(ConversationMode.ASSISTANT),
         )
-        assertEquals("Herm", omni.labelFor(RealtimeDefaults.CLONED_OMNI_VOICE))
-        assertEquals("Zach", omni.labelFor(RealtimeDefaults.CLONED_OMNI_VOICE_ZACH))
-        assertEquals("Janice", omni.labelFor(RealtimeDefaults.CLONED_OMNI_VOICE_JANICE))
         assertEquals(
-            RealtimeDefaults.CLONED_OMNI_VOICE_JANICE,
-            omni.resolveVoice(RealtimeDefaults.CLONED_OMNI_VOICE_JANICE),
+            listOf(
+                RealtimeDefaults.CLONED_TUTOR_VOICE,
+                RealtimeDefaults.CLONED_TUTOR_VOICE_ALT,
+            ),
+            omni.allowedVoices(ConversationMode.SPANISH_TUTOR),
         )
-        // A system voice is not offered while the account has clones of its own.
+        assertEquals("Nacho", omni.labelFor(RealtimeDefaults.CLONED_TUTOR_VOICE))
+        assertEquals("Alejandro", omni.labelFor(RealtimeDefaults.CLONED_TUTOR_VOICE_ALT))
+        assertEquals(
+            RealtimeDefaults.CLONED_OMNI_VOICE,
+            omni.defaultVoiceFor(ConversationMode.ASSISTANT),
+        )
+        assertEquals(
+            RealtimeDefaults.CLONED_TUTOR_VOICE,
+            omni.defaultVoiceFor(ConversationMode.SPANISH_TUTOR),
+        )
+        assertEquals(
+            RealtimeDefaults.CLONED_TUTOR_VOICE_ALT,
+            omni.resolveVoice(
+                RealtimeDefaults.CLONED_TUTOR_VOICE_ALT,
+                ConversationMode.SPANISH_TUTOR,
+            ),
+        )
+    }
+
+    @Test
+    fun `a voice recorded for one mode never reaches the other`() {
+        // The tutor's Spanish voices are invisible to the assistant.
+        assertFalse(omni.supportsVoice(RealtimeDefaults.CLONED_TUTOR_VOICE))
+        assertEquals(
+            RealtimeDefaults.CLONED_OMNI_VOICE,
+            omni.resolveVoice(RealtimeDefaults.CLONED_TUTOR_VOICE),
+        )
+        // And the assistant's voices are invisible to the tutor.
+        assertFalse(
+            omni.supportsVoice(
+                RealtimeDefaults.CLONED_OMNI_VOICE,
+                ConversationMode.SPANISH_TUTOR,
+            ),
+        )
+        assertEquals(
+            RealtimeDefaults.CLONED_TUTOR_VOICE,
+            omni.resolveVoice(RealtimeDefaults.CLONED_OMNI_VOICE, ConversationMode.SPANISH_TUTOR),
+        )
+        // A system voice is offered in neither mode while the account has clones.
         assertFalse(omni.supportsVoice("Tina"))
+        assertFalse(omni.supportsVoice("Tina", ConversationMode.SPANISH_TUTOR))
         assertEquals(RealtimeDefaults.CLONED_OMNI_VOICE, omni.resolveVoice("Tina"))
+        assertEquals(
+            RealtimeDefaults.CLONED_TUTOR_VOICE,
+            omni.resolveVoice("Tina", ConversationMode.SPANISH_TUTOR),
+        )
     }
 
     @Test
@@ -90,9 +150,10 @@ class ModelCapabilitiesTest {
         assertFalse(audio.supportsVoice(RealtimeDefaults.CLONED_OMNI_VOICE))
         assertFalse(audio.supportsVoice(RealtimeDefaults.CLONED_OMNI_VOICE_ZACH))
         assertFalse(audio.supportsVoice(RealtimeDefaults.CLONED_OMNI_VOICE_JANICE))
+        assertFalse(audio.supportsVoice(RealtimeDefaults.CLONED_TUTOR_VOICE))
         assertEquals("longanqian_v3.1", audio.resolveVoice(RealtimeDefaults.CLONED_OMNI_VOICE))
-        assertEquals(89, audio.voiceOptions.size)
-        assertTrue(audio.voiceOptions.all { (label, id) -> label == id })
+        assertEquals(89, audio.voiceOptions().size)
+        assertTrue(audio.voiceOptions().all { (label, id) -> label == id })
     }
 
     @Test

@@ -300,7 +300,11 @@ class AppViewModel(application: Application) :
                 } else {
                     TransportKind.WEBSOCKET
                 }
-                val voice = info.resolveVoice(current.voice)
+                val voice = info.resolveVoice(current.voice, ConversationMode.ASSISTANT)
+                val tutorVoice = info.resolveVoice(
+                    current.tutorVoice,
+                    ConversationMode.SPANISH_TUTOR,
+                )
                 val turnDetection = if (current.turnDetection in info.turnDetectionOptions) {
                     current.turnDetection
                 } else {
@@ -308,18 +312,21 @@ class AppViewModel(application: Application) :
                 }
                 if (transport != current.transport ||
                     voice != current.voice ||
+                    tutorVoice != current.tutorVoice ||
                     turnDetection != current.turnDetection
                 ) {
                     AppLog.info(
                         LogCategory.SESSION,
                         "Normalising model settings",
                         "transport ${current.transport}->$transport voice ${current.voice}->$voice " +
+                            "tutorVoice ${current.tutorVoice}->$tutorVoice " +
                             "turn ${current.turnDetection}->$turnDetection",
                     )
                     container.settings.update {
                         it.copy(
                             transport = transport,
                             voice = voice,
+                            tutorVoice = tutorVoice,
                             turnDetection = turnDetection,
                         )
                     }
@@ -648,7 +655,8 @@ class AppViewModel(application: Application) :
             } else {
                 TransportKind.WEBSOCKET
             }
-            val voice = info.resolveVoice(after.voice)
+            val voice = info.resolveVoice(after.voice, ConversationMode.ASSISTANT)
+            val tutorVoice = info.resolveVoice(after.tutorVoice, ConversationMode.SPANISH_TUTOR)
             val turnDetection = if (after.turnDetection in info.turnDetectionOptions) {
                 after.turnDetection
             } else {
@@ -656,11 +664,13 @@ class AppViewModel(application: Application) :
             }
             if (transport != after.transport ||
                 voice != after.voice ||
+                tutorVoice != after.tutorVoice ||
                 turnDetection != after.turnDetection
             ) {
                 after = after.copy(
                     transport = transport,
                     voice = voice,
+                    tutorVoice = tutorVoice,
                     turnDetection = turnDetection,
                 )
                 _uiEvents.tryEmit(
@@ -1085,7 +1095,7 @@ class AppViewModel(application: Application) :
         }
         return SessionConfig(
             model = current.model,
-            voice = modelInfo.resolveVoice(current.voice),
+            voice = modelInfo.resolveVoice(current.voiceFor(_mode.value), _mode.value),
             instructions = if (tutor) PromptCatalog.spanishTutor else current.instructions,
             transport = if (current.transport in modelInfo.supportedTransports) {
                 current.transport
@@ -1236,6 +1246,7 @@ private fun AppSettings.sessionKey(): List<Any> = listOf(
     transport,
     model,
     voice,
+    tutorVoice,
     instructions,
     host,
     workspaceId,
