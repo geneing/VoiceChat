@@ -53,6 +53,9 @@ class ModelCapabilitiesTest {
                 ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE, "Herm"),
                 ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE_ZACH, "Zach"),
                 ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE_JANICE, "Janice"),
+                ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE_HOPE, "Hope"),
+                ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE_KRISTEN, "Kristen"),
+                ClonedVoice(RealtimeDefaults.CLONED_OMNI_VOICE_HANK, "Hank"),
                 ClonedVoice(
                     RealtimeDefaults.CLONED_TUTOR_VOICE,
                     "Nacho",
@@ -71,6 +74,9 @@ class ModelCapabilitiesTest {
                 "Herm" to RealtimeDefaults.CLONED_OMNI_VOICE,
                 "Zach" to RealtimeDefaults.CLONED_OMNI_VOICE_ZACH,
                 "Janice" to RealtimeDefaults.CLONED_OMNI_VOICE_JANICE,
+                "Hope" to RealtimeDefaults.CLONED_OMNI_VOICE_HOPE,
+                "Kristen" to RealtimeDefaults.CLONED_OMNI_VOICE_KRISTEN,
+                "Hank" to RealtimeDefaults.CLONED_OMNI_VOICE_HANK,
             ),
             omni.voiceOptions(ConversationMode.ASSISTANT),
         )
@@ -86,6 +92,9 @@ class ModelCapabilitiesTest {
                 RealtimeDefaults.CLONED_OMNI_VOICE,
                 RealtimeDefaults.CLONED_OMNI_VOICE_ZACH,
                 RealtimeDefaults.CLONED_OMNI_VOICE_JANICE,
+                RealtimeDefaults.CLONED_OMNI_VOICE_HOPE,
+                RealtimeDefaults.CLONED_OMNI_VOICE_KRISTEN,
+                RealtimeDefaults.CLONED_OMNI_VOICE_HANK,
             ),
             omni.allowedVoices(ConversationMode.ASSISTANT),
         )
@@ -151,6 +160,7 @@ class ModelCapabilitiesTest {
         assertFalse(audio.supportsVoice(RealtimeDefaults.CLONED_OMNI_VOICE_ZACH))
         assertFalse(audio.supportsVoice(RealtimeDefaults.CLONED_OMNI_VOICE_JANICE))
         assertFalse(audio.supportsVoice(RealtimeDefaults.CLONED_TUTOR_VOICE))
+        assertFalse(audio.supportsVoice(RealtimeDefaults.CLONED_OMNI_VOICE_HANK))
         assertEquals("longanqian_v3.1", audio.resolveVoice(RealtimeDefaults.CLONED_OMNI_VOICE))
         assertEquals(89, audio.voiceOptions().size)
         assertTrue(audio.voiceOptions().all { (label, id) -> label == id })

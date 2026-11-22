@@ -169,10 +169,12 @@ form is accepted only by a mode with no clone listed. Keeping the system list
 behind that switch matters: the dropdown clips its last entry, and 56 system
 voices buried their own ones.
 
-This workspace has five clones on `qwen3.8-omni-flash-realtime`. Assistant mode:
+This workspace has eight clones on `qwen3.8-omni-flash-realtime`. Assistant mode:
 `CLONED_OMNI_VOICE` ("Herm", from `Herm.wav`), its default,
-`CLONED_OMNI_VOICE_ZACH` ("Zach", from `Zach.wav`) and
-`CLONED_OMNI_VOICE_JANICE` ("Janice", from `Janice.wav`). Spanish tutor mode:
+`CLONED_OMNI_VOICE_ZACH` ("Zach", from `Zach.wav`),
+`CLONED_OMNI_VOICE_JANICE` ("Janice", from `Janice.wav`), and
+`CLONED_OMNI_VOICE_HOPE`, `CLONED_OMNI_VOICE_KRISTEN` and `CLONED_OMNI_VOICE_HANK`
+("Hope", "Kristen", "Hank", from their `.mp3` files). Spanish tutor mode:
 `CLONED_TUTOR_VOICE` ("Nacho", from `Nacho.wav`), its default, and
 `CLONED_TUTOR_VOICE_ALT` ("Alejandro", from `Alejandro.wav`). Each mode keeps its
 own choice (`AppSettings.voice` and `AppSettings.tutorVoice`, read through

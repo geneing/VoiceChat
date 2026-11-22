@@ -121,6 +121,13 @@ object RealtimeDefaults {
     /** Voice cloned from `Janice.wav`, same account and model. */
     const val CLONED_OMNI_VOICE_JANICE = "qwen-omni-vc-janice-voice-20261122163256610-f953"
     const val CLONED_OMNI_VOICE_JANICE_LABEL = "Janice"
+    /** Voices cloned from `Hope.mp3`, `Kristen.mp3` and `Hank.mp3`, assistant mode. */
+    const val CLONED_OMNI_VOICE_HOPE = "qwen-omni-vc-hope-voice-20261123034309565-28ce"
+    const val CLONED_OMNI_VOICE_HOPE_LABEL = "Hope"
+    const val CLONED_OMNI_VOICE_KRISTEN = "qwen-omni-vc-kristen-voice-20261123034314048-1b84"
+    const val CLONED_OMNI_VOICE_KRISTEN_LABEL = "Kristen"
+    const val CLONED_OMNI_VOICE_HANK = "qwen-omni-vc-hank-voice-20261123034318121-541a"
+    const val CLONED_OMNI_VOICE_HANK_LABEL = "Hank"
 
     /**
      * Spanish-tutor voices, cloned from `Nacho.wav` and `Alejandro.wav` for the
@@ -299,6 +306,9 @@ object RealtimeDefaults {
                 ClonedVoice(CLONED_OMNI_VOICE, CLONED_OMNI_VOICE_LABEL),
                 ClonedVoice(CLONED_OMNI_VOICE_ZACH, CLONED_OMNI_VOICE_ZACH_LABEL),
                 ClonedVoice(CLONED_OMNI_VOICE_JANICE, CLONED_OMNI_VOICE_JANICE_LABEL),
+                ClonedVoice(CLONED_OMNI_VOICE_HOPE, CLONED_OMNI_VOICE_HOPE_LABEL),
+                ClonedVoice(CLONED_OMNI_VOICE_KRISTEN, CLONED_OMNI_VOICE_KRISTEN_LABEL),
+                ClonedVoice(CLONED_OMNI_VOICE_HANK, CLONED_OMNI_VOICE_HANK_LABEL),
                 ClonedVoice(
                     CLONED_TUTOR_VOICE,
                     CLONED_TUTOR_VOICE_LABEL,
