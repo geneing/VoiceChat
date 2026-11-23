@@ -71,18 +71,20 @@ data class TutorProgress(
         append("Estimated CEFR level: $level. Dialect: Mexican Spanish.\n")
         if (summary.isNotBlank()) append("Progress summary: $summary\n")
         fun items(label: String, values: List<PracticeItem>) {
-            append("$label (${values.size} tracked):\n")
+            append("$label (${values.size} tracked; successes/attempts):\n")
             values.sortedWith(compareBy<PracticeItem> { !it.needsWork }.thenBy { it.lastPracticed })
-                .take(24).forEach {
-                    append("${it.topic}: ${it.successes}/${it.attempts} independent successes; ${it.note}\n")
+                .take(12).forEach {
+                    append("${it.topic}: ${it.successes}/${it.attempts}")
+                    if (it.note.isNotBlank()) append("; ${it.note.take(100)}")
+                    append('\n')
                 }
         }
         items("Vocabulary", vocabulary)
         items("Grammar", grammar)
         append("Recent activities (change the scene and wording):\n")
-        activities.takeLast(16).forEach { append("$it\n") }
+        activities.takeLast(12).forEach { append("${it.take(140)}\n") }
         append("Recent dialog (already said; do not replay):\n")
-        recentDialog.takeLast(12).forEach { append("${it.role}: ${it.text.take(420)}\n") }
+        recentDialog.takeLast(6).forEach { append("${it.role}: ${it.text.take(180)}\n") }
         append("[/Spanish learning record]")
     }
 

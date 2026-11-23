@@ -1,7 +1,6 @@
 package com.voicechat.assistant.ui.chat
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -39,9 +38,9 @@ fun TutorProgressPanel(progress: TutorProgress, onReset: () -> Unit) {
         onDismissRequest = { showProgress = false },
         title = { Text("Your Spanish · ${progress.level}") },
         text = {
-            LazyColumn(Modifier.heightIn(max = 460.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            LazyColumn(Modifier.heightIn(max = 460.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 item {
-                    Text("Learning history is stored separately from Assistant chats. Relevant parts are sent to the model for lessons.",
+                    Text("A selection is sent to the model for lessons and progress reviews. Scores are independent correct answers / attempts.",
                         style = MaterialTheme.typography.bodySmall)
                 }
                 item { Text(progress.summary.ifBlank { "Starting at A2. Your tutor will adapt as you practice." }) }
@@ -49,11 +48,8 @@ fun TutorProgressPanel(progress: TutorProgress, onReset: () -> Unit) {
                 item { Text("Vocabulary", style = MaterialTheme.typography.titleMedium) }
                 if (progress.vocabulary.isEmpty()) item { Text("Words appear here after practice.") }
                 items(progress.vocabulary.sortedBy { !it.needsWork }) { word ->
-                    Column {
-                        Text("${word.topic} · ${if (word.needsWork) "practicing" else "growing stronger"}")
-                        Text("${word.successes}/${word.attempts} independent successes. ${word.note}",
-                            style = MaterialTheme.typography.bodySmall)
-                    }
+                    Text("${word.topic} · ${word.successes}/${word.attempts}" +
+                        if (word.note.isNotBlank()) " · ${word.note}" else "")
                 }
                 item { Text("Grammar", style = MaterialTheme.typography.titleMedium) }
                 items(progress.grammar.sortedBy { !it.needsWork }) { point ->

@@ -67,6 +67,33 @@ class TutorProgressTest {
         assertFalse(progress.context().contains("scene 0\n"))
     }
 
+    @Test fun `lesson context is compact and keeps weak material and recent scenes`() {
+        val weak = (0 until 14).map { PracticeItem("weak$it", "n".repeat(150), lastPracticed = it.toLong()) }
+        val mastered = PracticeItem("mastered", successes = 5, attempts = 5)
+        val progress = TutorProgress(
+            summary = "Existing cumulative summary",
+            vocabulary = listOf(mastered) + weak,
+            activities = (0 until 15).map { "scene$it " + "a".repeat(160) },
+            recentDialog = (0 until 8).map { TutorTurn("$it", "user", "turn$it " + "d".repeat(200)) },
+        )
+        val context = progress.context()
+        assertTrue(context.contains("Existing cumulative summary"))
+        assertTrue(context.contains("weak0:"))
+        assertTrue(context.contains("weak11:"))
+        assertFalse(context.contains("weak12:"))
+        assertFalse(context.contains("mastered:"))
+        assertTrue(context.contains("scene14"))
+        assertFalse(context.contains("scene2 "))
+        assertTrue(context.contains("turn7"))
+        assertFalse(context.contains("turn1 "))
+        assertFalse(context.contains("n".repeat(101)))
+        assertFalse(context.contains("a".repeat(141)))
+        assertFalse(context.contains("d".repeat(181)))
+        assertEquals(15, progress.vocabulary.size)
+        assertEquals(15, progress.activities.size)
+        assertEquals(8, progress.recentDialog.size)
+    }
+
     @Test fun `only explicit full utterances switch modes`() {
         assertEquals(ConversationMode.SPANISH_TUTOR, ConversationMode.command(" Switch to Spanish tutor! "))
         assertEquals(ConversationMode.ASSISTANT, ConversationMode.command("back to voice chat"))

@@ -401,8 +401,8 @@ object ToolDefinitions {
                     listOf(
                         "level" to "Estimated CEFR level A1/A2/B1/B2/C1/C2; omit unless supported by several turns.",
                         "level_evidence" to "Concrete independent performance supporting a level change.",
-                        "summary" to "Cumulative progress, strengths, weaknesses, past discussion topics and next steps. Up to 1800 characters.",
-                        "activity" to "Scene, exercise type and example sentence just used, to avoid repetition.",
+                        "summary" to "Concise cumulative strengths, weaknesses, discussion topics and next steps; target 600 characters, retain important older weaknesses.",
+                        "activity" to "Brief scene, exercise type and distinctive wording just used, to avoid repetition.",
                     ).forEach { (name, description) ->
                         put(name, buildJsonObject { put("type", "string"); put("description", description) })
                     }

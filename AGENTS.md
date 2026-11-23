@@ -470,8 +470,10 @@ silently never firing.
 - `spanish_tutor_progress` DataStore holds a cumulative summary, estimated CEFR
   level (initial A2), vocabulary/grammar attempts, corrections, 60 recent exercises
   and 24 recent dialog turns. `TutorProgress` merges partial updates by canonical
-  topic. Its opening context prioritizes weak/old material; `recall_tutor_progress`
-  retrieves older items. `record_tutor_progress` records model-evaluated outcomes;
+  topic. Its opening and recap context includes the cumulative summary, up to 12
+  weak/old entries per category, 12 recent activities and 6 short dialog excerpts;
+  `recall_tutor_progress` retrieves older items. New summaries target 600 characters
+  while existing summaries remain intact. `record_tutor_progress` records model-evaluated outcomes;
   saved user/assistant turns automatically retain a bounded redacted dialog too.
   `TutorLearning` backstops skipped realtime tool calls with a serialized background
   text-model recap after a completed exchange. It uses the configured reasoning
@@ -492,7 +494,9 @@ silently never firing.
   explicitly uses both Spanish and English in voice/text lessons, teaches Mexican
   Spanish, prioritizes conversation, chooses varied exercises,
   includes translation in both directions and explains corrections in English.
-  Lesson questions adapt to ability, one at a time; requests for learner instructions
+  Lesson questions adapt to ability, one at a time, with brief feedback and an
+  immediate next question. Word translations include a source-language example
+  without revealing the answer; scenes and activities change regularly. Requests for learner instructions
   or clarifications use basic Spanish or English. Tutor delivery overrides
   the assistant's brisk pace with a learner-friendly pace. Pronunciation feedback
   requires actual voice evidence; never infer it from text/ASR alone. Automatic
