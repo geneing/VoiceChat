@@ -560,8 +560,12 @@ from the WebSocket capture stream. `PcmRecorder` keeps reading the microphone bu
 only forwards audio that belongs to a spoken turn:
 
 - 1 s pre-roll ring buffer, flushed on onset so the first syllable is never lost.
-- Onset needs 100 ms of speech above the trigger, which follows the measured
-  ambient noise floor (fast down, slow up) to adapt to a quiet room or a noisy one.
+- Onset needs 100 ms of speech above the trigger. The ambient noise estimate
+  calibrates at startup, then follows changes with a 15-second time constant in
+  both directions. Speech prevents upward adaptation for the first 10 seconds;
+  after that sustained noise can raise the floor so the gate eventually closes.
+  A long continuous utterance is indistinguishable from sustained noise to this
+  energy-only detector and may slowly raise the floor after that grace period.
 - 1.2 s hangover keeps short pauses inside one turn.
 - 1.5 s of digital silence is appended after the last syllable. Without it the
   server never closes the turn: a capture that stops right after speech produces

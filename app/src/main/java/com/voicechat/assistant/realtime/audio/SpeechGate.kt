@@ -3,6 +3,7 @@ package com.voicechat.assistant.realtime.audio
 import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.sqrt
+import kotlin.math.exp
 
 /**
  * On-device voice gate configuration. The gate decides which captured 16 kHz
@@ -55,6 +56,7 @@ class SpeechGate(
     private var tailRemainingMs = 0f
     private var smoothedDb = QUIET_DB
     private var warmupRemainingMs = 0f
+    private var speakingMs = 0f
 
     /** Learned ambient level, dBFS. */
     var noiseFloorDb = QUIET_DB
@@ -88,6 +90,7 @@ class SpeechGate(
         smoothedDb = QUIET_DB
         noiseFloorDb = QUIET_DB
         warmupRemainingMs = if (config.enabled) config.warmupMs.toFloat() else 0f
+        speakingMs = 0f
         capturedMs = 0f
         streamedMs = 0f
     }
@@ -106,7 +109,12 @@ class SpeechGate(
             return listOf(chunk)
         }
         val level = levelDbOf(chunk)
-        smoothedDb = smoothedDb * SMOOTHING_KEEP + level * (1f - SMOOTHING_KEEP)
+        if (capturedMs <= durationMs) {
+            smoothedDb = level
+            noiseFloorDb = level
+        } else {
+            smoothedDb = smoothedDb * SMOOTHING_KEEP + level * (1f - SMOOTHING_KEEP)
+        }
         return when (state) {
             State.IDLE -> onIdle(chunk, durationMs)
             State.SPEAKING -> onSpeaking(chunk, durationMs)
@@ -116,11 +124,12 @@ class SpeechGate(
 
     private fun onIdle(chunk: ByteArray, durationMs: Float): List<ByteArray> {
         pushPreRoll(chunk, durationMs)
-        adaptNoise(tracker = WARMUP_TRACKER)
         if (warmupRemainingMs > 0f) {
+            adaptNoise(durationMs, warmingUp = true)
             warmupRemainingMs -= durationMs
             return emptyList()
         }
+        adaptNoise(durationMs, allowIncrease = smoothedDb < thresholdDb)
         if (smoothedDb < thresholdDb) {
             speechRunMs = 0f
             return emptyList()
@@ -132,13 +141,18 @@ class SpeechGate(
         preRoll.clear()
         preRollMs = 0f
         state = State.SPEAKING
+        speakingMs = 0f
         speechRunMs = 0f
         quietRunMs = 0f
         return pending
     }
 
     private fun onSpeaking(chunk: ByteArray, durationMs: Float): List<ByteArray> {
-        adaptNoise(tracker = SPEAKING_TRACKER)
+        speakingMs += durationMs
+        // A normal utterance must not become the new noise floor. A sustained
+        // sound can still be steady background noise; eventually track it so a
+        // sudden noisy environment cannot leave the gate open indefinitely.
+        adaptNoise(durationMs, allowIncrease = speakingMs >= SPEECH_HOLD_MS)
         val endThreshold = thresholdDb - END_HYSTERESIS_DB
         if (smoothedDb >= endThreshold) {
             quietRunMs = 0f
@@ -163,7 +177,7 @@ class SpeechGate(
      */
     private fun onTail(chunk: ByteArray, durationMs: Float): List<ByteArray> {
         pushPreRoll(chunk, durationMs)
-        adaptNoise(tracker = WARMUP_TRACKER)
+        adaptNoise(durationMs, allowIncrease = smoothedDb < thresholdDb)
         if (smoothedDb >= thresholdDb) {
             speechRunMs += durationMs
             if (speechRunMs >= config.onsetMs) {
@@ -202,13 +216,11 @@ class SpeechGate(
         }
     }
 
-    /**
-     * Follows the room quickly downwards and slowly upwards. While the gate is
-     * closed this tracks the ambient level; while it is open the floor is almost
-     * frozen so a long sentence cannot lift the trigger above the speaker.
-     */
-    private fun adaptNoise(tracker: Float) {
-        val rate = if (smoothedDb < noiseFloorDb) FAST_DOWN_TRACKER else tracker
+    /** Calibrate at startup, then follow ambient changes with a 15 s time constant. */
+    private fun adaptNoise(durationMs: Float, warmingUp: Boolean = false, allowIncrease: Boolean = true) {
+        if (!allowIncrease && smoothedDb > noiseFloorDb) return
+        val rate = if (warmingUp) WARMUP_TRACKER else
+            (1.0 - exp(-durationMs.toDouble() / NOISE_TIME_CONSTANT_MS)).toFloat()
         noiseFloorDb += (smoothedDb - noiseFloorDb) * rate
         noiseFloorDb = noiseFloorDb.coerceIn(MIN_FLOOR_DB, MAX_FLOOR_DB)
     }
@@ -240,9 +252,9 @@ class SpeechGate(
         private const val MIN_FLOOR_DB = -90f
         private const val MAX_FLOOR_DB = -18f
         private const val SMOOTHING_KEEP = 0.7f
-        private const val FAST_DOWN_TRACKER = 0.25f
         private const val WARMUP_TRACKER = 0.15f
-        private const val SPEAKING_TRACKER = 0.0008f
+        private const val NOISE_TIME_CONSTANT_MS = 15_000.0
+        private const val SPEECH_HOLD_MS = 10_000f
         private const val END_HYSTERESIS_DB = 3f
     }
 }

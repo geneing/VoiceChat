@@ -82,6 +82,42 @@ class SpeechGateTest {
     }
 
     @Test
+    fun `brief speech does not raise the learned noise floor`() {
+        val gate = SpeechGate(config)
+        val ambient = tone(-60f, CHUNK_MS)
+        repeat(FRAMES_PER_SECOND * 2) { gate.process(ambient) }
+        val floor = gate.noiseFloorDb
+        repeat(FRAMES_PER_SECOND * 5) { gate.process(tone(SPEECH_DB, CHUNK_MS)) }
+        assertTrue("speech should open the gate", gate.speaking)
+        assertEquals(floor, gate.noiseFloorDb, 0.5f)
+    }
+
+    @Test
+    fun `a sustained increase in noise adapts slowly and eventually closes the gate`() {
+        val gate = SpeechGate(config)
+        repeat(FRAMES_PER_SECOND * 2) { gate.process(tone(-60f, CHUNK_MS)) }
+        val initial = gate.thresholdDb
+        val loud = tone(-36f, CHUNK_MS)
+        repeat(FRAMES_PER_SECOND * 2) { gate.process(loud) }
+        assertEquals("brief noise must not retune the trigger", initial, gate.thresholdDb, 1f)
+        repeat(FRAMES_PER_SECOND * 50) { gate.process(loud) }
+        assertTrue("sustained noise should raise the trigger", gate.thresholdDb > -36f)
+        assertFalse("the gate should close after adapting to noise", gate.speaking)
+    }
+
+    @Test
+    fun `a quieter environment lowers the noise floor over seconds`() {
+        val gate = SpeechGate(config)
+        repeat(FRAMES_PER_SECOND * 2) { gate.process(tone(LOUD_ROOM_DB, CHUNK_MS)) }
+        val initial = gate.noiseFloorDb
+        val quiet = tone(-60f, CHUNK_MS)
+        repeat(FRAMES_PER_SECOND * 2) { gate.process(quiet) }
+        assertTrue("floor fell too quickly", gate.noiseFloorDb > initial - 6f)
+        repeat(FRAMES_PER_SECOND * 13) { gate.process(quiet) }
+        assertTrue("floor should adapt to the quieter room", gate.noiseFloorDb < initial - 10f)
+    }
+
+    @Test
     fun `quiet room keeps the absolute trigger floor`() {
         val gate = SpeechGate(config)
         repeat(FRAMES_PER_SECOND * 2) { gate.process(tone(SILENT_DB, CHUNK_MS)) }
